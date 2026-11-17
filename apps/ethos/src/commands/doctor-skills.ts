@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import type { Skill } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -34,8 +33,4 @@ export function readExternalCliRequirements(skill: Skill): { all: string[]; anyO
     }
   }
   return { all, anyOf };
-}
-
-export function isOnPath(bin: string): boolean {
-  return spawnSync('which', [bin], { stdio: 'ignore' }).status === 0;
 }

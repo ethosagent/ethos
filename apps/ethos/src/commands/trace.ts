@@ -3,18 +3,9 @@ import { ethosDir } from '@ethosagent/config';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { EthosError, type Span, type Trace } from '@ethosagent/types';
 import { writeJson } from '../json-output';
+import { c } from './_shared';
 
 // ethos trace [id] [--session <id>] [--recent [N]] [--slow [N]] [--json]
-
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-};
 
 function obsDbPath(): string {
   return join(ethosDir(), 'observability.db');

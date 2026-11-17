@@ -12,16 +12,13 @@
 //    remote-sender test. `runGatewayStart` boots a whole process and
 //    cannot be invoked from a unit test.
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { DefaultPersonalityRegistry } from '@ethosagent/core';
 import type { BeforeToolCallPayload, HookRegistry } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { wireUnattendedApprovalGate } from '../../unattended-approval-gate';
 import { readBootSources } from './boot-sources';
+import { gatewayFileWith } from './gateway-sources';
 import { serveFileWith } from './serve-sources';
-
-const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
 describe('gateway systemLoop — unattended approval gate wiring', () => {
   it('registers one before_tool_call modifying handler that refuses a flagged call', async () => {
@@ -56,7 +53,12 @@ describe('gateway systemLoop — unattended approval gate wiring', () => {
   });
 
   it('runGatewayStart registers it on the systemLoop, before cron starts', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/gateway.ts'), 'utf8');
+    const src = gatewayFileWith(
+      'systemLoop = systemLoopReady;',
+      'wireUnattendedApprovalGate(systemLoopReady.hooks, {',
+      'cronTriggers.local?.start();',
+      'reportUnattendedCronExposure({',
+    );
     const assigned = src.indexOf('systemLoop = systemLoopReady;');
     const wired = src.indexOf('wireUnattendedApprovalGate(systemLoopReady.hooks, {');
     const cronStart = src.indexOf('cronTriggers.local?.start();');

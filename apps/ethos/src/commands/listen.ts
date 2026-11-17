@@ -118,6 +118,7 @@ import { createStdinPcmDevice, STDIN_DEVICE_ID } from '../lib/stdin-pcm-device';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { getSecretsResolver, getStorage } from '../wiring';
+import { WARN_EXIT } from './_shared';
 import {
   authCookie,
   type ListenDaemonContext,
@@ -143,7 +144,6 @@ import {
   type ListenStartOptions,
   type ListenUrls,
   resolveListenNodeId,
-  WARN_EXIT,
   withLaneProbeName,
   withPipeCaveat,
 } from './listen-preflight';

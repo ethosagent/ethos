@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { read } from './gateway-platform-webhook-wiring.fixtures';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ describe('runGatewayStart wiring (source)', () => {
   });
 
   it('resolves port 3006 and the shared serve host, matching the sibling servers', async () => {
-    const src = await read('apps/ethos/src/commands/gateway.ts');
+    const src = readGatewaySources();
     expect(src).toContain(
       'const platformWebhookPort = Number(process.env.ETHOS_PLATFORM_WEBHOOK_PORT) || 3006;',
     );
@@ -154,8 +155,7 @@ describe('§5 durable inbound dedup wiring (source)', () => {
   }
 
   it('is a required BuildGatewayOptions field, so no caller can forget it', async () => {
-    const src = await read('apps/ethos/src/commands/gateway.ts');
-    expect(src).toContain("inboundDedup: GatewayConfig['inboundDedup'];");
+    expect(readGatewaySources()).toContain("inboundDedup: GatewayConfig['inboundDedup'];");
   });
 
   it('the gateway package declares the workspace edge it imports the type from', async () => {

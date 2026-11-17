@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources, serveFileWith } from '../commands/__tests__/serve-sources';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
@@ -37,7 +38,7 @@ describe('idle watcher construction on the production boot path', () => {
               command.builder,
             )
           : await readFile(command.file, 'utf-8');
-        whole = isServe ? readServeSources() : source;
+        whole = isServe ? readServeSources() : readGatewaySources();
       });
 
       it('constructs the manager exactly once, from its own busy sources', () => {

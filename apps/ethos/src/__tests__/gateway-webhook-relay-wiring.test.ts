@@ -24,6 +24,7 @@ import { createCapturingAdapter, relayToTargets } from '@ethosagent/gateway';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { DeliveryResult, OutboundMessage, PlatformAdapter } from '@ethosagent/types';
 import { afterEach, describe, expect, it } from 'vitest';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import {
   createWebhookServer,
   type DeliveryRelay,
@@ -216,6 +217,6 @@ describe('runGatewayStart wiring (source)', () => {
     const src = await read('apps/ethos/src/commands/gateway.ts');
     expect(src).toMatch(/adaptersById: webhookRelayAdapters,\n\s*ledger: deliveryLedger,/);
     // One reliability mechanism: exactly one ledger is constructed in this file.
-    expect(src.match(/new SQLiteDeliveryLedger\(/g)).toHaveLength(1);
+    expect(readGatewaySources().match(/new SQLiteDeliveryLedger\(/g)).toHaveLength(1);
   });
 });

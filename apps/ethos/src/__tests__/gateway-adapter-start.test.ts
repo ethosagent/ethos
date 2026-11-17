@@ -2,7 +2,7 @@
  * UBP-010 — one adapter whose `start()` rejects (a revoked Discord token, a
  * network blip) must not take every other platform down with it. Both
  * adapter-owning commands start adapters through `startAdaptersIsolated`
- * (apps/ethos/src/commands/gateway.ts): the failure is logged and recorded as
+ * (apps/ethos/src/commands/gateway-adapters.ts): the failure is logged and recorded as
  * `gateway.adapter_start_failed`, the rest keep running, and the command fails
  * only when EVERY adapter failed.
  */
@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { CONFIG_INVALID_EXIT_CODE } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import {
   adapterStartFailureExitCode,
   adapterStartRetryDelayMs,
@@ -304,10 +305,7 @@ describe('startAdaptersIsolated', () => {
 
   for (const file of ['gateway.ts', 'boot.ts']) {
     it(`${file} starts its adapters through startAdaptersIsolated`, () => {
-      const src =
-        file === 'boot.ts'
-          ? readBootSources()
-          : readFileSync(join(import.meta.dirname, '..', 'commands', file), 'utf-8');
+      const src = file === 'boot.ts' ? readBootSources() : readGatewaySources();
       expect(src).toContain('await startAdaptersIsolated(adapters,');
       // Retries are armed and stopped with the process (V-CC-4).
       expect(src).toContain('signal: adapterStartRetry.signal');

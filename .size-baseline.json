@@ -119,12 +119,12 @@
     {
       "path": "apps/ethos/src/commands/doctor.ts",
       "kind": "source",
-      "lines": 1374
+      "lines": 1373
     },
     {
       "path": "apps/ethos/src/commands/gateway.ts",
       "kind": "source",
-      "lines": 5843
+      "lines": 4426
     },
     {
       "path": "apps/ethos/src/commands/listen.ts",

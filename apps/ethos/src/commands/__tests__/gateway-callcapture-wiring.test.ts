@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readGatewaySources } from './gateway-sources';
 
 // `runGatewayStart()` is a long-running composition root (adapters, cron,
 // webhook/health servers, never returns while healthy) — impractical to
@@ -14,8 +13,7 @@ import { describe, expect, it } from 'vitest';
 // a liveness heartbeat, and is torn down on shutdown.
 
 async function readGatewaySource(): Promise<string> {
-  const root = join(import.meta.dirname, '..', '..', '..', '..', '..');
-  return readFile(join(root, 'apps/ethos/src/commands/gateway.ts'), 'utf8');
+  return readGatewaySources();
 }
 
 describe('gateway.ts — call-capture daemon wiring', () => {

@@ -12,6 +12,8 @@ const DOCTOR_SPLIT =
 
 const BOOT_SPLIT = 'internal library of `ethos boot`, split out of boot.ts; no CLI output';
 
+const GATEWAY_SPLIT = 'internal library of `ethos gateway`, split out of gateway.ts; no CLI output';
+
 const LISTEN_SPLIT =
   'internal library of `ethos listen`, split out of listen.ts; --json is handled in listen.ts';
 
@@ -24,6 +26,13 @@ const JSON_EXEMPT: Record<string, string> = {
   'boot-reload': BOOT_SPLIT,
   dashboard: 'launches the web UI (long-running)',
   gateway: 'start/setup are long-running; `status --json` lives in gateway-status.ts',
+  'gateway-adapters': GATEWAY_SPLIT,
+  'gateway-approval': GATEWAY_SPLIT,
+  'gateway-bots': GATEWAY_SPLIT,
+  'gateway-health': GATEWAY_SPLIT,
+  'gateway-platform-readers': GATEWAY_SPLIT,
+  'gateway-voice': GATEWAY_SPLIT,
+  'gateway-wiring': GATEWAY_SPLIT,
   'run-all': 'long-running multi-service launcher',
   serve: 'long-running HTTP server',
   setup: 'interactive wizard',

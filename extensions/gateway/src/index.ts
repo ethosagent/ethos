@@ -1627,7 +1627,7 @@ export class Gateway {
    * Whether `removeAdapter` has already called this adapter's `stop()`. A host
    * keeps its own list of the adapters it built, and a retired one stays in
    * it; its shutdown asks here so the adapter is not stopped a second time
-   * (`everyStartedAdapter` in apps/ethos/src/commands/gateway.ts, pinned by
+   * (`everyStartedAdapter` in apps/ethos/src/commands/gateway-adapters.ts, pinned by
    * apps/ethos/src/__tests__/every-started-adapter.test.ts).
    */
   hasStopped(adapter: PlatformAdapter): boolean {

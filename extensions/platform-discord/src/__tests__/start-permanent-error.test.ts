@@ -1,7 +1,7 @@
 // V-CC-4 follow-up — the adapter classifies its own start failures. A login
 // discord.js refuses for a bad token or a disallowed intent is thrown with
 // `permanent: true`, so the gateway's adapter-start retry
-// (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) stops
+// (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway-adapters.ts) stops
 // instead of retrying a dead token for ever. Anything else is thrown as-is.
 
 import { EventEmitter } from 'node:events';

@@ -1,9 +1,10 @@
 // `ethos listen` — audio OUT: the player this host spawns and the playback
 // device that writes a reply's audio into it. Split out of listen.ts.
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { EthosError } from '@ethosagent/types';
 import type { AudioDeviceInfo, PlaybackDevice, PlaybackFormat } from '@ethosagent/voice-satellite';
+import { isOnPath } from './_shared';
 
 // ---------------------------------------------------------------------------
 // Audio OUT — the loudspeaker this host used to declare it did not have
@@ -55,11 +56,6 @@ const PLAYER_PROBES: ReadonlyArray<{ kind: Exclude<PlayerKind, 'custom'>; comman
   { kind: 'aplay', command: 'aplay -q -f S16_LE -r {rate} -c {channels} -t raw' },
   { kind: 'play', command: 'play -q -t raw -r {rate} -e signed -b 16 -c {channels} -' },
 ];
-
-/** Is this binary runnable from here? The same probe `ethos doctor` uses. */
-function isOnPath(bin: string): boolean {
-  return spawnSync('which', [bin], { stdio: 'ignore' }).status === 0;
-}
 
 /**
  * Decide how this host will make a sound — by ASKING, never by assuming.

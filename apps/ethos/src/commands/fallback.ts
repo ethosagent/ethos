@@ -11,6 +11,7 @@ import {
 import type { SecretsResolver } from '@ethosagent/types';
 import { refuseJson, type Say, sayFor, splitJson, writeJson, writeJsonError } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
+import { c } from './_shared';
 
 // `ethos fallback` — interactive editor for the `providers:` chain in
 // ~/.ethos/config.yaml. The mechanism (ChainedProvider with cooldown-based
@@ -30,16 +31,6 @@ import { getSecretsResolver, getStorage } from '../wiring';
 // `${secrets:providers/<idx>/<provider>/apiKey}` refs (a `-2`, `-3`, … suffix
 // when another entry holds that name) through the SecretsResolver — never
 // plaintext in config.yaml.
-
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-};
 
 const USAGE = 'Usage: ethos fallback [list | add | remove <index> | clear] [--json]';
 

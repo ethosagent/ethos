@@ -169,7 +169,7 @@ export interface GatewayBotConfig {
  * "Does bot `botKey` still speak for `personalityId`?"
  *
  * The botKey-level generalisation of `buildChannelSpeakers`
- * (`apps/ethos/src/commands/gateway.ts`), which answers the same question for a
+ * (`apps/ethos/src/commands/gateway-voice.ts`), which answers the same question for a
  * whole platform. Injected rather than computed here because resolving a TEAM
  * binding means reading that team's manifest, which is config-layer knowledge
  * the gateway does not carry.

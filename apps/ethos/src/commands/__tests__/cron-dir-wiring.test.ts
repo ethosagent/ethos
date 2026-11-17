@@ -24,6 +24,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { countCronJobs } from '../status';
 import { bootFileWith, readBootSources } from './boot-sources';
+import { readGatewaySources } from './gateway-sources';
 import { readServeSources } from './serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
@@ -108,7 +109,9 @@ describe('cron directory — resolved from the state dir', () => {
         ? readBootSources()
         : host.endsWith('/serve.ts')
           ? readServeSources()
-          : await readFile(join(ROOT, host), 'utf8');
+          : host.endsWith('/gateway.ts')
+            ? readGatewaySources()
+            : await readFile(join(ROOT, host), 'utf8');
       const configs = schedulerConfigs(src);
       expect(configs.length).toBeGreaterThan(0);
       for (const config of configs) {

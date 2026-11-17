@@ -10,23 +10,17 @@ import { type CallLog, SQLiteCallLog } from '@ethosagent/call-log';
 import { SQLiteChannelTranscriptStore } from '@ethosagent/channel-transcript-sqlite';
 import {
   applyPlatformShim,
-  type BotBinding,
-  bindResolvesToPersonality,
   deriveBotKey,
   type EthosConfig,
   ethosCronDir,
   ethosDir,
   ethosScriptsDir,
-  hostTimeZone,
   loadConfigStrict,
-  type NotificationsConfig,
   observeModePlatforms,
-  parseQuietHoursSpec,
   readRawConfig,
   type SlackAppConfig,
   type TelegramBotConfig,
   validateBotBindings,
-  type WhatsAppConfig,
   writeConfig,
 } from '@ethosagent/config';
 import {
@@ -57,9 +51,6 @@ import {
   DreamExecutor,
   Gateway,
   type GatewayBotConfig,
-  type GatewayConfig,
-  type GatewayObservability,
-  type GatewayQuietHours,
   relayToTargets,
   summarizeChannelDigest,
 } from '@ethosagent/gateway';
@@ -107,20 +98,15 @@ import {
   type ChannelTranscriptStore,
   type ClarifyResponse,
   EthosError,
-  type ExecutionPosture,
   type GatewayMessagePayload,
   type GatewayMessageResult,
   type InboundMessage,
-  type LLMProvider,
-  type MemoryContext,
   type NotificationRouter,
-  type PersonalityRegistry,
   type PlatformAdapter,
   resolveModelDisplay,
   type SessionStore,
   type ToolRegistry,
   type TurnAudience,
-  type UsageGate,
 } from '@ethosagent/types';
 import {
   type WatcherDeliverTarget,
@@ -128,36 +114,20 @@ import {
   type WatcherWakeEvent,
 } from '@ethosagent/watchers';
 import {
-  APPROVAL_SURFACE_ALWAYS_ASK,
-  CONFIG_INVALID_EXIT_CODE,
-  createApprovalDangerPredicate,
   createLazyProvider,
-  createMcpLoginPort,
   createOutboundPolicyGate,
   createSessionStore,
-  fileMemoryUnsupportedReason,
-  hardlineReason,
   IdentityMap,
   initPairingDb,
-  type LiveKitBindings,
   type MessagingSendFn,
-  markHostApprovalGate,
-  notPermittedRefusal,
   OtlpPollLoop,
   type OutboxWiring,
   resolveKanbanDbPath,
   resolveOtlpSettings,
-  type SmartApproverDecisionSite,
   SQLiteNotifyQueue,
   seedAllSystemJobs,
   systemJobProblem,
 } from '@ethosagent/wiring';
-import {
-  ApprovalCoordinator,
-  type ApprovalObservability,
-  createSlackApprovalHook,
-  SYSTEM_DECIDER,
-} from '../approval-coordinator';
 import {
   createEventLoopLagSampler,
   createHealthServer,
@@ -168,7 +138,6 @@ import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { exitIfConfigInvalid } from '../lib/config-exit';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
-import { openFileMemory } from '../lib/file-memory';
 import {
   openInboundSpool,
   pruneInboundSpool,
@@ -191,22 +160,17 @@ import {
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { pruneExpiredSessions } from '../lib/session-retention';
 import { callCaptureWake, watcherWakeMessage } from '../lib/watcher-wake';
-import { resolveLiveKitMedia } from '../livekit-media';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
-import {
-  createPlatformWebhookServer,
-  type PlatformWebhookHandler,
-} from '../platform-webhook-server';
+import { createPlatformWebhookServer } from '../platform-webhook-server';
 import { closeProcessPluginHostPool, openProcessPluginHostPool } from '../plugin-host-pool';
 import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createSipInboundHandler } from '../sip-inbound-dispatch';
 import { createSipWebhookServer } from '../sip-webhook-server';
 import {
-  createNoApprovalSurfaceGate,
   reportUnattendedCronExposure,
   wireUnattendedApprovalGate,
 } from '../unattended-approval-gate';
@@ -224,20 +188,102 @@ import {
   getObservabilityStore,
   getSecretsResolver,
   getStorage,
-  loadTeamManifest,
 } from '../wiring';
 import {
   CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
+  c,
   gatewayHealthPath,
   HEARTBEAT_INTERVAL_MS,
 } from './_shared';
 import { createCronRunJob, cronContextAudience, cronFiringAudience } from './cron-turn';
+import {
+  adapterStartFailureExitCode,
+  buildPlatformWebhookMounts,
+  everyStartedAdapter,
+  gatewayAllFailedPolicy,
+  startAdaptersIsolated,
+  warnEmailSenderAuthUnconfigured,
+} from './gateway-adapters';
+import { wireApprovalFlow } from './gateway-approval';
+import {
+  attachMcpLogin,
+  type BuildGatewayBotsResult,
+  type GatewayBotWiring,
+  whatsAppBotKey,
+} from './gateway-bots';
+import {
+  type GatewayHeartbeat,
+  gatewayHealthStatus,
+  gatewaySqliteStorePaths,
+} from './gateway-health';
+import {
+  type AdapterModuleLoader,
+  createSlackMemoryReader,
+  createSlackSessionReaders,
+  slackSessionStores,
+  slackSlashAllowlist,
+} from './gateway-platform-readers';
+import {
+  buildBotSpeakers,
+  buildChannelSpeakers,
+  deriveChannelVoiceOut,
+  resolveTelephonyMedia,
+} from './gateway-voice';
+import {
+  type BuildGatewayOptions,
+  type GatewayTurnOrigin,
+  gatewayObservability,
+  gatewayTurnOrigin,
+  idleGatewayBot,
+  idleGatewayBotLoopOpts,
+  resolveGatewayQuietHours,
+  wireAdapterInbound,
+} from './gateway-wiring';
 import {
   ensureTeamSupervisors,
   stopTeamSupervisors,
   type TeamSupervisorDeps,
 } from './supervisor-lifecycle';
 import { isPidAlive } from './team-runtime';
+
+export type { AdapterStartRetryOptions, PlatformWebhookMounts } from './gateway-adapters';
+export {
+  ADAPTER_START_RETRY_BASE_MS,
+  ADAPTER_START_RETRY_MAX_MS,
+  AllAdaptersFailedError,
+  adapterStartFailureExitCode,
+  adapterStartRetryDelayMs,
+  buildPlatformWebhookMounts,
+  everyStartedAdapter,
+  gatewayAllFailedPolicy,
+  isPermanentAdapterStartError,
+  startAdaptersIsolated,
+  warnEmailSenderAuthUnconfigured,
+} from './gateway-adapters';
+export { wireApprovalFlow } from './gateway-approval';
+export type { BuildGatewayBotsResult, GatewayBotWiring } from './gateway-bots';
+export { whatsAppBotKey } from './gateway-bots';
+export type { GatewayHeartbeat } from './gateway-health';
+export { gatewayHealthStatus, gatewaySqliteStorePaths } from './gateway-health';
+export type { AdapterModuleLoader } from './gateway-platform-readers';
+export { createSlackMemoryReader } from './gateway-platform-readers';
+export type { BotSpeakers, TelephonyMediaOutcome } from './gateway-voice';
+export {
+  buildBotSpeakers,
+  buildChannelSpeakers,
+  deriveChannelVoiceOut,
+  resolveTelephonyMedia,
+} from './gateway-voice';
+export type { BuildGatewayOptions, GatewayTurnOrigin } from './gateway-wiring';
+export {
+  gatewayObservability,
+  gatewayTurnOrigin,
+  IDLE_GATEWAY_BOT_KEY,
+  idleGatewayBot,
+  idleGatewayBotLoopOpts,
+  resolveGatewayQuietHours,
+  wireAdapterInbound,
+} from './gateway-wiring';
 
 // ---------------------------------------------------------------------------
 // Gateway heartbeat
@@ -252,16 +298,6 @@ const DELIVERY_LEDGER_RETENTION_MS = 7 * 86_400_000;
  *  because a call row is history an operator reads (who rang, what was said),
  *  not an in-flight obligation — but still bounded: the rows hold transcripts. */
 const CALL_LOG_RETENTION_MS = 30 * 86_400_000;
-
-export interface GatewayHeartbeat {
-  pid: number;
-  startedAt: string;
-  updatedAt: string;
-  adapters: Array<{ name: string; ok: boolean }>;
-  /** U9 — this process's resident set size at `updatedAt`, read by
-   *  `ethos status` (`gatewayMemoryFacet`, apps/ethos/src/commands/status.ts). */
-  rssBytes: number;
-}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -313,27 +349,6 @@ export async function buildGatewayHeartbeat(
     adapters: adapterStatuses,
     rssBytes: process.memoryUsage.rss(),
   };
-}
-
-/**
- * `/healthz` status from a heartbeat's adapter list: zero adapters is a valid
- * web-only deployment (helm minimal install) — degraded only when a CONFIGURED
- * adapter is down, so `every()`'s vacuous truth on `[]` is the point. Shared by
- * `ethos gateway start` and `ethos boot`; pinned by the 'gatewayHealthStatus'
- * cases in `apps/ethos/src/commands/__tests__/gateway-health.test.ts`.
- */
-export function gatewayHealthStatus(
-  adapters: Array<{ name: string; ok: boolean }>,
-): 'ok' | 'degraded' {
-  return adapters.every((a) => a.ok) ? 'ok' : 'degraded';
-}
-
-/** R6 — the SQLite stores an adapter-owning process (`ethos gateway start`,
- *  `ethos boot`) cannot serve without; `/readyz` requires each to open. */
-export function gatewaySqliteStorePaths(dataDir: string): string[] {
-  return ['sessions.db', 'delivery-ledger.db', 'inbound-dedup.db', 'inbound-spool.db'].map((file) =>
-    join(dataDir, file),
-  );
 }
 
 /**
@@ -436,16 +451,6 @@ async function loadAdapterModule<T>(modulePath: string, label: string): Promise<
   }
 }
 
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-};
-
 // ---------------------------------------------------------------------------
 // ethos gateway setup
 // ---------------------------------------------------------------------------
@@ -511,174 +516,6 @@ export interface GatewayStartOptions {
    *  three-way close (W2.5) to print the `t.me` deep-link success block after
    *  the "Starting the Telegram bot…" line. */
   onReady?: () => void;
-}
-
-/**
- * `voice.channels.<platform>.ttsOut` → the Gateway's `channelVoiceOut` gate.
- *
- * Only an EXPLICIT boolean is an operator decision. A platform whose entry
- * omits `ttsOut` inherits the lane's mode, so it must NOT appear in the map —
- * an entry present with `undefined` would read as "declared" downstream.
- * Returns `undefined` when nothing was declared, so the option is omitted
- * entirely rather than passed as an empty object.
- */
-export function deriveChannelVoiceOut(
-  channels: Readonly<Record<string, { ttsOut?: boolean }>> | undefined,
-): Record<string, boolean> | undefined {
-  if (!channels) return undefined;
-  const out: Record<string, boolean> = {};
-  for (const [platform, entry] of Object.entries(channels)) {
-    if (typeof entry?.ttsOut === 'boolean') out[platform] = entry.ttsOut;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/** What {@link resolveTelephonyMedia} decided, plus the banner lines saying so. */
-export interface TelephonyMediaOutcome {
-  /** Forwarded to `createAgentLoop` → `buildVoiceStack`. Absent = no media path. */
-  livekit?: LiveKitBindings;
-  /** Startup-banner lines, already coloured. Empty when nothing was configured. */
-  lines: string[];
-}
-
-/**
- * Resolve the native LiveKit media binding for this deployment, ONCE at startup.
- *
- * Gated on config, not attempted unconditionally: `resolveLiveKitMedia()` does a
- * dynamic import of a native package, and a deployment with no `voice.trunk` and
- * no `voice.livekit` has no reason to pay for it or to hear about it.
- *
- * When telephony IS configured and the media SDK is not usable, this says so in
- * plain words at boot. That is the whole point of the gate: without it, an
- * operator who rented a phone number learns that calls cannot carry audio from a
- * `failed` row in `calls.db` after a real person rang and got silence.
- */
-export async function resolveTelephonyMedia(
-  voice: EthosConfig['voice'],
-  opts: { importModule?: (specifier: string) => Promise<unknown> } = {},
-): Promise<TelephonyMediaOutcome> {
-  if (!voice?.trunk && !voice?.livekit) return { lines: [] };
-
-  const media = await resolveLiveKitMedia({
-    ...(opts.importModule ? { importModule: opts.importModule } : {}),
-    onError: (message) => new ConsoleLogger().warn(message),
-  });
-
-  if (media.ok) {
-    const version = media.version ? ` ${media.version}` : '';
-    return {
-      livekit: { createClient: media.createClient },
-      lines: [
-        `  ${c.green}✓${c.reset} voice media: ${c.cyan}@livekit/rtc-node${version}${c.reset} ${c.dim}— calls can carry audio.${c.reset}`,
-      ],
-    };
-  }
-
-  const lines = [
-    `${c.yellow}⚠ voice media unavailable${c.reset} ${c.dim}(${media.reason})${c.reset}`,
-  ];
-  if (voice.trunk) {
-    lines.push(
-      `${c.dim}  A call will be answered, screened and logged, but ${c.reset}${c.bold}cannot carry audio${c.reset}${c.dim} until the media SDK loads. Fix: ${c.reset}${c.cyan}pnpm add @livekit/rtc-node${c.reset}${c.dim}, then restart the gateway.${c.reset}`,
-    );
-  }
-  return { lines };
-}
-
-/**
- * "Does any configured bot on `platform` still speak for `personalityId`?"
- *
- * Cron delivery to a channel origin is gated on this: `Gateway.sendTo` resolves
- * an adapter by platform alone, so without the check a job whose bot was
- * removed from config would silently deliver through some other agent's bot.
- * The binding predicate itself lives in `@ethosagent/config` so this and the
- * web API's delivery-target resolver cannot drift apart.
- *
- * Exported for `ethos boot`, which runs the same gateway role through the same
- * `createCronDeliver` (apps/ethos/src/lib/cron-deliver.ts) and must gate on the
- * same answer — a second copy of this is what B-T5 removed.
- */
-export function buildChannelSpeakers(
-  config: EthosConfig,
-): (platform: string, id: string) => boolean {
-  const speakers = buildBotSpeakers(config);
-  return (platform, id) => speakers.candidates(platform, id).length > 0;
-}
-
-/**
- * The same binding question, answered at BOT granularity (O-T4/O-T5,
- * plan/phases/trust-before-reach.md).
- *
- * `buildChannelSpeakers` above asks "does ANY bot on this platform speak for
- * this personality", which is the right question for a send addressed at a
- * platform. Two sends are not addressed at a platform:
- *
- *  - a PUBLICATION names the exact bot that will speak, because a human
- *    approved a card with that bot's name on it. `speaksFor` is what
- *    `GatewayConfig.publicationSpeaksFor` is wired to, so a bot rebound since
- *    the approval voids it instead of publishing in a voice nobody approved.
- *  - a PROPOSAL has to pick that bot in the first place. `candidates` is the
- *    input to `resolveSender` (`../lib/outbox-wiring`), which refuses rather
- *    than guessing when there is more than one and the turn names none.
- *
- * ONE roster for both, and for `buildChannelSpeakers`, which is now a
- * non-empty-candidates test over it: three derivations of "which bots are
- * bound to whom" is three chances to disagree.
- *
- * The botKeys are derived exactly as the adapters' are — `deriveBotKey` for
- * telegram/slack, `whatsAppBotKey` for WhatsApp — so a key here is a key the
- * Gateway's routing table actually holds. Discord and Email are absent for the
- * same reason they are absent from `buildChannelSpeakers`: neither carries a
- * per-bot binding, so neither can answer the question.
- */
-export interface BotSpeakers {
-  /** The botKeys on `platform` bound to `personalityId`, directly or through a
-   *  team manifest. Empty means no configured bot can speak for it. */
-  candidates(platform: string, personalityId: string): string[];
-  /** Does this exact bot still speak for `personalityId`? */
-  speaksFor(botKey: string, personalityId: string): boolean;
-}
-
-export function buildBotSpeakers(config: EthosConfig): BotSpeakers {
-  const bots: Array<{ botKey: string; platform: string; bind: BotBinding }> = [
-    ...(config.telegram?.bots ?? []).map((b) => ({
-      botKey: deriveBotKey(b),
-      platform: 'telegram',
-      bind: b.bind,
-    })),
-    ...(config.slack?.apps ?? []).map((a) => ({
-      botKey: deriveBotKey(a),
-      platform: 'slack',
-      bind: a.bind,
-    })),
-    // A bind-less WhatsApp entry is excluded, not defaulted: it answers as the
-    // default personality at runtime, but nothing in config says it speaks FOR
-    // that personality, and a publication is not a thing to infer.
-    ...(config.whatsapp ?? []).flatMap((w) =>
-      w.bind ? [{ botKey: whatsAppBotKey(w), platform: 'whatsapp', bind: w.bind }] : [],
-    ),
-  ];
-  const memberCache = new Map<string, readonly string[]>();
-  const members = (team: string): readonly string[] => {
-    const hit = memberCache.get(team);
-    if (hit) return hit;
-    let loaded: readonly string[] = [];
-    try {
-      loaded = loadTeamManifest(team).members.map((m) => m.personality);
-    } catch {
-      // No manifest (or an unparseable one) resolves to no members rather
-      // than to everyone.
-    }
-    memberCache.set(team, loaded);
-    return loaded;
-  };
-  const bound = (bot: { bind: BotBinding }, id: string): boolean =>
-    bindResolvesToPersonality(bot.bind, id, members);
-  return {
-    candidates: (platform, id) =>
-      bots.filter((b) => b.platform === platform && bound(b, id)).map((b) => b.botKey),
-    speaksFor: (botKey, id) => bots.some((b) => b.botKey === botKey && bound(b, id)),
-  };
 }
 
 export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<void> {
@@ -2590,71 +2427,6 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 // ---------------------------------------------------------------------------
 
 /**
- * Build the per-bot routing table the Gateway needs. Walks both
- * `config.telegram.bots` and `config.slack.apps`, resolving each
- * binding to either a personality-scoped AgentLoop (`createAgentLoop`)
- * or a team coordinator loop (`createTeamAgentLoop`). The botKey
- * matches what adapters will stamp on inbound messages.
- */
-/**
- * One bot's share of the flat lists on {@link BuildGatewayBotsResult}.
- *
- * The flat lists are what a caller registers; this is what it needs to
- * DEREGISTER exactly one bot again. A caller that only ever tears the whole
- * process down can ignore it — `ethos boot`'s live reconciler cannot, because
- * replacing one bot has to undo that bot's registrations and no others
- * (plan/phases/gateway-live-reload.md §2).
- */
-export interface GatewayBotWiring {
-  messagingSetters: Array<(fn: MessagingSendFn) => void>;
-  notificationRouters: NotificationRouter[];
-  toolRegistries: ToolRegistry[];
-  refreshers: Array<() => Promise<void>>;
-  /** The bot's loop runtime release (`CreateAgentLoopResult.dispose`, F06). */
-  disposers: Array<() => Promise<void>>;
-}
-
-export interface BuildGatewayBotsResult {
-  bots: GatewayBotConfig[];
-  messagingSetters: Array<(fn: MessagingSendFn) => void>;
-  /** One NotificationRouter per bot loop — `process_complete` hooks fire on
-   *  the owning loop's router, so the Gateway must register its per-session
-   *  adapter on every one of them. */
-  notificationRouters: NotificationRouter[];
-  /** One ToolRegistry per bot loop. Each loop owns its own registry (there is
-   *  no shared one), so the outbound `a2a_send` tool is registered on every one
-   *  of them — see `registerA2aOutboundTools`. */
-  toolRegistries: ToolRegistry[];
-  /** One `refreshPersonalities` closure per personality-bound bot loop. The
-   *  gateway's `personalityDirectory.refresh()` invokes all of them so a
-   *  hot-dropped/edited personality reaches every loop's registry. Team loops
-   *  have no personality registry and contribute none. */
-  refreshers: Array<() => Promise<void>>;
-  /** One runtime release per bot loop (`CreateAgentLoopResult.dispose`, F06) —
-   *  what a stopping gateway, or a bot retired live, calls once nothing routes
-   *  to the loop any more. */
-  disposers: Array<() => Promise<void>>;
-  /** The lists above, attributed to the bot that produced each entry.
-   *  Aligned with `bots` — same order, same membership. */
-  perBot: Map<string, GatewayBotWiring>;
-}
-
-/**
- * Derive the botKey for a WhatsApp config. MUST stay byte-identical to the
- * adapter's own fallback (`WhatsAppAdapter` in @ethosagent/platform-whatsapp)
- * so the key the gateway routes table is built from matches the key the
- * adapter stamps on inbound messages. WhatsApp has no token, so unlike
- * telegram/slack there is nothing to sha256 — the key is the explicit `id`
- * or a slug of the session directory.
- */
-export function whatsAppBotKey(waCfg: WhatsAppConfig): string {
-  return (
-    waCfg.id ??
-    `wa-${(waCfg.session_dir ?? join(ethosDir(), 'whatsapp')).replace(/[^a-zA-Z0-9]/g, '').slice(-16)}`
-  );
-}
-
-/**
  * Derive the botKey for the legacy scalar Discord config. Computed once here
  * and passed to BOTH the adapter (which stamps it on inbound messages) and
  * `buildGatewayBots` (which registers the routing entry), so the two never
@@ -2674,6 +2446,13 @@ export function emailBotKey(user: string, imapHost: string): string {
   return deriveBotKeyFromSeed(`${user}@${imapHost}`);
 }
 
+/**
+ * Build the per-bot routing table the Gateway needs. Walks both
+ * `config.telegram.bots` and `config.slack.apps`, resolving each
+ * binding to either a personality-scoped AgentLoop (`createAgentLoop`)
+ * or a team coordinator loop (`createTeamAgentLoop`). The botKey
+ * matches what adapters will stamp on inbound messages.
+ */
 export async function buildGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
@@ -2702,27 +2481,6 @@ export async function buildGatewayBots(
     await Promise.allSettled(disposers.map((dispose) => dispose()));
     throw err;
   }
-}
-
-/**
- * Build one personality bot's `/mcp login` port (plan mcp-device-code-login
- * §8.2): tokens are scoped to the lane personality and reconnected on THIS
- * bot's McpManager. Its `dispose` joins the bot's disposers, so a retired bot
- * or a stopping gateway aborts the pending flows. Team bots get none.
- */
-async function attachMcpLogin(
-  result: Pick<Awaited<ReturnType<typeof createAgentLoop>>, 'mcpManager' | 'personalities'>,
-  disposers: Array<() => Promise<void>>,
-): Promise<NonNullable<GatewayBotConfig['mcpLogin']>> {
-  const port = createMcpLoginPort({
-    storage: getStorage(),
-    secrets: await getSecretsResolver(),
-    mcpManager: result.mcpManager,
-    personalities: result.personalities,
-    logger: new ConsoleLogger({ component: 'mcp' }),
-  });
-  disposers.push(async () => port.dispose());
-  return port;
 }
 
 async function assembleGatewayBots(
@@ -3043,418 +2801,6 @@ async function registerA2aOutboundTools(
 // Interactive tool-approval flow (Slack, Telegram, any ApprovalCapableAdapter)
 // ---------------------------------------------------------------------------
 
-// `import type` only — erased at runtime, so `@ethosagent/platform-slack`
-// stays lazily loaded via `loadAdapterModule` and the layering is unchanged.
-// The approval contract lives in `@ethosagent/types` so any adapter
-// (Slack, Telegram, future) can implement it without cross-platform imports.
-type ApprovalCapableAdapter = import('@ethosagent/types').ApprovalCapableAdapter;
-
-/**
- * Runtime narrowing for the approval surface. The adapter list is typed as
- * `PlatformAdapter[]` (adapters are loaded lazily and heterogeneously), so a
- * structural probe is still needed to pick out the approval-capable ones —
- * but it narrows to the explicit, package-owned `ApprovalCapableAdapter`
- * type, not an ad-hoc shape.
- */
-function isApprovalCapable(
-  adapter: PlatformAdapter,
-): adapter is PlatformAdapter & ApprovalCapableAdapter {
-  const a = adapter as Partial<ApprovalCapableAdapter>;
-  return (
-    typeof a.botKey === 'string' &&
-    typeof a.postApprovalCard === 'function' &&
-    typeof a.updateApprovalCard === 'function' &&
-    typeof a.onApprovalDecision === 'function'
-  );
-}
-
-/** How long `wireApprovalFlow`'s shutdown waits for in-flight approval card
- *  posts and updates. A card round trip is well under this; a hung adapter
- *  costs a stale card rather than a shutdown that never returns. */
-const APPROVAL_SHUTDOWN_DRAIN_MS = 5_000;
-
-/**
- * Give every bot loop in `bots` exactly one approval gate on
- * `before_tool_call`, and connect the card-capable ones to approval cards.
- * This is the ONE call every bot-loop host makes — `ethos gateway start`
- * (`runGatewayStart`, all bots at once) and `ethos boot` (`registerBotLive`,
- * per bot: cold boot, live hot-add, webhook-route bots, and a bot replaced on
- * config reload) — so no host can leave a bot loop ungated.
- *
- *   0. A bot with NO approval-capable adapter (WhatsApp, Email, a webhook
- *      route bot — anything without `postApprovalCard`; today only Slack,
- *      Telegram and Discord implement it) gets the no-surface gate
- *      (`createNoApprovalSurfaceGate`, apps/ethos/src/unattended-approval-gate.ts):
- *      a flagged call is ALWAYS refused. A remote sender drives these turns,
- *      so the systemLoop's D12 opt-in (`approvalMode: off` +
- *      `allowUnattendedDangerousTools`) is never honoured here. This includes
- *      the case where no adapter at all is approval-capable, which returns
- *      right after. The idle gateway bot (no bot configured) is not in
- *      `bots` and is not gated here: its turns run on the systemLoop, where
- *      `wireUnattendedApprovalGate`'s `isRemoteSenderTurn` split hands them to
- *      this same no-surface gate, so the rule is identical — a remote-sender
- *      turn never gets the opt-in (pinned by
- *      `../__tests__/unattended-approval-gate.test.ts`, 'idle gateway').
- *   1. `before_tool_call` hook on every approval-capable bot loop →
- *      `ApprovalCoordinator` suspends dangerous calls. A turn on such a loop
- *      that arrived through an adapter that cannot post a card is handed to
- *      the same no-surface gate (`withoutSurface`) and refused, not let
- *      through.
- *   2. `coordinator.onPending` → resolve the sessionId to its adapter/chat/
- *      thread via the gateway and post an approval card.
- *   3. each adapter's button-click event → `coordinator.approve/deny`
- *      and an in-place update of the card.
- *
- * Pinned by `__tests__/approval-flow-unattended.test.ts`.
- *
- * Returns a `{ shutdown, pendingCount }` handle: the caller's SIGINT/SIGTERM
- * closure calls `shutdown` so pending approvals are force-settled (deny +
- * audit + card update) before the process exits, and the idle watcher reads
- * `pendingCount` — an unanswered approval is in-flight work, and exiting on
- * one loses it silently (plan/phases/idle-watcher.md §1 check #11). Exported
- * so tests can exercise the config threading and those handles without
- * booting a real gateway.
- */
-export function wireApprovalFlow(
-  gateway: Gateway,
-  bots: GatewayBotConfig[],
-  adapters: PlatformAdapter[],
-  seams: {
-    /** The gateway's hot-reloaded read registry — the same one `/personality`
-     *  validates against, so a switched personality's approval policy applies
-     *  on its next turn. */
-    personalities: PersonalityRegistry;
-    /** Lazy provider handle for `approvalMode: 'smart'`. */
-    getProvider: () => Promise<LLMProvider>;
-    /** Model the smart reviewer runs on. */
-    model: string;
-    /** Operator's approval SLA (`config.approvalTimeoutMs`). Undefined → the
-     *  coordinator's own 10-minute default; `0` → no timeout. */
-    approvalTimeoutMs?: number;
-    /** The platform owner (`channel_filter.<platform>.ownerUserId`), who
-     *  decides approvals for turns started in a group chat. Required so no
-     *  caller can silently fall back to requester binding in groups. */
-    ownerFor: (platform: string) => string | undefined;
-    /** The smart reviewer's decision site (plan decision-provider-jev §8.2),
-     *  forwarded to every predicate built here. Operator-level config, so one
-     *  site serves every bot; absent → the LLM reviewer only. */
-    decision?: SmartApproverDecisionSite;
-    /** `CreateAgentLoopResult.executionPostureFor` — required by every
-     *  predicate built here (S6 / D1(a)). Posture is operator- and
-     *  personality-level, so one build's resolver serves every bot. */
-    executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
-    /** `CreateAgentLoopResult.usageMeter` of that same build — meters the smart reviewer. */
-    usageMeter: Pick<import('@ethosagent/wiring').UsageMeter, 'meter'>;
-  },
-): { shutdown: () => Promise<void>; pendingCount: () => number } {
-  const approvalAdapters = adapters.filter(isApprovalCapable);
-  const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
-  const noSurfaceOpts = {
-    personalities: seams.personalities,
-    getProvider: seams.getProvider,
-    model: seams.model,
-    ...(seams.decision ? { decision: seams.decision } : {}),
-    executionPostureFor: seams.executionPostureFor,
-    usageMeter: seams.usageMeter,
-  };
-  // Wire 0: a bot with no approval surface is gated here, before the
-  // early return below, so a deployment with no card-capable adapter at all
-  // is covered too.
-  for (const bot of bots) {
-    if (approvalBotKeys.has(bot.botKey)) continue;
-    bot.loop.hooks.registerModifying(
-      'before_tool_call',
-      createNoApprovalSurfaceGate([bot.loop.hooks], noSurfaceOpts),
-    );
-    // The loop's terminal/process guards now leave approval-required commands
-    // (command substitution) to this gate, which refuses them here.
-    markHostApprovalGate(bot.loop.hooks);
-  }
-  // No approval surface — hand back a no-op handle so the caller needs no
-  // null check in its shutdown closure. Nothing can ever be pending here.
-  if (approvalAdapters.length === 0) return { shutdown: async () => {}, pendingCount: () => 0 };
-
-  // Every settled approval lands in the safety audit trail (`ethos audit
-  // decisions`). Resolved lazily so a boot that never touches observability
-  // doesn't open the DB; the coordinator swallows any failure here.
-  const observability: ApprovalObservability = {
-    recordSafetyApproval: (opts) => getEthosObservability().recordSafetyApproval(opts),
-  };
-  const coordinator = new ApprovalCoordinator({
-    observability,
-    // `!== undefined`, not truthiness — `0` ("wait forever") is a meaningful
-    // operator setting, not an absent one.
-    ...(seams.approvalTimeoutMs !== undefined ? { timeoutMs: seams.approvalTimeoutMs } : {}),
-  });
-  // UBP-046 — `/stop` settles the stopped turn's pending approval now (card
-  // updated via `onResolved`, lane released), not at the approval timeout.
-  // Pinned by `../__tests__/stop-settles-approval.test.ts`.
-  const offLaneStop = gateway.onLaneStop(({ sessionId }) =>
-    coordinator.cancelForSession(sessionId, 'turn stopped'),
-  );
-
-  // Where a posted card lives, keyed by `approvalId`. Populated once
-  // `postApprovalCard` succeeds; consumed by the `onResolved` handler so the
-  // card is updated in place no matter HOW the approval resolved — button
-  // click, timeout, or session cancel. A fail-closed deny (no card ever
-  // posted) simply has no entry here, so the update is skipped.
-  const postedCards = new Map<
-    string,
-    { adapter: ApprovalCapableAdapter; chatId: string; messageTs: string; toolName: string }
-  >();
-  // Resolutions that landed BEFORE the card finished posting (e.g. a session
-  // cancel races the API call). Keyed by `approvalId`. The post
-  // `.then()` drains this so a card posted into an already-resolved approval
-  // is updated immediately instead of being left with live buttons forever.
-  const resolvedBeforePost = new Map<string, { decision: 'allow' | 'deny'; decidedBy: string }>();
-  // `approvalId`s with a `postApprovalCard` call genuinely in flight. Gates
-  // `resolvedBeforePost`: without it, a fail-closed deny (no route / no
-  // adapter / post failure) would record an outcome that no post
-  // `.then()` ever drains — an unbounded leak.
-  const inFlightPosts = new Set<string>();
-  // The same posts as awaitable promises. A `Set<string>` can be tested but not
-  // awaited, and shutdown must await these: a post that completes mid-shutdown
-  // fires `updateCard` from its own `.then()`, creating a card update that no
-  // snapshot taken at the top of `shutdown()` could have contained. Each entry
-  // is the TAIL of the post chain, so by the time it settles the update it
-  // spawned is already registered in `inFlightCardUpdates`.
-  const inFlightCardPosts = new Set<Promise<unknown>>();
-  // Card updates genuinely in flight. `updateApprovalCard` is a network round
-  // trip, and a settle fires it fire-and-forget; without this the shutdown
-  // path would tear the adapter out from under the update and leave a denied
-  // approval rendering live Allow/Deny buttons in the channel.
-  const inFlightCardUpdates = new Set<Promise<unknown>>();
-
-  // Resolve a `sessionId` to its approval target. Returns `undefined` for
-  // any turn whose route isn't an approval-capable adapter; the hook then
-  // hands the call to `withoutSurface` (the no-surface gate).
-  //
-  // `requesterUserId` is the one user the coordinator lets decide
-  // (`ApprovalCoordinator.settle` drops every other click). In a DM that is
-  // the requester — the only human in the lane. In a group it is the platform
-  // owner, so a member cannot approve their own dangerous call (plan
-  // openclaw-advisory-fixes L-c, D20). A group on a platform with no owner
-  // configured keeps requester binding (D21): refusing every approval there
-  // would make the bot unusable, and the requester is still the only clicker
-  // accepted. Pinned by apps/ethos/src/commands/__tests__/approval-target.test.ts.
-  const resolveApprovalTarget = (sessionId: string) => {
-    const route = gateway.resolveApprovalRoute(sessionId);
-    if (!route || !isApprovalCapable(route.adapter)) return undefined;
-    return {
-      requesterUserId: route.isDm
-        ? route.requesterUserId
-        : (seams.ownerFor(route.platform) ?? route.requesterUserId),
-    };
-  };
-
-  // Register the approval hook only on loops whose bot has an
-  // approval-capable adapter (every other bot got the no-surface gate above).
-  const approvalBots = bots.filter((bot) => approvalBotKeys.has(bot.botKey));
-  // One predicate for all approval bots. It learns each turn's personality
-  // from the owning loop's `session_start`, so `approvalMode` follows
-  // whatever personality the lane is actually running — including a
-  // `/personality` switch. The reviewer and its provider stay unconstructed
-  // unless a flagged call reaches `approvalMode: 'smart'`.
-  const isDangerous = createApprovalDangerPredicate({
-    hooks: approvalBots.map((bot) => bot.loop.hooks),
-    personalities: seams.personalities,
-    getProvider: seams.getProvider,
-    model: seams.model,
-    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
-    ...(seams.decision ? { decision: seams.decision } : {}),
-    executionPostureFor: seams.executionPostureFor,
-    usageMeter: seams.usageMeter,
-  });
-  // A turn on one of these loops that arrived through an adapter with no card
-  // (an Email message that fell back to a Slack bot's loop) cannot be asked:
-  // the no-surface gate refuses a flagged call, as on a bot with no card.
-  const withoutSurface = createNoApprovalSurfaceGate(
-    approvalBots.map((bot) => bot.loop.hooks),
-    noSurfaceOpts,
-  );
-  for (const bot of approvalBots) {
-    bot.loop.hooks.registerModifying(
-      'before_tool_call',
-      createSlackApprovalHook({
-        coordinator,
-        isDangerous,
-        resolveApprovalTarget,
-        withoutSurface,
-        hardlineReason,
-        // No card for a call this bot's personality allowlist refuses anyway.
-        refusedAnyway: notPermittedRefusal(bot.loop),
-      }),
-    );
-    // Approval-required commands (command substitution) now reach the card
-    // instead of the loop's terminal/process guard refusing them first.
-    markHostApprovalGate(bot.loop.hooks);
-  }
-
-  // Update a posted card to its resolved state. Shared by the normal
-  // `onResolved` path and the post-races-resolution recovery path.
-  const updateCard = (
-    card: { adapter: ApprovalCapableAdapter; chatId: string; messageTs: string; toolName: string },
-    decision: 'allow' | 'deny',
-    decidedBy: string,
-  ): void => {
-    const update = card.adapter
-      .updateApprovalCard({
-        chatId: card.chatId,
-        messageTs: card.messageTs,
-        toolName: card.toolName,
-        decision,
-        decidedBy,
-      })
-      .then((result) => {
-        if (!result.ok) {
-          console.error('[gateway] failed to update approval card:', result.error);
-        }
-      })
-      .catch((err) => {
-        console.error('[gateway] failed to update approval card:', err);
-      })
-      .finally(() => {
-        inFlightCardUpdates.delete(update);
-      });
-    inFlightCardUpdates.add(update);
-  };
-
-  // Pending approval → post a card on the originating Slack conversation.
-  //
-  // Fail CLOSED: the agent loop's hook is already suspended on the
-  // coordinator promise. Any path that can't deliver a card — no route, a
-  // non-Slack adapter (e.g. a Discord/Email message that fell back to this
-  // Slack bot's loop), or a Slack post failure — must resolve the approval
-  // as a deny, or the turn hangs forever with no way to recover. Card
-  // delivery is a correctness path, not an observability-only one.
-  coordinator.onPending((req) => {
-    const route = gateway.resolveApprovalRoute(req.sessionId);
-    if (!route || !isApprovalCapable(route.adapter)) {
-      void coordinator.deny(req.approvalId, SYSTEM_DECIDER);
-      return;
-    }
-    const adapter = route.adapter;
-    inFlightPosts.add(req.approvalId);
-    const post: Promise<unknown> = adapter
-      .postApprovalCard({
-        chatId: route.chatId,
-        threadId: route.threadId,
-        approvalId: req.approvalId,
-        toolName: req.toolName,
-        reason: req.reason,
-        args: req.args,
-      })
-      .then((result) => {
-        inFlightPosts.delete(req.approvalId);
-        if ('error' in result) {
-          console.error('[gateway] failed to post approval card:', result.error);
-          resolvedBeforePost.delete(req.approvalId);
-          void coordinator.deny(req.approvalId, SYSTEM_DECIDER);
-          return;
-        }
-        const card = {
-          adapter,
-          chatId: route.chatId,
-          messageTs: result.messageTs,
-          toolName: req.toolName,
-        };
-        // If the approval resolved while this post was in flight, the
-        // `onResolved` handler already ran and found no card. Drain that
-        // recorded outcome now so the freshly-posted card doesn't sit in the
-        // channel with live buttons forever.
-        const racedOutcome = resolvedBeforePost.get(req.approvalId);
-        if (racedOutcome) {
-          resolvedBeforePost.delete(req.approvalId);
-          updateCard(card, racedOutcome.decision, racedOutcome.decidedBy);
-          return;
-        }
-        postedCards.set(req.approvalId, card);
-      })
-      .catch((err) => {
-        inFlightPosts.delete(req.approvalId);
-        resolvedBeforePost.delete(req.approvalId);
-        console.error('[gateway] failed to post approval card:', err);
-        void coordinator.deny(req.approvalId, SYSTEM_DECIDER);
-      })
-      .finally(() => {
-        inFlightCardPosts.delete(post);
-      });
-    inFlightCardPosts.add(post);
-  });
-
-  // Resolution (from ANY source — click, timeout, cancel) → update the card
-  // in place so its buttons disappear and it reflects the real decision. The
-  // card UI must never lie about approval state. When a card post is still
-  // in flight, record the outcome so the post `.then()` can apply it the
-  // moment the card exists; when no post is in flight (a fail-closed deny
-  // with no route), there's no card to update and nothing to record.
-  coordinator.onResolved((approvalId, decision, decidedBy) => {
-    const card = postedCards.get(approvalId);
-    if (!card) {
-      if (inFlightPosts.has(approvalId)) {
-        resolvedBeforePost.set(approvalId, { decision, decidedBy });
-      }
-      return;
-    }
-    postedCards.delete(approvalId);
-    updateCard(card, decision, decidedBy);
-  });
-
-  // Button click → resolve the approval through the coordinator. The card
-  // update is handled by the `onResolved` handler above, so a click and a
-  // timeout converge on the same render path.
-  for (const adapter of approvalAdapters) {
-    adapter.onApprovalDecision((event) => {
-      if (event.decision === 'allow') {
-        void coordinator.approve(event.approvalId, event.decidedBy);
-      } else {
-        void coordinator.deny(event.approvalId, event.decidedBy, event.note);
-      }
-    });
-  }
-
-  return {
-    // `forceSettleAll` is synchronous (settle → audit → resolve), but each
-    // settle fires `onResolved` → `updateCard`, an async round trip. Drain
-    // those before returning so the caller can stop its adapters without
-    // stranding a denied approval's card with live buttons.
-    //
-    // A LOOP, not a single `allSettled`: `forceSettleAll` settles every
-    // pending approval, including any whose card post is still on the wire.
-    // Awaiting such a post lets its `.then()` drain `resolvedBeforePost` and
-    // fire a card update that did not exist when the drain started, so both
-    // sets are re-read each pass. Bounded, because this runs on the
-    // SIGINT/SIGTERM path: a hung adapter must cost a stale card, not a
-    // shutdown that never completes.
-    shutdown: async () => {
-      offLaneStop();
-      coordinator.forceSettleAll();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<'expired'>((resolve) => {
-        timer = setTimeout(() => resolve('expired'), APPROVAL_SHUTDOWN_DRAIN_MS);
-      });
-      try {
-        while (inFlightCardPosts.size > 0 || inFlightCardUpdates.size > 0) {
-          const drained = Promise.allSettled([...inFlightCardPosts, ...inFlightCardUpdates]).then(
-            () => 'drained' as const,
-          );
-          if ((await Promise.race([drained, deadline])) === 'expired') {
-            console.warn(
-              `[gateway] approval shutdown gave up after ${APPROVAL_SHUTDOWN_DRAIN_MS}ms with ` +
-                `${inFlightCardPosts.size} card post(s) and ${inFlightCardUpdates.size} ` +
-                'card update(s) outstanding',
-            );
-            return;
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-    pendingCount: () => coordinator.pendingCount(),
-  };
-}
-
 /**
  * The idle watcher's busy predicate for the `ethos gateway` profile
  * (plan/phases/idle-watcher.md §1). Each source is a thin closure built HERE,
@@ -3663,50 +3009,6 @@ export async function validateBindings(config: EthosConfig): Promise<string[]> {
 }
 
 /**
- * Construct one PlatformAdapter per configured bot/app, in addition to
- * single legacy adapters for discord + email. Exported so tests can
- * exercise the multi-bot adapter loop with a mocked module loader
- * (avoiding a real grammy / @slack/bolt construction in unit tests).
- *
- * Applies `applyPlatformShim` defensively so callers that pass a
- * legacy single-bot config (`telegramToken` / `slackBotToken` etc.)
- * still construct adapters correctly. The shim is idempotent — when
- * the boot path already normalized via `loadConfigStrict`, the
- * second pass is a no-op.
- */
-export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Promise<T | null>;
-
-/**
- * Adapt the personality-scoped MemoryProvider to the narrow
- * `{ read, append }` shape the Slack `/ethos memory` command consumes.
- * Scopes every read/write to `personality:<id>` so each Slack bot sees
- * the MEMORY.md of the personality it's bound to — on the configured backend
- * (the vault under `memory: vault`), via `openFileMemory`. A backend with no
- * file memory (vector) returns undefined, so the command answers "Memory is
- * unavailable for this bot." rather than editing files the agent never reads.
- */
-export function createSlackMemoryReader(personalityId: string, config: EthosConfig) {
-  if (fileMemoryUnsupportedReason(config)) return undefined;
-  const provider = openFileMemory(config, 'tool').provider;
-  const ctx: MemoryContext = {
-    scopeId: `personality:${personalityId}`,
-    sessionId: '',
-    sessionKey: '',
-    platform: 'slack',
-    workingDir: process.cwd(),
-  };
-  return {
-    async read(): Promise<string | null> {
-      const entry = await provider.read('MEMORY.md', ctx);
-      return entry?.content ?? null;
-    },
-    async append(text: string): Promise<void> {
-      await provider.sync([{ action: 'add', key: 'MEMORY.md', content: text }], ctx);
-    },
-  };
-}
-
-/**
  * Build the `/ethos personality rich` card reader: the personality registry
  * supplies config + SOUL.md, and the shared `SkillsInjector.resolveSkills()`
  * supplies the resolved skill set. The injector is constructed the way
@@ -3746,33 +3048,6 @@ async function createSlackPersonalityCardReader() {
     },
   };
 }
-
-/** How many recent sessions the App Home reader hands the Slack adapter. The
- *  view caps its own list at 5 and renders "+ N more" from the overflow, so a
- *  slightly larger window makes that counter meaningful without unbounded IO. */
-const SLACK_RECENT_SESSION_LIMIT = 10;
-
-/**
- * Build the App Home "Recent sessions" reader and the `/sessions/<id>` unfurl
- * reader, both backed by the gateway's `sessions.db`. Mirrors
- * `createSlackMemoryReader`: the Slack package never imports
- * `@ethosagent/session-sqlite`, it just consumes these narrow shapes.
- *
- * The store is opened on first read, not at boot — `buildAdapters` runs in
- * contexts (tests, `--dry-run`-style construction) where touching the session
- * database would be a surprising side effect.
- *
- * `recentSessions` filters on the gateway's own lane-key prefix
- * (`slack:<botKey>:`, each segment URL-encoded — see `buildLaneKey` in
- * `@ethosagent/gateway`), so one workspace's App Home never lists another
- * bot's conversations.
- */
-/**
- * Every `sessions.db` handle `createSlackSessionReaders` opened — one per
- * Slack bot, lazily, on the first App Home read. Closed together by the host's
- * shutdown (F06); without that each one left a `-wal`/`-shm` pair behind.
- */
-const slackSessionStores = new Set<{ close(): void }>();
 
 /** Close what `createSlackSessionReaders` and `openBranchSessionStore` opened.
  *  A no-op when neither ever ran. Called by `ethos gateway`'s and `ethos boot`'s
@@ -3860,49 +3135,6 @@ export async function botSpendSince(
     keyPrefix: scope.sessionKeyPrefix,
   });
   return { repliesUsd: turnUsd + ledger.turnUtilityUsd, backgroundUsd: ledger.backgroundUsd };
-}
-
-function createSlackSessionReaders(botKey: string) {
-  let store: SessionStore | undefined;
-  const sessions = (): SessionStore => {
-    if (!store) {
-      const opened = createSessionStore({ dataDir: ethosDir() });
-      slackSessionStores.add(opened);
-      store = opened;
-    }
-    return store;
-  };
-  const prefix = `slack:${encodeURIComponent(botKey)}:`;
-  return {
-    session: {
-      async recentSessions() {
-        const rows = await sessions().listSessions({
-          keyPrefix: prefix,
-          limit: SLACK_RECENT_SESSION_LIMIT,
-        });
-        return rows.map((s) => ({
-          id: s.id,
-          // The lane key's tail is the channel (plus thread, when threaded) —
-          // the only human-meaningful part of an otherwise opaque key.
-          label: s.key.slice(prefix.length) || s.key,
-          lastActivity: s.updatedAt,
-        }));
-      },
-    },
-    sessionUnfurl: {
-      async lookupSession(id: string) {
-        const s = await sessions().getSession(id);
-        if (!s) return null;
-        return {
-          id: s.id,
-          // Sessions store the personality id, which is what operators name
-          // their personalities by; no registry lookup buys anything here.
-          personalityName: s.personalityId ?? 'unknown',
-          lastActivity: s.updatedAt,
-        };
-      },
-    },
-  };
 }
 
 /**
@@ -4055,119 +3287,17 @@ export async function createTelegramGreetingProvider() {
 }
 
 /**
- * Effective allowlist for a Slack app's out-of-band surfaces — the `/ethos`
- * slash command and the App Home tab. Neither is an inbound message, so the
- * gateway's `checkMessage` never sees them; this is where they get their
- * trust set, and it is derived from the message surface's so the two cannot
- * disagree about who is trusted.
+ * Construct one PlatformAdapter per configured bot/app, in addition to
+ * single legacy adapters for discord + email. Exported so tests can
+ * exercise the multi-bot adapter loop with a mocked module loader
+ * (avoiding a real grammy / @slack/bolt construction in unit tests).
  *
- * Base = `channel_filter.slack` (`ownerUserId` + `recipientAllowlist`), the
- * exact set `checkMessage` admits. `slack.apps.<i>.allowedSlashUsers`, when
- * set, *narrows* that base — it can never widen it, so a user who cannot get
- * a message to the bot can never drive its privileged surfaces either.
- *
- * Fail-closed: no `channel_filter.slack` entry, no allowlisted senders, or an
- * `allowedSlashUsers` list that shares no id with the base, all yield `[]`,
- * and an empty list authorizes nobody. `channel_filter.slack.enabled: false`
- * is deliberately not an escape hatch here — disabling the message filter
- * opens the message surface, not the surfaces that write MEMORY.md and
- * rewrite channel routing.
+ * Applies `applyPlatformShim` defensively so callers that pass a
+ * legacy single-bot config (`telegramToken` / `slackBotToken` etc.)
+ * still construct adapters correctly. The shim is idempotent — when
+ * the boot path already normalized via `loadConfigStrict`, the
+ * second pass is a no-op.
  */
-function slackSlashAllowlist(
-  filter: { ownerUserId?: string; recipientAllowlist?: string[] } | undefined,
-  allowedSlashUsers: string[] | undefined,
-): string[] {
-  const base: string[] = [];
-  if (filter?.ownerUserId) base.push(filter.ownerUserId);
-  if (filter?.recipientAllowlist) base.push(...filter.recipientAllowlist);
-  if (!allowedSlashUsers || allowedSlashUsers.length === 0) return base;
-  return base.filter((id) => allowedSlashUsers.includes(id));
-}
-
-/**
- * The two adapters that can serve a platform webhook, viewed structurally.
- *
- * Neither getter is on `PlatformAdapter` — webhook hosting is a property of
- * two specific adapters, not of the channel contract — and both are optional
- * because both are `undefined` in the transport mode this repo has always
- * defaulted to (Telegram long-poll, Slack Socket Mode).
- */
-interface WebhookCapableAdapter {
-  /** `TelegramAdapter.webhook` — grammy's `'http'` framework callback. */
-  readonly webhook?: PlatformWebhookHandler | undefined;
-  /** `SlackAdapter.requestListener` — Bolt's `HTTPReceiver`. */
-  readonly requestListener?: PlatformWebhookHandler | undefined;
-  /** `SlackAdapter.webhookRoute` — the path that receiver answers on. */
-  readonly webhookRoute?: string | undefined;
-}
-
-/** Dispatch maps for `createPlatformWebhookServer`. Empty = nothing to host. */
-export interface PlatformWebhookMounts {
-  /** botKey → handler, mounted at `/telegram/webhook/<botKey>`. */
-  telegram: Map<string, PlatformWebhookHandler>;
-  /** Full route path → handler, as the Slack adapter reports it. */
-  slack: Map<string, PlatformWebhookHandler>;
-}
-
-/**
- * Collect the webhook handlers of every bot/app the operator put in webhook
- * mode (plan/phases/telegram-slack-webhook-mode.md §2b, §3c).
- *
- * MUST be called AFTER `adapter.start()`. `TelegramAdapter.webhook` is
- * `undefined` until `start()` builds the grammy callback, so calling this at
- * construction time would find nothing to mount and silently fall back to a
- * server that 404s every delivery.
- *
- * Slack is keyed by `adapter.webhookRoute` rather than by a locally recomputed
- * `/slack/events/<botKey>`: Bolt's `HTTPReceiver` matches its `endpoints` list
- * EXACTLY, so a mount path derived twice is a mount path that can drift, and
- * the drift shows up as a production 404 rather than a type error.
- */
-export function buildPlatformWebhookMounts(
-  config: EthosConfig,
-  adapters: PlatformAdapter[],
-  warn: (message: string) => void,
-): PlatformWebhookMounts {
-  // Idempotent — same defensive call `buildAdapters` makes, so a legacy
-  // single-bot config resolves to the same botKeys the adapters were built on.
-  const shimmed = applyPlatformShim(config).config;
-  const byId = new Map(adapters.map((a) => [a.id, a as PlatformAdapter & WebhookCapableAdapter]));
-  const telegram = new Map<string, PlatformWebhookHandler>();
-  const slack = new Map<string, PlatformWebhookHandler>();
-
-  for (const botCfg of shimmed.telegram?.bots ?? []) {
-    if (!botCfg.useWebhook) continue;
-    const botKey = deriveBotKey(botCfg);
-    const handler = byId.get(`telegram:${botKey}`)?.webhook;
-    if (!handler) {
-      warn(
-        `telegram bot "${botKey}" is configured with use_webhook but its adapter exposes ` +
-          'no webhook handler — no route was mounted and Telegram deliveries will 404.',
-      );
-      continue;
-    }
-    telegram.set(botKey, handler);
-  }
-
-  for (const appCfg of shimmed.slack?.apps ?? []) {
-    if (!appCfg.mode?.http) continue;
-    const botKey = deriveBotKey(appCfg);
-    const adapter = byId.get(`slack:${botKey}`);
-    const handler = adapter?.requestListener;
-    const route = adapter?.webhookRoute;
-    if (!handler || !route) {
-      warn(
-        `slack app "${botKey}" is configured with mode.http but its adapter exposes no ` +
-          'request listener — no route was mounted and Slack deliveries will 404.',
-      );
-      continue;
-    }
-    slack.set(route, handler);
-  }
-
-  return { telegram, slack };
-}
-
 export async function buildAdapters(
   config: EthosConfig,
   loadAdapter: AdapterModuleLoader,
@@ -4752,10 +3882,6 @@ async function buildWhatsAppClarifySurfaces(
 // `@ethosagent/gateway`, and every one of these needs a type or a value from
 // it. Moving them out would break the daemon-free doctrine gate.
 
-/** The shape `createAgentLoop` returns — used to type the collaborators the
- *  extracted builders below receive already-constructed. */
-type AgentLoopBuild = Awaited<ReturnType<typeof createAgentLoop>>;
-
 /**
  * The shared attachment cache every platform adapter and the `Gateway` read
  * from, plus its hourly TTL sweep.
@@ -4978,553 +4104,6 @@ export async function registerGatewayClarifySurfaces(opts: {
 }
 
 /**
- * The botKey of the one bot an idle gateway (no platform bot configured) runs
- * on — the same `'default'` the Gateway's legacy `loop` shorthand synthesized.
- * Plugin adapters and the like reach it through the single-bot fallback
- * (`Gateway.routedBotKey`).
- */
-export const IDLE_GATEWAY_BOT_KEY = 'default';
-
-/**
- * `createAgentLoop` options that make a host's system loop the idle bot's
- * loop, the way `assembleGatewayBots` gives every configured bot its own:
- * `originBotKey` so a `delegate_task(background: true)` job started from one
- * of its turns records WHICH bot announces it (without it the job has no
- * origin bot, nothing subscribes to its completion and the restart sweep
- * `Gateway.sweepUndeliveredJobs` never lists it), and the thread resolver so
- * the notice returns to the sub-conversation. Only gateway turns carry a
- * `platform:chatId` origin, so cron, web and ACP turns on the same loop still
- * record no origin bot (`splitFirstColon` in extensions/tools-delegation).
- * Both `ethos gateway start` and `ethos boot` pass these when no bot is
- * configured; pinned by apps/ethos/src/__tests__/idle-gateway-bot.test.ts.
- */
-export function idleGatewayBotLoopOpts(
-  origin: GatewayTurnOrigin,
-): { originBotKey: string } & GatewayTurnOrigin {
-  return { originBotKey: IDLE_GATEWAY_BOT_KEY, ...origin };
-}
-
-/**
- * The per-turn origin lookups only the gateway can answer (`ToolContext`
- * carries neither a thread nor a sender), handed to every loop a gateway host
- * builds so a `delegate_task(background: true)` job records the thread its
- * completion returns to and the user its clarify binds to
- * (`BackgroundToolDeps` in extensions/tools-delegation). Late-bound: the
- * gateway is constructed after its loops.
- */
-export interface GatewayTurnOrigin {
-  resolveOriginThreadId: (sessionKey: string) => string | undefined;
-  resolveOriginUserId: (sessionKey: string) => string | undefined;
-  /**
-   * The bot daily cap's background gate (`Gateway.backgroundGate`, plan
-   * background-usage-accounting D39), handed to the loop's usage meter. Rides
-   * here because every loop a gateway host builds already takes this object,
-   * late-bound. `allow` before the Gateway exists.
-   */
-  backgroundGate: UsageGate;
-}
-
-export function gatewayTurnOrigin(gateway: () => Gateway | null): GatewayTurnOrigin {
-  return {
-    resolveOriginThreadId: (sessionKey) => gateway()?.originThreadIdFor(sessionKey),
-    resolveOriginUserId: (sessionKey) => gateway()?.originUserIdFor(sessionKey),
-    backgroundGate: async (request) =>
-      (await gateway()?.backgroundGate(request)) ?? { decision: 'allow' },
-  };
-}
-
-/**
- * The idle gateway's one bot: the host's system loop, bound to the default
- * personality with `/personality` switching allowed (what the legacy `loop`
- * shorthand gave it), plus that loop's job store and background executor so
- * its background jobs announce through the normal tracked path
- * (`Gateway.deliverCompletion` / `WakeReviews.claimWake` in extensions/gateway/src/wake-review.ts, resolved by `adapterForBot`).
- */
-export function idleGatewayBot(
-  loop: AgentLoop,
-  personality: string | undefined,
-  jobs: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor' | 'jobControl'> | undefined,
-): GatewayBotConfig {
-  return {
-    botKey: IDLE_GATEWAY_BOT_KEY,
-    loop,
-    binding: { type: 'personality', name: personality ?? 'default', allowSlashSwitch: true },
-    ...(jobs?.jobStore ? { jobStore: jobs.jobStore } : {}),
-    ...(jobs?.backgroundExecutor ? { backgroundExecutor: jobs.backgroundExecutor } : {}),
-    ...(jobs?.jobControl ? { jobControl: jobs.jobControl } : {}),
-  };
-}
-
-/**
- * Construct the `Gateway` for the gateway role.
- *
- * Extracted verbatim from `runGatewayStart` (plan §3b step 5, "`Gateway` class
- * constructed"). The two-branch shape is preserved exactly: with no bot
- * configured the Gateway is built on the single system loop and skips the
- * bot-only collaborators (attachment cache, clarify correlator, Telegram card
- * / greeting readers); with bots it is built on the routing table.
- */
-export interface BuildGatewayOptions {
-  config: EthosConfig;
-  bots: GatewayBotConfig[];
-  /** Used only on the no-bot idle path, as the idle bot's loop (`idleGatewayBot`). */
-  systemLoop: AgentLoop;
-  /** `systemLoop`'s job store and background executor — the idle bot's, as a
-   *  configured bot gets its own loop's. Ignored when `bots` is non-empty. */
-  idleBotJobs?: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor' | 'jobControl'>;
-  /**
-   * EVERY adapter this process runs. Both registries the Gateway takes are
-   * derived from it by `adapterRegistries` (@ethosagent/gateway): the
-   * platform-keyed default for `send_message`, and the botKey-keyed full set
-   * that tracked sends resolve through. Taking the list rather than the two
-   * maps is deliberate — `ethos gateway start` once passed only the first map,
-   * and every later same-platform bot lost its tracked sends
-   * (`__tests__/gateway-bot-adapters.test.ts`).
-   */
-  adapters: readonly PlatformAdapter[];
-  deliveryLedger: GatewayConfig['deliveryLedger'];
-  /** U11 — where notices wait out quiet hours / a `/mute`. Absent → none held. */
-  heldNotices?: GatewayConfig['heldNotices'];
-  inboundDedup: GatewayConfig['inboundDedup'];
-  /** Opened by `ethos gateway start` and `ethos boot` — the two commands that
-   *  hold the gateway lock (`openInboundSpool`, ../lib/gateway-inbound-durability).
-   *  Optional for tests and hosts that own no adapters. */
-  inboundSpool?: GatewayConfig['inboundSpool'];
-  inboundSpoolOptions?: GatewayConfig['inboundSpoolOptions'];
-  resolveUserId: GatewayConfig['resolveUserId'];
-  /** `GatewayConfig['pluginLoader']` is narrower than what `createAgentLoop`
-   *  returns — `pluginAdapters` is derived here via `getPlatformAdapters()`,
-   *  which that narrower shape does not declare. */
-  pluginLoader: AgentLoopBuild['pluginLoader'];
-  trustedChannelPlugins: GatewayConfig['trustedChannelPlugins'];
-  notificationRouter: NotificationRouter;
-  storage: GatewayConfig['storage'];
-  attachmentCache: NonNullable<GatewayConfig['attachmentCache']>;
-  sttProviders: GatewayConfig['sttProviderRegistry'];
-  ttsProviders: GatewayConfig['ttsProviderRegistry'];
-  voiceConfig: AgentLoopBuild['voiceConfig'];
-  voiceModeStore: GatewayConfig['voiceModeStore'];
-  voiceArtifacts: GatewayConfig['voiceArtifacts'];
-  transcoder: GatewayConfig['transcoder'];
-  channelVoiceOut: GatewayConfig['channelVoiceOut'];
-  voiceBitrateKbps: GatewayConfig['voiceBitrateKbps'];
-  personalityDirectory: GatewayConfig['personalityDirectory'];
-  onTurnComplete: GatewayConfig['onTurnComplete'];
-  onUserTurn: GatewayConfig['onUserTurn'];
-  streamingEdits: GatewayConfig['streamingEdits'];
-  pairingDb: GatewayConfig['pairingDb'];
-  /** Observe-mode transcript sink. Build it with `openChannelTranscriptStore`. */
-  channelTranscript: GatewayConfig['channelTranscript'];
-  /**
-   * The channel digest's in-app feed. Optional because only `ethos boot` has
-   * one — see `channelDigestFeed` in `./boot-digest` and the field's doc on
-   * `GatewayConfig`.
-   */
-  channelDigestFeed?: GatewayConfig['channelDigestFeed'];
-  clarifyMessageCorrelator: GatewayConfig['clarifyMessageCorrelator'];
-  personalityCardReader: GatewayConfig['personalityCardReader'];
-  greetingProvider: GatewayConfig['greetingProvider'];
-  /**
-   * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
-   * `Gateway.deliverPublication` runs before it publishes an approved outbox
-   * item (O-T5). Build it with `buildBotSpeakers(config).speaksFor`.
-   *
-   * Required, not optional: `deliverPublication` refuses EVERY publication
-   * when it is absent, so leaving it unwired is a deployment that queues
-   * approvals nobody can deliver.
-   */
-  publicationSpeaksFor: NonNullable<GatewayConfig['publicationSpeaksFor']>;
-  /**
-   * Where every `gateway.*` event is recorded — safety blocks, channel
-   * allow/deny, injection flags, and the inbound spool's `gateway.spool_*`
-   * events. Build it with `gatewayObservability()`.
-   *
-   * Required, not optional, for the same reason as `publicationSpeaksFor`: the
-   * Gateway records through `this.observability?.…`, so leaving it out is not
-   * an error anywhere — every event just goes nowhere, which is what both
-   * production hosts did until this field existed
-   * (`__tests__/gateway-observability-wiring.test.ts`).
-   */
-  observability: GatewayConfig['observability'];
-}
-
-/**
- * Boot-time notice for an email bot with no `emailTrustedAuthservId` (plan
- * openclaw-advisory-fixes Item 6). Without it `resolveEmailSender`
- * (extensions/platform-email/src/index.ts) treats EVERY sender as unverified,
- * so a deployment that upgraded without setting the key has lost identity
- * continuity for all of its correspondents — worth one warn-level event and
- * one console line, not a refusal to start (fail closed is the safe state).
- *
- * The configured-email predicate is the one `buildAdapters` uses. Called by
- * both adapter-owning hosts (`runGatewayStart`, `ethos boot`) right after
- * adapters are built. Fail-open on the record, like `gatewayObservability`.
- * Returns whether it warned. Pinned by
- * `__tests__/email-sender-auth-wiring.test.ts`.
- */
-export function warnEmailSenderAuthUnconfigured(
-  config: EthosConfig,
-  record: (opts: { code: string; cause: string; severity: 'warn' }) => void = (opts) =>
-    getEthosObservability().recordError(opts),
-  log: (line: string) => void = (line) => console.log(line),
-): boolean {
-  const emailConfigured =
-    config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost;
-  if (!emailConfigured || config.emailTrustedAuthservId?.trim()) return false;
-  const cause =
-    'email is configured without emailTrustedAuthservId — every sender is treated as unverified (no From: address is trusted as an identity)';
-  try {
-    record({ code: 'email.sender_auth_unconfigured', cause, severity: 'warn' });
-  } catch {
-    // Fail-open — observability never stops the gateway starting.
-  }
-  log(
-    `${c.yellow}⚠ ${cause}.${c.reset} ${c.dim}Set emailTrustedAuthservId to the first token of the Authentication-Results header on any mail this account received.${c.reset}`,
-  );
-  return true;
-}
-
-/**
- * Every adapter this process started, each exactly once — what a host's
- * shutdown `stop()`s. The host's own list (`buildGatewayAdapters`) holds only
- * the built-in adapters; the Gateway holds the rest live: the plugin-registered
- * ones (`GatewayConfig.pluginAdapters`, constructed AND started inside the
- * `Gateway` constructor, so no host list ever saw them) and any a live reload
- * added (`Gateway.addAdapter`). A bot a reload retired is gone from
- * `listAdapters()` and was already stopped by `Gateway.removeAdapter`, so it is
- * left out even though a built-in one is still in the host's list
- * (`Gateway.hasStopped`). An adapter in both lists appears once (identity).
- * Used by `ethos gateway start` and `ethos boot`; pinned by
- * apps/ethos/src/__tests__/every-started-adapter.test.ts.
- */
-export function everyStartedAdapter(
-  builtIn: readonly PlatformAdapter[],
-  gateway: Pick<Gateway, 'listAdapters' | 'hasStopped'>,
-): PlatformAdapter[] {
-  return [...new Set([...builtIn, ...gateway.listAdapters()])].filter(
-    (a) => !gateway.hasStopped(a),
-  );
-}
-
-/**
- * `startAdaptersIsolated`'s `allFailed` for `ethos gateway start`. Its adapter
- * list is `buildGatewayAdapters`' built-ins only; a plugin-registered channel
- * (`GatewayConfig.pluginAdapters`) is constructed and started inside the
- * `Gateway` constructor and never appears in it. When the gateway serves such
- * an adapter it has something to serve, so an all-failed built-in start
- * continues — refused credentials abandoned, transient failures retried —
- * instead of exiting 78 over a dead token while the plugin channel is live.
- * With no adapter beyond the built-ins it throws, as before (V2-RT-5). Pinned
- * by `__tests__/gateway-adapter-start.test.ts` and, end to end, by
- * `__tests__/integration/gateway-sigkill-spool.integration.test.ts` (a fake
- * Telegram token beside a plugin channel).
- */
-export function gatewayAllFailedPolicy(
-  builtIn: readonly PlatformAdapter[],
-  gateway: Pick<Gateway, 'listAdapters'>,
-): 'throw' | 'continue' {
-  const own = new Set(builtIn);
-  return gateway.listAdapters().some((a) => !own.has(a)) ? 'continue' : 'throw';
-}
-
-/** First background retry of a failed adapter start (V-CC-4). */
-export const ADAPTER_START_RETRY_BASE_MS = 5_000;
-/** Cap on the gap between two retries of a failed adapter start. */
-export const ADAPTER_START_RETRY_MAX_MS = 5 * 60_000;
-
-/**
- * Delay before retry `attempt` (1-based) of a failed adapter start: 5s doubling
- * to a 5min cap, ±20% jitter so several bots that failed on one network blip do
- * not retry in lockstep. `random` is `Math.random`-shaped.
- */
-export function adapterStartRetryDelayMs(
-  attempt: number,
-  random: () => number = Math.random,
-): number {
-  const base = Math.min(
-    ADAPTER_START_RETRY_MAX_MS,
-    ADAPTER_START_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1),
-  );
-  return Math.round(base * (0.8 + 0.4 * random()));
-}
-
-/**
- * Whether an adapter `start()` rejection is a credential the platform refused —
- * a revoked or invalid token — which no retry can fix. The adapter's own
- * verdict wins: Discord, Telegram and Slack classify their start failures and
- * throw an error carrying a boolean `permanent` (`classifyDiscordStartError`,
- * `telegramTokenRejected`, `classifySlackStartError`; pinned by each adapter's
- * `start-permanent-error.test.ts`), and a boolean `permanent` is returned
- * as-is. Only an error without one — an adapter that does not classify, or a
- * failure it did not recognise — falls back to the SDK shapes: discord.js
- * `code: 'TokenInvalid'` / "An invalid token was provided"; grammy's Bot API
- * `error_code: 401` / "401: Unauthorized"; Slack Web API `invalid_auth`,
- * `not_authed`, `token_revoked`, `account_inactive`. Anything else — DNS, a
- * reset socket, a 5xx — is transient.
- */
-export function isPermanentAdapterStartError(err: unknown): boolean {
-  if (typeof err === 'object' && err !== null) {
-    if ('permanent' in err && typeof err.permanent === 'boolean') return err.permanent;
-    if ('code' in err && err.code === 'TokenInvalid') return true;
-    if ('error_code' in err && err.error_code === 401) return true;
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  return /invalid token|TokenInvalid|\b401\b|unauthorized|invalid_auth|not_authed|token_revoked|account_inactive/i.test(
-    message,
-  );
-}
-
-/** Background retry of a failed adapter start — see `startAdaptersIsolated`. */
-export interface AdapterStartRetryOptions<A extends AdapterStartable = AdapterStartable> {
-  /** Aborted by the host's shutdown; no attempt starts after it. */
-  signal: AbortSignal;
-  /** Called once an adapter starts on a retry (the host mounts its webhook). */
-  onStarted?: (adapter: A) => void;
-  /** An adapter a live config reload has retired (`Gateway.hasStopped`) is not
-   *  retried, and is stopped again if a retry started it. */
-  isRetired?: (adapter: A) => boolean;
-  /** Tests. Default `Math.random`. */
-  random?: () => number;
-  /** Tests. Resolves `false` when `signal` aborted during the wait. */
-  sleep?: (ms: number, signal: AbortSignal) => Promise<boolean>;
-}
-
-type AdapterStartable = { id: string; start(): Promise<void>; stop?(): Promise<void> };
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve(false);
-      return;
-    }
-    const onAbort = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve(true);
-    }, ms);
-    timer.unref?.();
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-/**
- * Retry one failed adapter start until it starts, fails permanently
- * (`isPermanentAdapterStartError`) or `retry.signal` aborts. Every attempt is
- * warned about and recorded: `gateway.adapter_start_retry_failed` per failed
- * retry, `gateway.adapter_start_recovered` on success,
- * `gateway.adapter_start_abandoned` on a permanent failure. An adapter whose
- * start resolves after shutdown began is stopped again.
- */
-async function retryAdapterStart<A extends AdapterStartable>(
-  adapter: A,
-  firstError: unknown,
-  deps: {
-    observability: Pick<GatewayObservability, 'recordSafetyBlock'>;
-    warn: (message: string) => void;
-  },
-  retry: AdapterStartRetryOptions<A>,
-): Promise<void> {
-  const sleep = retry.sleep ?? abortableSleep;
-  const abandon = (error: string, attempt: number) => {
-    deps.warn(
-      `adapter ${adapter.id} failed permanently (${error}) — not retrying; fix its credentials and restart the gateway`,
-    );
-    deps.observability.recordSafetyBlock({
-      code: 'gateway.adapter_start_abandoned',
-      cause: error,
-      details: { adapterId: adapter.id, attempt },
-    });
-  };
-  if (isPermanentAdapterStartError(firstError)) {
-    abandon(firstError instanceof Error ? firstError.message : String(firstError), 0);
-    return;
-  }
-  for (let attempt = 1; ; attempt++) {
-    const delayMs = adapterStartRetryDelayMs(attempt, retry.random);
-    if (!(await sleep(delayMs, retry.signal)) || retry.signal.aborted) return;
-    if (retry.isRetired?.(adapter)) return;
-    try {
-      await adapter.start();
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      if (isPermanentAdapterStartError(err)) {
-        abandon(error, attempt);
-        return;
-      }
-      deps.warn(`adapter ${adapter.id} retry ${attempt} failed: ${error} — retrying with backoff`);
-      deps.observability.recordSafetyBlock({
-        code: 'gateway.adapter_start_retry_failed',
-        cause: error,
-        details: { adapterId: adapter.id, attempt, delayMs },
-      });
-      continue;
-    }
-    if (retry.signal.aborted || retry.isRetired?.(adapter)) {
-      await adapter.stop?.().catch(() => {});
-      return;
-    }
-    deps.warn(`adapter ${adapter.id} started on retry ${attempt}`);
-    deps.observability.recordSafetyBlock({
-      code: 'gateway.adapter_start_recovered',
-      cause: `started on retry ${attempt}`,
-      details: { adapterId: adapter.id, attempt },
-    });
-    retry.onStarted?.(adapter);
-    return;
-  }
-}
-
-/**
- * `startAdaptersIsolated` rejected because EVERY adapter failed to start. The
- * message is the first failure's; `permanent` is whether every failure was a
- * credential the platform refused (`isPermanentAdapterStartError`).
- */
-export class AllAdaptersFailedError extends Error {
-  readonly permanent: boolean;
-  constructor(first: unknown, permanent: boolean) {
-    super(first instanceof Error ? first.message : String(first), { cause: first });
-    this.name = 'AllAdaptersFailedError';
-    this.permanent = permanent;
-  }
-}
-
-/**
- * The exit code `ethos gateway start` uses for an adapter-start failure, or
- * undefined for "not a refusal — exit 1 like any crash". Every adapter refused
- * its credentials (V2-RT-5) → `CONFIG_INVALID_EXIT_CODE` (78, EX_CONFIG): the
- * tokens live in config and no restart can fix them, and 78 is already final
- * for `ethos run-all` (`defaultChildSpecs` terminalExitCodes), the systemd unit
- * (`RestartPreventExitStatus`), the launchd wrapper and the Windows supervisor,
- * so none of them burns its restart budget respawning a dead token. Pinned by
- * `__tests__/gateway-adapter-start.test.ts`.
- */
-export function adapterStartFailureExitCode(err: unknown): number | undefined {
-  return err instanceof AllAdaptersFailedError && err.permanent
-    ? CONFIG_INVALID_EXIT_CODE
-    : undefined;
-}
-
-/**
- * Start every platform adapter with per-adapter isolation (UBP-010).
- *
- * `Promise.all` let ONE rejected `start()` — a revoked Discord token, a Slack
- * socket that would not open — reject the whole command, exit 1 after Telegram
- * had already started polling, and burn the supervisor's restart budget with
- * every healthy bot offline. Here each rejection is warned about and recorded
- * as a `gateway.adapter_start_failed` observability event, and the others keep
- * serving. With `deps.retry`, each failed adapter is retried in the background
- * (`retryAdapterStart`: 5s doubling to 5min, jittered; stops on a permanent
- * credential error or when `retry.signal` aborts); `retrying` settles when
- * every retry loop has ended.
- *
- * When EVERY adapter failed, `allFailed` decides. `'throw'` (the default, used
- * by `ethos gateway start`, a process that exists only to serve its adapters)
- * rejects with an {@link AllAdaptersFailedError} and starts no retries, so a
- * gateway with nothing to serve still exits — with the refusal code when every
- * failure was a refused credential (`adapterStartFailureExitCode`). `'continue'`
- * (used by `ethos boot`, which also hosts the web UI, cron and serve —
- * V2-RT-5) resolves like a partial failure: the transient failures are retried,
- * the permanent ones abandoned, and the other services come up. Pinned by
- * `__tests__/gateway-adapter-start.test.ts`.
- */
-export async function startAdaptersIsolated<A extends AdapterStartable>(
-  adapters: ReadonlyArray<A>,
-  deps: {
-    observability: Pick<GatewayObservability, 'recordSafetyBlock'>;
-    warn: (message: string) => void;
-    retry?: AdapterStartRetryOptions<A>;
-    /** What an all-adapters-failed start does. Default `'throw'`. */
-    allFailed?: 'throw' | 'continue';
-  },
-): Promise<{
-  started: string[];
-  failed: { id: string; error: string }[];
-  retrying: Promise<void>;
-}> {
-  const results = await Promise.allSettled(adapters.map((a) => a.start()));
-  const started: string[] = [];
-  const failed: { id: string; error: string }[] = [];
-  const toRetry: { adapter: A; reason: unknown }[] = [];
-  let firstReason: unknown;
-  results.forEach((result, i) => {
-    const adapter = adapters[i];
-    const id = adapter?.id ?? `adapter#${i}`;
-    if (result.status === 'fulfilled') {
-      started.push(id);
-      return;
-    }
-    if (failed.length === 0) firstReason = result.reason;
-    const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
-    failed.push({ id, error });
-    if (adapter) toRetry.push({ adapter, reason: result.reason });
-    deps.warn(
-      deps.retry
-        ? `adapter ${id} failed to start: ${error} — the other adapters keep running; retrying in the background`
-        : `adapter ${id} failed to start: ${error} — the other adapters keep running; restart the gateway once it is fixed`,
-    );
-    deps.observability.recordSafetyBlock({
-      code: 'gateway.adapter_start_failed',
-      cause: error,
-      details: { adapterId: id },
-    });
-  });
-  if (adapters.length > 0 && failed.length === adapters.length && deps.allFailed !== 'continue') {
-    throw new AllAdaptersFailedError(
-      firstReason,
-      toRetry.every(({ reason }) => isPermanentAdapterStartError(reason)),
-    );
-  }
-  const retry = deps.retry;
-  const retrying = retry
-    ? Promise.all(
-        toRetry.map(({ adapter, reason }) =>
-          retryAdapterStart(adapter, reason, deps, retry).catch(() => {}),
-        ),
-      ).then(() => {})
-    : Promise.resolve();
-  return { started, failed, retrying };
-}
-
-/**
- * The Gateway's observability sink for a production host: the process-wide
- * `EthosObservability` (`getEthosObservability`, ../wiring), resolved on EVERY
- * call rather than captured once.
- *
- * Lazy because `closeObservabilityStore` drops the singleton at the end of
- * shutdown; a straggler event after that reopens a fresh handle instead of
- * writing to a closed one — the same idiom as the
- * `recordSafetyBlock: (opts) => getEthosObservability().recordSafetyBlock(opts)`
- * closures elsewhere in this file. The Gateway only borrows the sink: it never
- * closes it, and the host's shutdown still closes the store last.
- *
- * Fail-open: a store that cannot be opened, or a record that throws, is
- * swallowed here, so observability can never stop the gateway handling a
- * message. The Gateway calls these inline on its hot paths with no guard of
- * its own. Pinned by `__tests__/gateway-observability-wiring.test.ts`.
- */
-export function gatewayObservability(
-  get: () => GatewayObservability = getEthosObservability,
-): GatewayObservability {
-  const record = (fn: (sink: GatewayObservability) => void): void => {
-    try {
-      fn(get());
-    } catch {
-      // Fail-open — see the doc comment above.
-    }
-  };
-  return {
-    recordSafetyBlock: (opts) => record((sink) => sink.recordSafetyBlock(opts)),
-    recordInjectionFlag: (opts) => record((sink) => sink.recordInjectionFlag?.(opts)),
-    recordChannelAllow: (opts) => record((sink) => sink.recordChannelAllow(opts)),
-    recordChannelDeny: (opts) => record((sink) => sink.recordChannelDeny(opts)),
-    recordChannelPairing: (opts) => record((sink) => sink.recordChannelPairing?.(opts)),
-  };
-}
-
-/**
  * The `channel-digest` system cron task (plan/phases/ambient-group-monitoring.md
  * R3/R9/R10), shared by `ethos gateway start` and `ethos boot`.
  *
@@ -5613,58 +4192,6 @@ export function openChannelTranscriptStore(dbPath: string): ChannelTranscriptSto
       (await opened()?.readSince(laneKey, since, options)) ?? { messages: [], omittedCount: 0 },
     listLanes: async (options) => (await opened()?.listLanes(options)) ?? [],
     close: () => store?.close(),
-  };
-}
-
-/**
- * Route one adapter's inbound messages into the gateway, spool first.
- *
- * `acceptInbound` runs synchronously INSIDE the adapter's callback, before it
- * returns. In webhook mode the adapter calls that callback from inside the
- * platform framework's request handler (grammy's `webhookCallback`, Bolt's
- * `HTTPReceiver`), which writes its 200 only after the handler returns — so the
- * spool row is on disk before the platform is acknowledged, and the platform
- * retries only messages that were never spooled (plan reach-and-containment
- * §2.5, D2-10). Pinned by `__tests__/platform-webhook-ack-order.test.ts`.
- * A media message whose download the adapter awaits before calling back is the
- * exception: the framework has already acked it (adapter-side, unchanged).
- */
-export function wireAdapterInbound(gateway: Gateway, adapter: PlatformAdapter): void {
-  adapter.onMessage((message: InboundMessage) => {
-    const accepted = gateway.acceptInbound(message);
-    void gateway.handleMessage(message, adapter, { accepted }).catch((err) => {
-      console.error(`[gateway:${adapter.id}] Error:`, err);
-    });
-  });
-}
-
-/**
- * U11 — `notifications.*` → the gateway's quiet hours, with the time zone made
- * explicit (`notifications.timezone`, else the host's zone). A per-bot `off`
- * becomes `null`, which turns the window off for that bot. Undefined when no
- * window is configured anywhere.
- */
-export function resolveGatewayQuietHours(
-  notifications: NotificationsConfig | undefined,
-): GatewayQuietHours | undefined {
-  if (!notifications) return undefined;
-  const window = notifications.quietHours
-    ? (parseQuietHoursSpec(notifications.quietHours) ?? undefined)
-    : undefined;
-  const byBot: NonNullable<GatewayQuietHours['byBot']> = {};
-  for (const [botKey, entry] of Object.entries(notifications.bots ?? {})) {
-    if (entry.quietHours === 'off') byBot[botKey] = null;
-    else {
-      const parsed = parseQuietHoursSpec(entry.quietHours);
-      if (parsed) byBot[botKey] = parsed;
-    }
-  }
-  const hasByBot = Object.keys(byBot).length > 0;
-  if (!window && !hasByBot) return undefined;
-  return {
-    timeZone: notifications.timezone ?? hostTimeZone(),
-    ...(window ? { window } : {}),
-    ...(hasByBot ? { byBot } : {}),
   };
 }
 

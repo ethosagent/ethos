@@ -243,7 +243,7 @@ export interface CreateDangerPredicateOptions {
    *
    * Every surface a remote sender or a browser can reach — the web modal
    * (`serve.ts`, `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
-   * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
+   * (`wireApprovalFlow` in `gateway-approval.ts`) and the MCP export — omits it, so
    * `off` behaves as `manual` there.
    *
    * The capability gate stays the API contract that prevents any other
@@ -323,7 +323,7 @@ function shellCommand(payload: BeforeToolCallPayload): string | null {
  * Loops whose `before_tool_call` carries a HOST APPROVAL GATE: a hook built on
  * this module's predicate that, for every call the predicate flags, either
  * asks a human or refuses. Marked by the code that registers the gate —
- * `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts: the card hook or the
+ * `wireApprovalFlow` (apps/ethos/src/commands/gateway-approval.ts: the card hook or the
  * no-surface gate, for every bot), `wireUnattendedApprovalGate`
  * (apps/ethos/src/unattended-approval-gate.ts, the systemLoop) and
  * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts: `ethos

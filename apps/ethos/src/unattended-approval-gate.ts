@@ -18,7 +18,7 @@
 //     `createUnattendedApprovalGate` with its own rejection text.
 //   - `createNoApprovalSurfaceGate` — a REMOTE SENDER drives it, on a chat
 //     surface that cannot show an approval card. Registered by
-//     `wireApprovalFlow` (gateway.ts), the one call every bot-loop host makes
+//     `wireApprovalFlow` (gateway-approval.ts), the one call every bot-loop host makes
 //     (`ethos gateway start`; `ethos boot`'s `registerBotLive` for cold boot,
 //     live hot-add, webhook-route bots and a bot replaced on config reload):
 //     on every bot loop with no approval-capable adapter (WhatsApp, Email, a

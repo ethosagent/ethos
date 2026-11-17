@@ -59,7 +59,7 @@ An unknown platform name **fails the personality load** with `Invalid outbound_p
 
 The list is a deliberate copy of `SEND_MESSAGE_PLATFORMS` in `extensions/tools-messaging/src/index.ts` (`@ethosagent/personalities` must not import a sibling extension). The two are pinned equal by `packages/wiring/src/__tests__/outbound-policy-platforms.test.ts`.
 
-**`discord` and `email` gate but cannot publish.** `buildBotSpeakers` ([`apps/ethos/src/commands/gateway.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts)) builds its bot roster from Telegram bots, Slack apps and bound WhatsApp entries only. For a gated personality, a `send_message` to `discord` or `email` therefore resolves zero sender candidates and `resolveSender` refuses the proposal outright: nothing is queued and nothing is sent. The tool returns the refusal for the agent to read.
+**`discord` and `email` gate but cannot publish.** `buildBotSpeakers` ([`apps/ethos/src/commands/gateway-voice.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway-voice.ts)) builds its bot roster from Telegram bots, Slack apps and bound WhatsApp entries only. For a gated personality, a `send_message` to `discord` or `email` therefore resolves zero sender candidates and `resolveSender` refuses the proposal outright: nothing is queued and nothing is sent. The tool returns the refusal for the agent to read.
 
 ## What the gate covers {#coverage}
 

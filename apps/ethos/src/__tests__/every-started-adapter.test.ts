@@ -17,6 +17,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import type { ChannelContext, PlatformAdapter } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { type BuildGatewayOptions, buildGateway, everyStartedAdapter } from '../commands/gateway';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 
@@ -182,7 +183,7 @@ describe('everyStartedAdapter — what a host shutdown stops', () => {
       /await step\('adapters', \(\) =>\s*Promise\.allSettled\(everyStartedAdapter\(adapters, gateway\)\.map\(\(a\) => a\.stop\(\)\)\),/,
     );
     // Neither host still stops only its own built-in list.
-    expect(gw).not.toContain('Promise.allSettled(adapters.map((a) => a.stop()))');
+    expect(readGatewaySources()).not.toContain('Promise.allSettled(adapters.map((a) => a.stop()))');
     expect(readBootSources()).not.toContain('Promise.allSettled(adapters.map((a) => a.stop()))');
   });
 });

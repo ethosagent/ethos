@@ -13,6 +13,7 @@ import type {
   WakeRoute,
 } from '@ethosagent/voice-satellite';
 import { SATELLITE_SOCKET_PATH } from '@ethosagent/web-contracts';
+import { WARN_EXIT } from './_shared';
 import type { EdgeSttReport } from './listen-edge-stt';
 import type { PlayerResolution } from './listen-player';
 
@@ -200,8 +201,6 @@ export interface ListenFailFlags {
   /** No config, bad `--url`, unknown `--device`. */
   setupError: boolean;
 }
-
-export const WARN_EXIT = 2;
 
 /**
  * Hard failures (1) are the ones a human must fix on this machine before the

@@ -41,7 +41,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 // the "spool before 200" rule cannot be enforced here. It is enforced one frame
 // deeper: the framework acknowledges only after its handler returns, and the
 // adapter's message callback runs `Gateway.acceptInbound` synchronously inside
-// that handler (`wireAdapterInbound`, apps/ethos/src/commands/gateway.ts).
+// that handler (`wireAdapterInbound`, apps/ethos/src/commands/gateway-wiring.ts).
 // A handler that throws still gets the 500 below, so the platform retries.
 //
 // PORT: the caller passes one in; the convention is `ETHOS_PLATFORM_WEBHOOK_PORT`

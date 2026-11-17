@@ -43,7 +43,7 @@ export interface PendingApproval {
    * the approval (`settle` drops every other click). The name is historical:
    * the caller picks the decider, and on the gateway that is the requester in
    * a DM but the platform owner in a group (`resolveApprovalTarget` inside
-   * `wireApprovalFlow`, apps/ethos/src/commands/gateway.ts). Unset means no
+   * `wireApprovalFlow`, apps/ethos/src/commands/gateway-approval.ts). Unset means no
    * binding — any decider is accepted.
    */
   requesterUserId?: string;
@@ -324,7 +324,7 @@ export type DangerReason = string | null;
 export type DangerPredicate = (payload: BeforeToolCallPayload) => Promise<DangerReason>;
 
 /** Who decides a turn's approval. Built by `resolveApprovalTarget` inside
- *  `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts). */
+ *  `wireApprovalFlow` (apps/ethos/src/commands/gateway-approval.ts). */
 export interface ApprovalTarget {
   /** Platform user id of the one user allowed to decide — only they (or a
    *  system resolution) may resolve the approval (`ApprovalCoordinator.settle`).

@@ -9,7 +9,7 @@
 //
 // Real AgentLoop, real Gateway, real ApprovalCoordinator + approval hook. The
 // first block subscribes the listener by hand, the way `wireApprovalFlow`
-// (apps/ethos/src/commands/gateway.ts) does; the last case drives the
+// (apps/ethos/src/commands/gateway-approval.ts) does; the last case drives the
 // production `wireApprovalFlow` itself — the path both `ethos gateway start`
 // and `ethos boot` take — so dropping the subscription there fails a test.
 

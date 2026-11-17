@@ -10,14 +10,10 @@
 // records: `commands/serve.ts` imports `@ethosagent/acp-server`, an app with
 // no path alias, so the module is not importable from a repo-rooted vitest run.
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources } from '../commands/__tests__/serve-sources';
-
-const root = join(import.meta.dirname, '..', '..', '..', '..');
-const read = (rel: string) => readFile(join(root, rel), 'utf8');
 
 describe('in-process hosts wire the browser-takeover lane', () => {
   it('serve.ts hands the socket the tool lock registry, not a policy lookup', async () => {
@@ -58,7 +54,7 @@ describe('in-process hosts wire the browser-takeover lane', () => {
 // Handing back from the chat card still works there.
 describe('the gateway cannot reach an in-process browser session', () => {
   it('hosts no web API, so no takeover lane is wired there', async () => {
-    const src = await read('apps/ethos/src/commands/gateway.ts');
+    const src = readGatewaySources();
     expect(src).not.toContain('createWebApi(');
     expect(src).not.toContain('buildServeWebApi(');
     expect(src).not.toContain('takeoverSocket');

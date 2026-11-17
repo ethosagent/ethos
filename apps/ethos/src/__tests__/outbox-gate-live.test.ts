@@ -21,12 +21,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readBootSources } from '../commands/__tests__/boot-sources';
+import { GATEWAY_SOURCE_FILES, readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources, serveFileWith } from '../commands/__tests__/serve-sources';
 
 const CLI_ROOT = join(import.meta.dirname, '..');
 const COMMANDS = join(CLI_ROOT, 'commands');
 const read = (name: string) => readFileSync(join(COMMANDS, name), 'utf8');
-const gateway = read('gateway.ts');
+// Every gateway module: `runGatewayStart` delegates helpers to gateway-*.ts.
+const gateway = readGatewaySources();
 // Every boot module: `runBoot` delegates phases (the hot-add paths) to boot-*.ts.
 const boot = readBootSources();
 const serve = readServeSources();
@@ -164,11 +166,17 @@ function walkTs(dir: string): string[] {
   return out;
 }
 
+// The modules split out of gateway.ts count as the one gateway root.
+const GATEWAY_MODULES: ReadonlySet<string> = new Set(
+  GATEWAY_SOURCE_FILES.map((file) => `commands/${file}`),
+);
+
 function filesMatching(pattern: RegExp): string[] {
-  return walkTs(CLI_ROOT)
+  const files = walkTs(CLI_ROOT)
     .filter((file) => pattern.test(readFileSync(file, 'utf8')))
     .map((file) => relative(CLI_ROOT, file).replace(/\\/g, '/'))
-    .sort();
+    .map((file) => (GATEWAY_MODULES.has(file) ? 'commands/gateway.ts' : file));
+  return [...new Set(files)].sort();
 }
 
 describe('a root with no path to a channel needs no gate', () => {

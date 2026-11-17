@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { EthosConfig } from '@ethosagent/config';
 import { describe, expect, it, vi } from 'vitest';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { resolveTelephonyMedia } from '../commands/gateway';
 
 // `resolveTelephonyMedia` is the gateway's one call into the optional native
@@ -109,7 +110,7 @@ describe('gateway telephony media wiring (source shape)', () => {
     expect(loopAt).toBeGreaterThan(resolveAt);
     // Exactly one resolution site — a second would mean a second dynamic import
     // of a native package on every boot.
-    expect(GATEWAY.split('await resolveTelephonyMedia(').length - 1).toBe(1);
+    expect(readGatewaySources().split('await resolveTelephonyMedia(').length - 1).toBe(1);
   });
 
   it('forwards the binding into the system loop that owns the SIP voice stack', () => {

@@ -85,7 +85,8 @@ export type {
   CheckCallCaptureOptions,
 } from './doctor-voice';
 
-import { isOnPath, readExternalCliRequirements, type SkillPrereqIssue } from './doctor-skills';
+import { isOnPath, WARN_EXIT } from './_shared';
+import { readExternalCliRequirements, type SkillPrereqIssue } from './doctor-skills';
 import { formatResolvedLines, resolveEffective } from './status';
 
 export {
@@ -290,8 +291,6 @@ async function checkAwsSecrets(
 // probe exits with a DISTINCT warn code (2) so CI can tell "bad token" from
 // "the platform is down" (W1.2 liveness).
 // ---------------------------------------------------------------------------
-
-const WARN_EXIT = 2;
 
 export interface DoctorFailFlags {
   coreFailure: boolean;

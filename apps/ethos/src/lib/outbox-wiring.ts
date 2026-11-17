@@ -42,7 +42,7 @@ export { SQLiteOutboxStore };
 /**
  * The bot roster, as the sender resolver needs it.
  *
- * Structural: `buildBotSpeakers(config)` in `../commands/gateway` satisfies it.
+ * Structural: `buildBotSpeakers(config)` in `../commands/gateway-voice` satisfies it.
  * Declared here rather than imported so this module has no edge back into the
  * command that imports it.
  */
@@ -127,7 +127,7 @@ export function resolveSender(
 // ---------------------------------------------------------------------------
 
 export interface OutboxRuntimeDeps {
-  /** The bot roster — `buildBotSpeakers(config)` in `../commands/gateway`. */
+  /** The bot roster — `buildBotSpeakers(config)` in `../commands/gateway-voice`. */
   speakers: OutboxSenderCandidates;
   /** `channel_filter.<platform>.ownerUserId`. The operator's own chat is an
    *  exempt destination: telling the person who approves is not publishing. */
@@ -1634,7 +1634,7 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
 // ---------------------------------------------------------------------------
 
 export interface OutboxProposalSideDeps {
-  /** The bot roster — `buildBotSpeakers(config)` in `../commands/gateway`. */
+  /** The bot roster — `buildBotSpeakers(config)` in `../commands/gateway-voice`. */
   speakers: OutboxSenderCandidates;
   /** `channel_filter.<platform>.ownerUserId`. */
   ownerTarget: (platform: string) => string | undefined;

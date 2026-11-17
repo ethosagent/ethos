@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources } from '../commands/__tests__/serve-sources';
 
 // ---------------------------------------------------------------------------
@@ -83,7 +84,9 @@ describe('CLI createAgentLoop — memoryCapture.evidenceSessions reaches the com
         ? readBootSources()
         : file === 'commands/serve.ts'
           ? readServeSources()
-          : readFileSync(join(import.meta.dirname, '..', file), 'utf8');
+          : file === 'commands/gateway.ts'
+            ? readGatewaySources()
+            : readFileSync(join(import.meta.dirname, '..', file), 'utf8');
     expect(src).toMatch(/\bcreateAgentLoop\b/);
     // No host imports the package's createAgentLoop itself.
     expect(src).not.toMatch(

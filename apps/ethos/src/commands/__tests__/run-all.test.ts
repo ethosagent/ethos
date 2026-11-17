@@ -15,6 +15,7 @@ import {
   nextBackoff,
   pruneRestarts,
 } from '../run-all';
+import { readGatewaySources } from './gateway-sources';
 import { readServeSources } from './serve-sources';
 
 describe('run-all — pure helpers', () => {
@@ -173,12 +174,13 @@ describe('run-all — pure helpers', () => {
       );
       // Every `boundedShutdownStep(` call site on a child's path counts one
       // step bound — a new bounded await raises the budget or fails here.
-      const steps = async (path: string): Promise<number> =>
-        ((await readFile(join(root, path), 'utf8')).match(/boundedShutdownStep\(/g) ?? []).length;
-      const gatewaySteps = await steps('apps/ethos/src/commands/gateway.ts');
+      const gatewaySteps = (readGatewaySources().match(/boundedShutdownStep\(/g) ?? []).length;
       expect(gatewaySteps).toBe(4);
       const gateway =
-        (await constant('apps/ethos/src/commands/gateway.ts', 'APPROVAL_SHUTDOWN_DRAIN_MS')) +
+        (await constant(
+          'apps/ethos/src/commands/gateway-approval.ts',
+          'APPROVAL_SHUTDOWN_DRAIN_MS',
+        )) +
         gatewaySteps * step +
         // `Gateway.shutdown`: notice sends and the turn drain share this one bound.
         (await constant('extensions/gateway/src/index.ts', 'SHUTDOWN_DRAIN_TIMEOUT_MS')) +

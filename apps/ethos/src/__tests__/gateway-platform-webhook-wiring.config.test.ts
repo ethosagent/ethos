@@ -3,12 +3,12 @@
 
 import type { EthosConfig } from '@ethosagent/config';
 import { describe, expect, it } from 'vitest';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { buildAdapters, buildPlatformWebhookMounts } from '../commands/gateway';
 import {
   baseConfig,
   capturedOf,
   makeLoader,
-  read,
   startAll,
 } from './gateway-platform-webhook-wiring.fixtures';
 
@@ -166,7 +166,7 @@ describe('§2a Telegram webhook config reaches the adapter constructor', () => {
   });
 
   it('does not double-default dropPendingUpdates — the adapter owns the `?? false`', async () => {
-    const src = await read('apps/ethos/src/commands/gateway.ts');
+    const src = readGatewaySources();
     expect(src).toMatch(/dropPendingUpdates: botCfg\.dropPendingUpdates,/);
     expect(src).not.toMatch(/dropPendingUpdates: botCfg\.dropPendingUpdates \?\?/);
   });

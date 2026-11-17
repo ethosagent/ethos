@@ -2,7 +2,7 @@
 // Slack refuses (`invalid_auth`, `not_authed`, `token_revoked`,
 // `token_expired`, `account_inactive`) is thrown from `start()` with
 // `permanent: true`, so the gateway's adapter-start retry
-// (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) stops
+// (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway-adapters.ts) stops
 // instead of retrying a dead token for ever. Any other `auth.test` failure
 // stays non-fatal, and any other Socket Mode start failure is thrown as-is.
 

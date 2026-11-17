@@ -44,7 +44,7 @@ export interface CronDeliverJob {
 }
 
 /** "Does any configured bot on `platform` still speak for `personalityId`?" —
- *  `buildChannelSpeakers` in `apps/ethos/src/commands/gateway.ts`. */
+ *  `buildChannelSpeakers` in `apps/ethos/src/commands/gateway-voice.ts`. */
 export type ChannelSpeakers = (platform: string, personalityId: string) => boolean;
 
 export interface CronDeliverDeps {

@@ -15,6 +15,7 @@ import type { EthosConfig } from '@ethosagent/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCronCommand } from '../cron';
 import { readBootSources } from './boot-sources';
+import { readGatewaySources } from './gateway-sources';
 import { readServeSources } from './serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
@@ -117,7 +118,9 @@ describe('activeHours clock — hosts leave the scheduler on the host zone', () 
       ? readBootSources()
       : host.endsWith('/serve.ts')
         ? readServeSources()
-        : await readFile(join(ROOT, host), 'utf8');
+        : host.endsWith('/gateway.ts')
+          ? readGatewaySources()
+          : await readFile(join(ROOT, host), 'utf8');
     let at = src.indexOf('new CronScheduler({');
     expect(at).toBeGreaterThan(-1);
     while (at !== -1) {

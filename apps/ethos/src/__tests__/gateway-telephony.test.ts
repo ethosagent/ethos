@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 
 // Telephony's wiring rules inside `runGatewayStart` are startup-script shape,
 // not a function anyone can call: booting the gateway needs adapters, SQLite
@@ -67,7 +68,9 @@ describe('gateway telephony wiring', () => {
     // default would EADDRINUSE on the most common supervised deployment.
     const runAll = readFileSync(join(import.meta.dirname, '..', 'commands', 'run-all.ts'), 'utf-8');
     const ports = [
-      ...[...GATEWAY.matchAll(/process\.env\.ETHOS_\w*PORT\) \|\| (\d+)/g)].map((m) => m[1]),
+      ...[...readGatewaySources().matchAll(/process\.env\.ETHOS_\w*PORT\) \|\| (\d+)/g)].map(
+        (m) => m[1],
+      ),
       ...[...runAll.matchAll(/DEFAULT_HEALTH_PORT = (\d+)/g)].map((m) => m[1]),
     ];
     expect(new Set(ports).size).toBe(ports.length);
@@ -93,8 +96,8 @@ describe('gateway telephony wiring', () => {
   it('forwards the named STT/TTS rosters to the Gateway', () => {
     // Until this landed, per-personality provider selection was live in
     // `buildVoiceStack` and inert on every channel.
-    const stt = [...GATEWAY.matchAll(/sttProviderRoster: voiceConfig\.sttRoster/g)];
-    const tts = [...GATEWAY.matchAll(/ttsProviderRoster: voiceConfig\.ttsRoster/g)];
+    const stt = [...readGatewaySources().matchAll(/sttProviderRoster: voiceConfig\.sttRoster/g)];
+    const tts = [...readGatewaySources().matchAll(/ttsProviderRoster: voiceConfig\.ttsRoster/g)];
     // Both Gateway constructions — the single-loop idle path and the multi-bot one.
     expect(stt).toHaveLength(2);
     expect(tts).toHaveLength(2);

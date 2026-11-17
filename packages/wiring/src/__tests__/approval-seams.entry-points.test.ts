@@ -2,6 +2,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+const splitModules = (dir: string, pattern: RegExp): string[] =>
+  readdirSync(dir)
+    .filter((f) => pattern.test(f))
+    .sort();
+
 describe('entry-point wiring', () => {
   // The regression this guards: all three surfaces used to call
   // `createDangerPredicate()` with no arguments, which pinned every
@@ -13,25 +18,23 @@ describe('entry-point wiring', () => {
     'apps/desktop/src/main/serve.ts',
   ];
 
-  // `ethos serve` keeps its entry point in commands/serve.ts but its seams in
-  // modules split out of it, so its "source" is all of them: serve.ts, every
-  // serve-*.ts and _shared.ts. That is a superset of SERVE_SOURCE_FILES in
-  // apps/ethos/src/commands/__tests__/serve-sources.ts (the apps-side list; a
-  // wiring test does not import from apps).
+  // `ethos serve` and `ethos gateway start` keep their entry points in
+  // commands/serve.ts and commands/gateway.ts but their seams in modules split
+  // out of them, so the "source" of each is all of them: serve.ts, every
+  // serve-*.ts and _shared.ts; gateway.ts and every gateway-*.ts. That is a
+  // superset of SERVE_SOURCE_FILES / GATEWAY_SOURCE_FILES in
+  // apps/ethos/src/commands/__tests__/ (the apps-side lists; a wiring test
+  // does not import from apps).
   const readEntry = (relPath: string): string => {
-    if (relPath !== 'apps/ethos/src/commands/serve.ts') {
-      return readFileSync(join(ROOT, relPath), 'utf-8');
-    }
     const dir = join(ROOT, 'apps/ethos/src/commands');
-    return [
-      'serve.ts',
-      ...readdirSync(dir)
-        .filter((f) => /^serve-.+\.ts$/.test(f))
-        .sort(),
-      '_shared.ts',
-    ]
-      .map((f) => readFileSync(join(dir, f), 'utf-8'))
-      .join('\n');
+    const files =
+      relPath === 'apps/ethos/src/commands/serve.ts'
+        ? ['serve.ts', ...splitModules(dir, /^serve-.+\.ts$/), '_shared.ts']
+        : relPath === 'apps/ethos/src/commands/gateway.ts'
+          ? ['gateway.ts', ...splitModules(dir, /^gateway-.+\.ts$/)]
+          : null;
+    if (!files) return readFileSync(join(ROOT, relPath), 'utf-8');
+    return files.map((f) => readFileSync(join(dir, f), 'utf-8')).join('\n');
   };
 
   it.each(ENTRY_POINTS)('%s builds its danger predicate with the seams', (relPath) => {

@@ -9,7 +9,7 @@ import { createAgentLoop } from '../index';
 
 // UBP-024 (thread half), end to end through the composition root: the gateway
 // hosts hand every loop `resolveOriginThreadId` (`gatewayTurnOrigin` →
-// `Gateway.originThreadIdFor`, apps/ethos/src/commands/gateway.ts), and
+// `Gateway.originThreadIdFor`, apps/ethos/src/commands/gateway-wiring.ts), and
 // `composeTools` must forward it to the cron tool. Before the fix only the
 // background-job deps received it, so a cron job created inside a Slack thread
 // or Telegram topic recorded no `origin.threadId` and delivered to the chat root.

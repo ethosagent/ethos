@@ -163,7 +163,7 @@ const PERMANENT_DISCORD_LOGIN_CODES = new Set([
  * `err` re-thrown carrying `permanent: true` when it is a login failure no
  * retry can fix (a {@link PERMANENT_DISCORD_LOGIN_CODES} code, or an HTTP 401),
  * so the gateway's adapter-start retry (`isPermanentAdapterStartError`,
- * apps/ethos/src/commands/gateway.ts) gives up instead of retrying a dead
+ * apps/ethos/src/commands/gateway-adapters.ts) gives up instead of retrying a dead
  * token for ever. Anything else is returned unchanged.
  */
 function classifyDiscordStartError(err: unknown): unknown {
@@ -270,7 +270,7 @@ export class DiscordAdapter
   private readonly pendingInteractions = new Map<string, Interaction>();
   /**
    * V2-RT-1 — `start()` is re-entrant: the gateway's adapter-start retry
-   * (`retryAdapterStart`, apps/ethos/src/commands/gateway.ts) calls it again on
+   * (`retryAdapterStart`, apps/ethos/src/commands/gateway-adapters.ts) calls it again on
    * this same instance after a transient login failure, and discord.js runs
    * every listener registered for an event. The handlers are therefore
    * registered once per instance; only the loads, the slash-command upload and

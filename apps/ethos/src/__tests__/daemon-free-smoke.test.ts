@@ -12,19 +12,21 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { GATEWAY_SOURCE_FILES } from '../commands/__tests__/gateway-sources';
 
 const CLI_ROOT = join(import.meta.dirname, '..');
 const REPO_ROOT = join(CLI_ROOT, '..', '..', '..');
 
 const GATEWAY_IMPORT = /from\s+['"]@ethosagent\/gateway['"]/;
 
-const ALLOWED_FILES = new Set([
+const ALLOWED_FILES = new Set(
   // The gateway command itself is the one and only place that imports the
-  // gateway package. `apps/ethos/src/index.ts` imports the runner _function_
-  // (`runGatewaySetup`/`runGatewayStart`) from the local command file, not
-  // from `@ethosagent/gateway` — so it's not in this list.
-  'commands/gateway.ts',
-]);
+  // gateway package — `commands/gateway.ts` and the modules split out of it
+  // (GATEWAY_SOURCE_FILES). `apps/ethos/src/index.ts` imports the runner
+  // _function_ (`runGatewaySetup`/`runGatewayStart`) from the local command
+  // file, not from `@ethosagent/gateway` — so it's not in this list.
+  GATEWAY_SOURCE_FILES.map((file) => `commands/${file}`),
+);
 
 function walkTs(dir: string): string[] {
   const out: string[] = [];

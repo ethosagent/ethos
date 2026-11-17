@@ -780,7 +780,7 @@ function isRejectedTelegramToken(err: unknown): boolean {
 /**
  * The error `start()` throws for a refused token: carries `permanent: true`,
  * so the gateway's adapter-start retry (`isPermanentAdapterStartError`,
- * apps/ethos/src/commands/gateway.ts) gives up instead of retrying for ever.
+ * apps/ethos/src/commands/gateway-adapters.ts) gives up instead of retrying for ever.
  */
 function telegramTokenRejected(err: unknown): Error & { permanent: true } {
   const detail = err instanceof Error ? err.message : String(err);
@@ -1212,7 +1212,7 @@ export class TelegramAdapter
   /**
    * The grammY update handlers. Registered ONCE per instance (V2-RT-1): the
    * gateway's adapter-start retry (`retryAdapterStart`,
-   * apps/ethos/src/commands/gateway.ts) calls `start()` again on this same
+   * apps/ethos/src/commands/gateway-adapters.ts) calls `start()` again on this same
    * instance after a transient `setWebhook` failure. None of these handlers
    * calls `next()`, so a duplicate would never run today, but a second copy
    * of every handler on each retry is one `next()` away from dispatching each

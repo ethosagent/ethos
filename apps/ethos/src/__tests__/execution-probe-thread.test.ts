@@ -24,6 +24,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bootFileWith } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources } from '../commands/__tests__/serve-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
@@ -69,7 +70,7 @@ describe('the composition roots thread the LOOP registry, not a fresh one', () =
   // `ethos gateway` hosts no in-process web API, so there is nothing to thread
   // there — the distinction that matters, and the one this keeps true.
   it('gateway hosts no web API, so it needs no registry thread', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/gateway.ts'), 'utf8');
+    const src = readGatewaySources();
     expect(src).not.toContain('createWebApi');
   });
 });

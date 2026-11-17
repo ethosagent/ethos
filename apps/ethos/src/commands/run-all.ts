@@ -21,6 +21,7 @@ import { createHealthServer } from '../health-server';
 import { DISPOSE_BEFORE_EXIT_GRACE_MS } from '../lib/dispose-before-exit';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
+import { c } from './_shared';
 
 // Tuning constants. Exported via `__testing__` so unit tests can assert on
 // them without re-deriving the values.
@@ -32,7 +33,7 @@ const RESTART_WINDOW_MS = 5 * 60_000;
 /**
  * The slowest child's own bounded SIGTERM path (F06). Every await on
  * `ethos gateway start`'s shutdown has a deadline, and this is their sum:
- * the approval-card drain (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway.ts),
+ * the approval-card drain (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway-approval.ts),
  * four `boundedShutdownStep`s — outbox drain, health-file remove, call-capture
  * ownership stop, adapters stop — at `SHUTDOWN_STEP_TIMEOUT_MS` each
  * (lib/bounded-shutdown-step.ts), `Gateway.shutdown` whose notices AND drain
@@ -61,16 +62,6 @@ const DEFAULT_LOG_ROTATION: LogRotationConfig = {
   enabled: true,
 };
 
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-};
-
 export interface ChildSpec {
   /** Stable label used for the log filename and console output. */
   name: string;
@@ -84,7 +75,7 @@ export interface ChildSpec {
    * reach-and-containment D2-14) — restarting it forever would spam the log
    * and never succeed. It exits 78 (`CONFIG_INVALID_EXIT_CODE`) when its
    * config cannot be started from, or when the platform refused every
-   * adapter's credentials (`adapterStartFailureExitCode`, commands/gateway.ts),
+   * adapter's credentials (`adapterStartFailureExitCode`, commands/gateway-adapters.ts),
    * for the same reason.
    */
   terminalExitCodes?: readonly number[];

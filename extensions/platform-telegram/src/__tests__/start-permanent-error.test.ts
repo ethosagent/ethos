@@ -1,7 +1,7 @@
 // V-CC-4 follow-up — the adapter classifies its own start failures. A token
 // the Bot API refuses (401 Unauthorized, or 404 for a malformed one) is thrown
 // from `start()` with `permanent: true`, so the gateway's adapter-start retry
-// (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) stops
+// (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway-adapters.ts) stops
 // instead of retrying a dead token for ever. A network failure on `getMe`
 // stays non-fatal, and one on `setWebhook` is thrown unchanged (retryable).
 

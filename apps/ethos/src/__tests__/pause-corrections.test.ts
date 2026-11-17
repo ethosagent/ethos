@@ -15,6 +15,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources, serveFileWith } from '../commands/__tests__/serve-sources';
 import {
   applyPauseCorrections,
@@ -171,7 +172,7 @@ describe('every long-running command registers the mid-run resume handler', () =
   });
 
   it('gateway.ts bumps ONE job store, not one per bot', async () => {
-    const src = await read('apps/ethos/src/commands/gateway.ts');
+    const src = readGatewaySources();
     // Every createAgentLoop opens its own SQLiteJobStore against the SAME
     // jobs.db, so bumping per bot would advance heartbeat_at by N × the pause.
     expect(src).toContain('const correctableJobStore = bots.find((b) => b.jobStore !== undefined)');

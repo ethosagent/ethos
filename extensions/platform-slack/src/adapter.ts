@@ -385,7 +385,7 @@ const REJECTED_SLACK_TOKEN_ERRORS = new Set([
  * `err` re-thrown carrying `permanent: true` when it is a
  * {@link REJECTED_SLACK_TOKEN_ERRORS} refusal (read by the Web API error shape,
  * `data.error`), so the gateway's adapter-start retry
- * (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway.ts) gives up
+ * (`isPermanentAdapterStartError`, apps/ethos/src/commands/gateway-adapters.ts) gives up
  * instead of retrying a dead token for ever. Anything else — a network error,
  * `ratelimited`, a 5xx — is returned unchanged.
  */
@@ -761,7 +761,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   /**
    * Every Bolt listener this adapter owns. Called ONCE per instance (V2-RT-1):
    * the gateway's adapter-start retry (`retryAdapterStart`,
-   * apps/ethos/src/commands/gateway.ts) calls `start()` again on this same
+   * apps/ethos/src/commands/gateway-adapters.ts) calls `start()` again on this same
    * instance after a transient failure, and Bolt runs every matching listener,
    * so a second registration would dispatch each message, slash command and
    * button click twice. Pinned by `__tests__/start-permanent-error.test.ts`

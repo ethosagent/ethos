@@ -20,6 +20,7 @@ import type { BusySource } from '@ethosagent/idle-watcher';
 import { CallCaptureOwnershipManager } from '@ethosagent/platform-callcapture';
 import { afterEach, describe, expect, it } from 'vitest';
 import { bootFileWith, readBootSources } from '../commands/__tests__/boot-sources';
+import { readGatewaySources } from '../commands/__tests__/gateway-sources';
 import { readServeSources } from '../commands/__tests__/serve-sources';
 import { dedupeBusySources } from '../wiring';
 
@@ -342,7 +343,7 @@ describe('ethos boot — `gateway` and `serve` are untouched (plan §2, §10)', 
   });
 
   it('gateway.ts keeps its own delivery/job sweeps at their original call site', async () => {
-    const src = await read('apps/ethos/src/commands/gateway.ts');
+    const src = readGatewaySources();
     // `runGatewayStart` still sweeps for itself, fire-and-forget, after
     // `adapters.start()`. `boot.ts` does NOT change that path.
     expect(src).toContain('.sweepPendingDeliveries()');

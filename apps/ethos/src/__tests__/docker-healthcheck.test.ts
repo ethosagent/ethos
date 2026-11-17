@@ -68,7 +68,7 @@ const webHealthy = {
 const webDegradedGatewayOk = {
   // Fresh heartbeat but an adapter is down (upstream outage) — the endpoint
   // returns 503 "degraded", yet the container must stay healthy. (Zero
-  // adapters no longer degrades: gatewayHealthStatus in commands/gateway.ts
+  // adapters no longer degrades: gatewayHealthStatus in commands/gateway-health.ts
   // and the web-api /healthz both read an empty adapter list as ok.)
   status: 'degraded',
   uptime: 12,

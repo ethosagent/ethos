@@ -37,7 +37,7 @@ export const GATEWAY_LOCK_EXIT_CODE = 3;
  *  started from — missing, unparseable, or a bot binding that resolves to nothing
  *  (`exitIfConfigInvalid`, apps/ethos/src/lib/config-exit.ts). `ethos gateway start`
  *  also exits with it when every adapter's credentials were refused
- *  (`adapterStartFailureExitCode`, apps/ethos/src/commands/gateway.ts); `ethos boot`
+ *  (`adapterStartFailureExitCode`, apps/ethos/src/commands/gateway-adapters.ts); `ethos boot`
  *  does not, it keeps running without chat adapters. `EX_CONFIG` from
  *  sysexits.h. Like {@link GATEWAY_LOCK_EXIT_CODE} it is final, not a crash: the
  *  systemd template lists both in `RestartPreventExitStatus`

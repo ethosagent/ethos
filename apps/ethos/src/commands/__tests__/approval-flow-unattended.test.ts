@@ -29,6 +29,7 @@ import type {
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { wireApprovalFlow } from '../gateway';
 import { bootFileWith, readBootSources } from './boot-sources';
+import { gatewayFileWith, readGatewaySources } from './gateway-sources';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..');
 
@@ -257,10 +258,11 @@ describe('wireApprovalFlow — bot loops with no approval surface', () => {
 
 describe('every bot-loop host goes through wireApprovalFlow, without the D12 key', () => {
   it('ethos gateway start: one call over all bots; the operator key reaches only the systemLoop', async () => {
-    const src = await readFile(join(ROOT, 'apps/ethos/src/commands/gateway.ts'), 'utf8');
-    const call = src.indexOf('wireApprovalFlow(gateway, bots, adapters, {');
+    const src = readGatewaySources();
+    const callFile = gatewayFileWith('wireApprovalFlow(gateway, bots, adapters, {');
+    const call = callFile.indexOf('wireApprovalFlow(gateway, bots, adapters, {');
     expect(call).toBeGreaterThan(-1);
-    expect(src.slice(call, src.indexOf('});', call))).not.toContain(
+    expect(callFile.slice(call, callFile.indexOf('});', call))).not.toContain(
       'allowUnattendedDangerousTools',
     );
     // The systemLoop's gate is the command's one `wireUnattendedApprovalGate`.
@@ -268,8 +270,9 @@ describe('every bot-loop host goes through wireApprovalFlow, without the D12 key
     expect(src).toContain('wireUnattendedApprovalGate(systemLoopReady.hooks, {');
     // Inside `wireApprovalFlow`: the no-surface gate, before the early return,
     // and no operator key anywhere in the function.
-    const fn = src.indexOf('export function wireApprovalFlow(');
-    const fnBody = src.slice(fn, src.indexOf('\n}\n', fn));
+    const fnFile = gatewayFileWith('export function wireApprovalFlow(');
+    const fn = fnFile.indexOf('export function wireApprovalFlow(');
+    const fnBody = fnFile.slice(fn, fnFile.indexOf('\n}\n', fn));
     expect(fnBody).not.toContain('allowUnattendedDangerousTools');
     expect(fnBody).not.toContain('allowAutoApproveDangerousTools');
     const perBot = fnBody.indexOf('createNoApprovalSurfaceGate([bot.loop.hooks]');
