@@ -174,6 +174,14 @@ export interface BackgroundJob {
    * downgrade already armed, so it cannot persist the summary's instructions.
    */
   tainted?: boolean;
+  /** Automatic resumes so far; absent reads as 0. Written by `SQLiteJobStore.requeueForResume` and the `reclaimStale` sweep. */
+  resumeCount?: number;
+  /** The affinity a resumable run was stamped with at claim; absent = not auto-resumable. */
+  resumeAffinity?: string;
+  /** `delegate_task resume_on_restart: false`. */
+  noResume?: boolean;
+  /** Epoch ms of the last requeue (automatic or manual). */
+  requeuedAt?: number;
   // Remote proxy: set when this row tracks a background job running on a mesh peer
   // (created by route_to_agent background:true). A reconciler polls the peer and
   // mirrors status/spend/summary onto this row. No local executor runs a proxy.
@@ -185,8 +193,37 @@ export interface BackgroundJob {
 // Background job event — ordered audit trail per job
 // ---------------------------------------------------------------------------
 
+/** Identifies one claim of a row: the `owner` and `startedAt` its claim stamped. */
+export interface JobClaimFence {
+  owner: string;
+  startedAt: number;
+}
+
+/** `Error.code` of a fenced write refused because another claim holds the row. */
+export const JOB_CLAIM_LOST = 'claim_lost';
+
+/**
+ * True for the error `SQLiteJobStore.finish` throws when its `fence` no longer
+ * matches the row (`extensions/job-store/src/__tests__/durable-resume-fence.test.ts`,
+ * 'fenced finish').
+ */
+export function isClaimLostError(err: unknown): boolean {
+  return err instanceof Error && (err as Error & { code?: unknown }).code === JOB_CLAIM_LOST;
+}
+
+/** Why a non-terminal run went back to `queued` — see the `requeued` event. */
+export type JobResumeReason = 'restart' | 'crash' | 'manual';
+
 export type BackgroundJobEventType =
   | 'queued'
+  /**
+   * A non-terminal run went back to `queued` to continue on its persisted
+   * session. Payload `{ reason, attempt, interruptedTools }`: `reason` is
+   * `'restart' | 'crash' | 'manual'`, `attempt` the row's `resumeCount` at
+   * requeue, `interruptedTools` the tool names the ended claim started and
+   * never finished.
+   */
+  | 'requeued'
   | 'claimed'
   | 'running'
   | 'heartbeat'
@@ -270,6 +307,8 @@ export interface CreateBackgroundJobInput {
   toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
   /** See `BackgroundJob.roomAudience`. Omitted means a legacy-shaped row (D11). */
   roomAudience?: TurnAudience;
+  /** See `BackgroundJob.noResume`. */
+  noResume?: boolean;
   remotePeer?: string;
   remoteJobId?: string;
 }
@@ -286,6 +325,8 @@ export interface GetJobEventsOptions {
   limit?: number;
   /** Exclusive cursor — only rows with `seq` strictly less than this. */
   beforeSeq?: number;
+  /** Only rows of this event type; `limit` then counts only those rows. */
+  eventType?: BackgroundJobEventType;
 }
 
 /** `pending` → `read` (the runner's sink handed it over) or `unread` (the job ended first). */
@@ -334,35 +375,46 @@ export interface JobStore {
   releaseQueued?(owner: string, releasedAs: string): Promise<number>;
   /** Bump heartbeatAt to now. No-op if the row is not running. */
   heartbeat(id: string): Promise<void>;
-  /** Set accumulated spend for a job (absolute value). */
-  updateSpend(id: string, spendUsd: number): Promise<void>;
+  /**
+   * Set accumulated spend for a job (absolute value). With `fence`, a no-op
+   * unless the row is still held by that claim (`owner` + `startedAt`).
+   */
+  updateSpend(id: string, spendUsd: number, fence?: JobClaimFence): Promise<void>;
   /** Set cancel_requested = 1. Any process may call. */
   requestCancel(id: string): Promise<void>;
   /**
    * Park a RUNNING job on a human answer: status -> `blocked`, stamping
    * `blockedSince` and `blockedRequestId`. No-op when the row is not `running`
    * (it was cancelled or finished out from under the caller) — same fail-quiet
-   * shape as `heartbeat`.
+   * shape as `heartbeat`. With `fence`, also a no-op unless the row is still held
+   * by that claim.
    */
-  markBlocked(id: string, requestId: string): Promise<void>;
+  markBlocked(id: string, requestId: string, fence?: JobClaimFence): Promise<void>;
   /**
    * Un-park a BLOCKED job: status -> `running`, clearing the blocked fields and
    * bumping `heartbeatAt` to now. The bump is load-bearing — a run parked longer
    * than `staleMs` would otherwise be swept stale in the window between resuming
-   * and the executor's next beat. No-op when the row is not `blocked`.
+   * and the executor's next beat. No-op when the row is not `blocked`, or, with
+   * `fence`, when it is no longer held by that claim.
    */
-  resumeFromBlocked(id: string): Promise<void>;
+  resumeFromBlocked(id: string, fence?: JobClaimFence): Promise<void>;
   /**
    * Terminal transition. Valid from running, stale (a stale row that turns out
    * alive recovers) OR blocked (a parked run is still cancellable, and §4.1's
    * blocked card offers Cancel). `blocked` is never a terminal ARGUMENT — it is
    * a distinct transition, reached only through `markBlocked`.
+   *
+   * With `fence`, the write applies only while the row is still held by that
+   * claim (`owner` + `startedAt`); otherwise it throws like any other refused
+   * finish and the row is untouched (a live run that lost its row must not
+   * finish the new claim's row).
    */
   finish(
     id: string,
     terminal: 'done' | 'failed' | 'aborted',
     /** `tainted` — see `BackgroundJob.tainted`; only `true` is recorded. */
     fields: { summary?: string; error?: string; tainted?: boolean },
+    fence?: JobClaimFence,
   ): Promise<void>;
   /** All jobs whose rootSessionKey === the given key, newest first. */
   listByRoot(rootSessionKey: string): Promise<BackgroundJob[]>;
@@ -378,13 +430,32 @@ export interface JobStore {
    */
   countActive(): Promise<number>;
   /**
-   * running rows whose heartbeat is older than staleMs -> stale. Returns the rows
-   * transitioned. `blocked` rows are IGNORED — a parked human question must never
-   * look like a dead host.
+   * running rows whose heartbeat is older than staleMs -> stale. `blocked` rows
+   * are IGNORED — a parked human question must never look like a dead host. A
+   * swept row with `resumeAffinity` and `resumeCount < maxResumes` (default 0)
+   * is requeued (`reason: 'crash'`) instead of going stale. Returns every
+   * transitioned row; its `status` says which way it went.
    */
-  reclaimStale(staleMs: number): Promise<BackgroundJob[]>;
-  /** queued rows older than ttlMs -> expired. Returns the rows transitioned. */
-  expireQueued(ttlMs: number): Promise<BackgroundJob[]>;
+  reclaimStale(staleMs: number, opts?: { maxResumes?: number }): Promise<BackgroundJob[]>;
+  /**
+   * queued rows older than ttlMs -> expired. A row with `requeuedAt` is measured
+   * from it against `resumeTtlMs ?? ttlMs`. Returns the rows transitioned.
+   */
+  expireQueued(ttlMs: number, opts?: { resumeTtlMs?: number }): Promise<BackgroundJob[]>;
+  /** Stamp (or clear with null) the affinity of a `running` row; refused for a `noResume` row unless null. */
+  setResumeAffinity?(id: string, affinity: string | null): Promise<void>;
+  /**
+   * running|blocked -> queued under `released:<resume_affinity>`, counted. False
+   * when the row is not eligible (no affinity, wrong status, or at `maxResumes`).
+   */
+  requeueForResume?(
+    id: string,
+    opts: { reason: 'restart' | 'crash'; maxResumes: number },
+  ): Promise<boolean>;
+  /** stale -> queued with `reason: 'manual'`; not counted against `maxResumes`. False when not `stale`. */
+  requeueStale?(id: string, releasedAs: string): Promise<boolean>;
+  /** Idempotently set `tainted = 1` on a row mid-run. */
+  markTainted?(id: string): Promise<void>;
   /** Running rows that track a remote job (remoteJobId set) — for the mesh proxy reconciler. */
   listRunningRemote(): Promise<BackgroundJob[]>;
   /**
@@ -567,6 +638,8 @@ export interface JobRunnerContext {
    * calls it. `EthosJobRunner` wires it to `RunOptions.onUntrustedRead`.
    */
   markTainted?(): void;
+  /** Set when this run continues a requeued job on the same child session (durable-background-jobs D1). */
+  resume?: { attempt: number; reason: JobResumeReason; interruptedTools: string[] };
 }
 
 /**
@@ -582,6 +655,12 @@ export interface RunnerCapabilities {
   takeover: 'pty' | 'none';
   /** `'none'` means Resume is never offered. */
   resume: 'session' | 'fork' | 'none';
+  /**
+   * `true` ⇒ the executor may requeue this runner's interrupted runs by itself
+   * (durable-background-jobs D2). Absent = false. Distinct from `resume`, which
+   * only says a human may resume.
+   */
+  autoResume?: boolean;
   /** `false` ⇒ hide Interrupt. */
   steer: boolean;
   sandbox: 'process' | 'external' | 'none';

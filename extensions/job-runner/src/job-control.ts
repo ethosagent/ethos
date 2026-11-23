@@ -37,6 +37,14 @@ export type StopOutcome =
   | { ok: true; wasRunning: true }
   | { ok: false; reason: 'not_found' | 'finished' | 'remote'; status?: BackgroundJobStatus };
 
+export type ResumeOutcome =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'not_found' | 'not_stale' | 'unsupported' | 'not_available';
+      status?: BackgroundJobStatus;
+    };
+
 export type TailOutcome =
   | { ok: true; events: BackgroundJobEvent[] }
   | { ok: false; reason: 'not_found' | 'not_available' };
@@ -63,13 +71,15 @@ export interface JobControl {
     },
   ): Promise<TailOutcome>;
   steers(job: BackgroundJob): Promise<JobSteer[]>;
+  /** Requeue a `stale` row whose runner resumes by session (durable-background-jobs C2). */
+  resume(job: BackgroundJob, req: { requesterAudience: TurnAudience }): Promise<ResumeOutcome>;
 }
 
 export interface JobControlDeps {
   store: JobStore;
   runners?: JobRunnerRegistry;
   /** Same-process fast path: run the owner's observe pass now. */
-  executor?: { pokeSteer(jobId: string): void };
+  executor?: { pokeSteer(jobId: string): void; requeueStale?(jobId: string): Promise<boolean> };
 }
 
 /**
@@ -150,6 +160,21 @@ export function createJobControl(deps: JobControlDeps): JobControl {
 
     async steers(job) {
       return (await store.listSteers?.(job.id)) ?? [];
+    },
+
+    async resume(job, req) {
+      if (!jobActionAllowed(job, req.requesterAudience)) return { ok: false, reason: 'not_found' };
+      const row = await fresh(job);
+      if (row.status !== 'stale') return { ok: false, reason: 'not_stale', status: row.status };
+      // A runner that does not honour `ctx.resume` (Pi re-sends the prompt) is
+      // not offered a manual resume either; pinned by `job-control-resume.test.ts`.
+      const caps = capabilitiesFor(row);
+      if (caps?.resume !== 'session' || caps.autoResume !== true) {
+        return { ok: false, reason: 'unsupported' };
+      }
+      if (!executor?.requeueStale) return { ok: false, reason: 'not_available' };
+      const ok = await executor.requeueStale(row.id);
+      return ok ? { ok: true } : { ok: false, reason: 'not_stale' };
     },
   };
 }

@@ -80,6 +80,7 @@ export function TranscriptPane({ jobId, live }: { jobId: string; live: boolean }
           key={l.key}
           style={{
             color: l.kind === 'text' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            ...(l.kind === 'resume' ? { textAlign: 'center', padding: '4px 0' } : {}),
           }}
         >
           {l.kind === 'tool' ? `› ${l.text}` : l.kind === 'steer' ? `↩ ${l.text}` : l.text}

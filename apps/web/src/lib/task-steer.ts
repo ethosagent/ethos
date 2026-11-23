@@ -29,9 +29,29 @@ export function canSteerJob(
   return (status === 'running' || status === 'blocked') && capabilities?.steer === true;
 }
 
+/**
+ * Resume shows on a stale row whose runner resumes by session AND honours the
+ * resume context (`autoResume`; Pi re-sends its prompt instead). The server
+ * re-checks: `JobControl.resume`.
+ */
+export function canResumeJob(
+  status: BackgroundJobStatusWire,
+  capabilities: { resume: string; autoResume?: boolean } | null | undefined,
+): boolean {
+  return (
+    status === 'stale' && capabilities?.resume === 'session' && capabilities.autoResume === true
+  );
+}
+
+/** The chip beside the status: absent until the job was resumed, then the count from the second on. */
+export function resumeChipLabel(resumeCount: number | undefined): string | null {
+  if (!resumeCount) return null;
+  return resumeCount === 1 ? 'resumed after restart' : `resumed after restart ×${resumeCount}`;
+}
+
 export interface TranscriptLine {
   key: number;
-  kind: 'text' | 'tool' | 'steer';
+  kind: 'text' | 'tool' | 'steer' | 'resume';
   text: string;
 }
 
@@ -45,6 +65,8 @@ export function transcriptLines(events: readonly BackgroundJobEventWire[]): Tran
     } else if (ev.eventType === 'tool_headline') {
       const arg = typeof p.arg === 'string' && p.arg ? ` ${p.arg}` : '';
       lines.push({ key: ev.id, kind: 'tool', text: `${String(p.toolName ?? 'tool')}${arg}` });
+    } else if (ev.eventType === 'requeued') {
+      lines.push({ key: ev.id, kind: 'resume', text: '— resumed after restart —' });
     } else if (ev.eventType === 'steer') {
       lines.push({
         key: ev.id,

@@ -245,6 +245,10 @@
             "description": "The task prompt for the sub-agent to complete",
             "type": "string"
           },
+          "resume_on_restart": {
+            "description": "Only valid with background: true. Default true: if Ethos restarts or crashes while the job runs, it continues on its own session afterwards. false: the job ends instead.",
+            "type": "boolean"
+          },
           "return_mode": {
             "description": "How much of the sub-agent's output to return. 'full' (default) returns the complete output (≤20,000 chars). 'summary' asks the sub-agent to end with a ## Summary section and returns only that (≤2000 chars).",
             "enum": [

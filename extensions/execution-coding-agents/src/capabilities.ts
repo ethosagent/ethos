@@ -59,6 +59,9 @@ export function acpRunnerCapabilities(opts: {
     // actually checked, same discipline `PI_RUNNER_CAPABILITIES` uses;
     // revisit once I2/I3 exercises resume for real.
     resume: 'none',
+    // No auto-resume: the executor never requeues a coding-agent run (D2)
+    // (pinned by `__tests__/capabilities.test.ts`).
+    autoResume: false,
     // No mid-turn injection method exists in the ACP schema this phase
     // checked (no steer/interrupt-with-text call — only `session/cancel`,
     // which ends the turn rather than steering it). Conservative `false`

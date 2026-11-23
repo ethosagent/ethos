@@ -411,6 +411,9 @@ export class WakeReviews {
    * Notice text for a finished background job: a plain, trusted envelope plus
    * the job's own summary/error wrapped as untrusted content (it may echo
    * whatever the child agent read). Mirrors the `channel_message` treatment.
+   * A job resumed after a restart says so in its completion notice (D9); the
+   * resume itself sends nothing. Pinned by `wake-notice-resume.test.ts`; delivery
+   * stays exactly-once through `claimDelivery` (unchanged).
    */
   buildWakeNotice(job: BackgroundJob, unread: JobSteer[] = []): string {
     const shortId = job.id.slice(0, 8);
@@ -420,14 +423,15 @@ export class WakeReviews {
     if (job.status === 'aborted') {
       return `background job ${shortId} ${labelPart}was interrupted by a restart or config change — ask again to rerun${unreadSteerSuffix(unread)}`;
     }
+    const resumed = (job.resumeCount ?? 0) > 0 ? ' (resumed after a restart)' : '';
     // H6 — a human sentence, not a bracketed record. A failure names where
     // the detail lives (`ethos process logs <id>`).
     const envelope =
       job.status === 'done'
-        ? `background job ${shortId} ${labelPart}finished`
+        ? `background job ${shortId} ${labelPart}finished${resumed}`
         : job.status === 'failed'
-          ? `background job ${shortId} ${labelPart}failed — ethos process logs ${shortId}`
-          : `background job ${shortId} ${labelPart}finished — status: ${job.status}`;
+          ? `background job ${shortId} ${labelPart}failed${resumed} — ethos process logs ${shortId}`
+          : `background job ${shortId} ${labelPart}finished${resumed} — status: ${job.status}`;
     const body =
       job.status === 'done' ? (job.summary ?? '(no summary)') : (job.error ?? 'unknown error');
     const wrapped = wrapUntrusted({ content: body, toolName: 'background_job_summary' });

@@ -29,6 +29,20 @@ export interface BackgroundConfig {
   /** Terminal-row retention before GC (days). Default 30. */
   retentionDays?: number;
   /**
+   * `background.resume_on_restart` — an interrupted run (graceful stop or crash) is requeued and
+   * continues on its persisted session once a successor with the same affinity starts. Default true.
+   */
+  resumeOnRestart?: boolean;
+  /**
+   * `background.max_resumes` — default 3. Counts every automatic resume; manual Resume is not counted.
+   */
+  maxResumes?: number;
+  /**
+   * `background.resume_ttl_ms` — default 86 400 000 (24 h). How long a requeued row waits for a
+   * successor, measured from the requeue, not creation.
+   */
+  resumeTtlMs?: number;
+  /**
    * The Pi job runner (`@ethosagent/execution-pi`). Registered ONLY when
    * `image` is set: the host runs inside a container built from it, and there
    * is no sane default to guess — the reference must be digest-pinned, which
@@ -85,6 +99,9 @@ export function backgroundDefaults(): Required<Omit<BackgroundConfig, 'enabled' 
     staleMs: 90_000,
     heartbeatMs: 30_000,
     retentionDays: 30,
+    resumeOnRestart: true,
+    maxResumes: 3,
+    resumeTtlMs: 86_400_000,
   };
 }
 
@@ -178,6 +195,11 @@ export function buildBackgroundConfig(
   if (heartbeatMs !== undefined) cfg.heartbeatMs = heartbeatMs;
   const retentionDays = num(kv.retention_days);
   if (retentionDays !== undefined) cfg.retentionDays = retentionDays;
+  if (kv.resume_on_restart !== undefined) cfg.resumeOnRestart = kv.resume_on_restart === 'true';
+  const maxResumes = num(kv.max_resumes);
+  if (maxResumes !== undefined) cfg.maxResumes = maxResumes;
+  const resumeTtlMs = num(kv.resume_ttl_ms);
+  if (resumeTtlMs !== undefined) cfg.resumeTtlMs = resumeTtlMs;
   // `pi_image` is the switch: no image, no Pi runner (see `BackgroundConfig.pi`).
   if (kv.pi_image) {
     const memoryMb = num(kv.pi_memory_mb);
@@ -277,5 +299,9 @@ export function backgroundToLines(bg: BackgroundConfig): Array<[string, string]>
   if (bg.staleMs !== undefined) lines.push(['stale_ms', String(bg.staleMs)]);
   if (bg.heartbeatMs !== undefined) lines.push(['heartbeat_ms', String(bg.heartbeatMs)]);
   if (bg.retentionDays !== undefined) lines.push(['retention_days', String(bg.retentionDays)]);
+  if (bg.resumeOnRestart !== undefined)
+    lines.push(['resume_on_restart', String(bg.resumeOnRestart)]);
+  if (bg.maxResumes !== undefined) lines.push(['max_resumes', String(bg.maxResumes)]);
+  if (bg.resumeTtlMs !== undefined) lines.push(['resume_ttl_ms', String(bg.resumeTtlMs)]);
   return lines;
 }

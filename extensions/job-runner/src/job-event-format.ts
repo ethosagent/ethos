@@ -43,6 +43,8 @@ export function formatJobEventLine(ev: BackgroundJobEvent): string {
       return `tool: ${String(p.toolName ?? '?')}${typeof p.arg === 'string' && p.arg ? ` ${p.arg}` : ''}`;
     case 'tool_end':
       return `tool done: ${String(p.toolName ?? '?')} ${p.ok === false ? 'failed' : 'ok'}`;
+    case 'requeued':
+      return `requeued (${String(p.reason ?? '?')}, attempt ${String(p.attempt ?? '?')})`;
     case 'steer':
       return `steer #${String(p.steerId ?? '?')} (${String(p.source ?? '?')}, ${String(p.chars ?? '?')} chars)`;
     case 'runner_log':

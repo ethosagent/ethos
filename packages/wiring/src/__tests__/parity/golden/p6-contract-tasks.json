@@ -65,6 +65,7 @@
           "eventType": {
             "enum": [
               "queued",
+              "requeued",
               "claimed",
               "running",
               "heartbeat",
@@ -168,6 +169,9 @@
                         "type": "string"
                       },
                       "type": "array"
+                    },
+                    "autoResume": {
+                      "type": "boolean"
                     },
                     "interactionKinds": {
                       "items": {
@@ -279,6 +283,7 @@
                   "eventType": {
                     "enum": [
                       "queued",
+                      "requeued",
                       "claimed",
                       "running",
                       "heartbeat",
@@ -416,6 +421,14 @@
             "prompt": {
               "type": "string"
             },
+            "resumeCount": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "resumeOnRestart": {
+              "type": "boolean"
+            },
             "rootSessionKey": {
               "type": "string"
             },
@@ -552,6 +565,8 @@
             "rootSessionKey",
             "parentSessionKey",
             "runner",
+            "resumeCount",
+            "resumeOnRestart",
             "prompt",
             "summary",
             "error",
@@ -656,6 +671,14 @@
               }
             ]
           },
+          "resumeCount": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "resumeOnRestart": {
+            "type": "boolean"
+          },
           "rootSessionKey": {
             "type": "string"
           },
@@ -711,11 +734,43 @@
           "owner",
           "rootSessionKey",
           "parentSessionKey",
-          "runner"
+          "runner",
+          "resumeCount",
+          "resumeOnRestart"
         ],
         "type": "object"
       },
       "type": "array"
+    },
+    "route": {}
+  },
+  "tasks.resume": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
     },
     "route": {}
   },

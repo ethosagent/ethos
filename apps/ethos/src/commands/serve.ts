@@ -154,8 +154,10 @@ import {
 import {
   buildServeDangerPredicate,
   SERVE_LOOP_PROFILE,
+  type ServeLoopFieldsInput,
   type ServeLoopOptions,
   type ServePersonalityRegistry,
+  serveLoopFields,
 } from './serve-loop';
 import { listRegisteredTeams, locateWebDist } from './serve-util';
 import type { BuildServeWebApiOptions, ServeVoiceConfig } from './serve-web-api';
@@ -806,9 +808,17 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // so the kanban store routes to the team board and the role hook fires.
     activeMeshName = meshName === 'default' ? teamFlag : meshName;
     activePersonality = personalityOverride;
+    // Team members share a dataDir, so each gets its own job affinity (D6).
+    const teamJobAffinity = `serve:team:${teamFlag}:${personalityOverride}`;
     const result = await createAgentLoop(
       { ...config, teamName: teamFlag, ...(roleFlag ? { role: roleFlag } : {}) },
-      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager, outbox }),
+      serveLoopOptions({
+        meshName: activeMeshName,
+        cronScheduler,
+        watcherManager,
+        outbox,
+        jobAffinity: teamJobAffinity,
+      }),
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
@@ -1689,38 +1699,17 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
 // Each unit is now a named, exported, individually-callable function that
 // `runServe` calls in place of the inline code — behavior-identical, same
 // order, same arguments.
-//
-// `serveLoopOptions` stays in THIS file because it needs `meshRegistryPath` from
-// `@ethosagent/agent-mesh`, an app-to-extension import that archcheck rule
-// `l5-apps-through-wiring` baselines for this file's path and would refuse in a
-// new module.
 
 /**
- * The `createAgentLoop` options of an `ethos serve` loop, shared by the normal
- * branch and the loop onboarding boots in-process so the two cannot drift.
- * Cron, watchers and the approval outbox exist only when serve starts with a
- * config, so onboarding passes none of them. Pinned by
- * commands/__tests__/serve-onboarding-bind.test.ts.
- *
- * `outbox` travels with `watcherManager` because the watcher tools are what
- * give a serve loop a path to a channel (see `createOutboxProposalSide`). The
- * two loops without them — onboarding and `--team` coordinator — cannot reach a
- * channel at all: `send_message` answers "Gateway not active", because nothing
- * in this process calls `setMessagingSend`.
+ * The `createAgentLoop` options of an `ethos serve` loop (see `serveLoopFields` in
+ * `./serve-loop`, which holds the shape). Stays here because it needs `meshRegistryPath`
+ * from `@ethosagent/agent-mesh`, an app-to-extension import archcheck rule
+ * `l5-apps-through-wiring` baselines for this file and would refuse in a new module.
  */
-export function serveLoopOptions(opts: {
-  meshName: string;
-  cronScheduler?: ServeLoopOptions['cronScheduler'] | null;
-  watcherManager?: ServeLoopOptions['watcherManager'];
-  outbox?: ServeLoopOptions['outbox'];
-}): ServeLoopOptions {
-  return {
-    profile: SERVE_LOOP_PROFILE,
-    meshRegistryPath: meshRegistryPath(opts.meshName),
-    ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
-    ...(opts.watcherManager ? { watcherManager: opts.watcherManager } : {}),
-    ...(opts.outbox ? { outbox: opts.outbox } : {}),
-  };
+export function serveLoopOptions(
+  opts: ServeLoopFieldsInput & { meshName: string },
+): ServeLoopOptions {
+  return serveLoopFields({ ...opts, meshRegistryPath: meshRegistryPath(opts.meshName) });
 }
 
 export interface BuildServeA2aCoreOptions {

@@ -41,7 +41,7 @@ import type {
 
 export type { WiringContext } from './types';
 
-import { buildAgentLoop } from './build-agent-loop';
+import { buildAgentLoop, type JobAffinityOptions } from './build-agent-loop';
 import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
 import { selectServingProviderEntries } from './chain-hops';
@@ -599,7 +599,7 @@ export interface WiringCliSubcommandRegistry {
   }[];
 }
 
-export interface CreateAgentLoopOptions {
+export interface CreateAgentLoopOptions extends JobAffinityOptions {
   /**
    * The process's plugin host pool, owned by the app host (gateway, serve, boot)
    * and lent to every loop it builds (plugin-process-isolation D4). A lent pool

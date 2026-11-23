@@ -216,11 +216,14 @@ describe('the idle gateway bot', () => {
     const boot = bootFileWith(
       'const coldBuilt = await buildGatewayBots(',
       'const shared = await createAgentLoop(cfg, {',
-      'idleGatewayBotLoopOpts(gatewayTurnOrigin(',
+      "jobAffinity: 'boot',",
     );
     for (const src of [gw, boot]) {
+      // durable-background-jobs D6: a host label on every system loop; the idle bot
+      // key wins over it (`resolveJobAffinity`, pinned by job-affinity.test.ts).
+      expect(src).toMatch(/jobAffinity: '(gateway|boot)',/);
       expect(src).toMatch(
-        /\.\.\.\(bots\.length === 0\s*\?\s*idleGatewayBotLoopOpts\(gatewayTurnOrigin\(\(\) => gatewayRef\)\)\s*: \{\}\),/,
+        /\.\.\.\(bots\.length === 0 \? idleGatewayBotLoopOpts\(gatewayTurnOrigin\(\(\) => gatewayRef\)\) : \{\}\),/,
       );
       expect(src).toMatch(
         /idleBotJobs: \{\s*jobStore: \w+(\.jobStore)?,\s*backgroundExecutor: \w+(\.backgroundExecutor)?,\s*jobControl: /,

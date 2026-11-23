@@ -11,6 +11,15 @@ import { ghostSkillMarker, skillCallsFromHistory } from './ghost-skills';
 import { steerText } from './steer';
 
 /**
+ * The tool_result text the mirror guard synthesizes for a tool_use with no stored
+ * result (durable-background-jobs D5). Written only by that guard, never
+ * persisted; pinned by `__tests__/interrupted-tool-result.test.ts`. Not exported
+ * from the package index.
+ */
+export const INTERRUPTED_TOOL_RESULT =
+  '[interrupted — the process stopped while this call ran; it may or may not have taken effect. Check its effect before repeating it.]';
+
+/**
  * What a blank assistant turn replays as. Anthropic rejects an assistant
  * message with empty (or whitespace-only) text anywhere but the final position,
  * and a replayed row is never final — the next user message follows it. Used by
@@ -268,7 +277,7 @@ export function toLLMMessages(stored: StoredMessage[], opts: ToLLMMessagesOption
       .map((id) => ({
         type: 'tool_result',
         tool_use_id: id,
-        content: '[result unavailable — interrupted before completion]',
+        content: INTERRUPTED_TOOL_RESULT,
         is_error: true,
       }));
     if (synthesized.length === 0) continue;

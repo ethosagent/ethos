@@ -444,9 +444,9 @@ export const goals = {
 // ---------------------------------------------------------------------------
 // Tasks — background-job (detached spawn-and-continue) surface
 //
-// Reads plus cancel and steer: `list` enumerates jobs (optionally scoped to a
+// Reads plus cancel, steer and resume: `list` enumerates jobs (optionally scoped to a
 // root session), `get` reads one job with its ordered event trail (null when
-// absent), `cancel` requests cancellation. The JobStore is the source of
+// absent), `cancel` requests cancellation, `resume` requeues a `stale` job. The JobStore is the source of
 // truth; the server maps rows to the wire schemas in `schemas.ts`.
 // ---------------------------------------------------------------------------
 
@@ -462,6 +462,9 @@ const TasksCancelOutput = z.object({ ok: z.boolean() });
 // Steer a running job. The cap is `JOB_STEER_MAX_CHARS` (the store enforces it
 // too; zod rejects early with 400). Whitespace-only text is rejected with a
 // refine, not `.trim()`, so a valid payload reaches the handler unchanged.
+const TasksResumeInput = z.object({ id: z.string().min(1) });
+const TasksResumeOutput = z.object({ ok: z.boolean() });
+
 const TasksSteerInput = z.object({
   id: z.string().min(1),
   text: z
@@ -486,6 +489,8 @@ export const tasks = {
   get: oc.input(TasksGetInput).output(TasksGetOutput),
   cancel: oc.input(TasksCancelInput).output(TasksCancelOutput),
   steer: oc.input(TasksSteerInput).output(TasksSteerOutput),
+  // Requeue a `stale` job whose runner declares `resume: 'session'`; continues its child session.
+  resume: oc.input(TasksResumeInput).output(TasksResumeOutput),
   events: oc.input(TasksEventsInput).output(TasksEventsOutput),
 };
 

@@ -2,7 +2,7 @@ import { isLightSurface } from '@ethosagent/design-tokens/antd';
 import type { BackgroundJobDetailWire, ClarifyRequestEvent } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
 import { useState } from 'react';
-import { useTaskCancel } from '../../features/tasks/api/mutations';
+import { useTaskCancel, useTaskResume } from '../../features/tasks/api/mutations';
 import { useTaskDetail } from '../../features/tasks/api/queries';
 import { TaskSteerInput } from '../../features/tasks/components/TaskSteerInput';
 import {
@@ -14,7 +14,7 @@ import {
 import { type RunState, type RunsState, runCardView } from '../../lib/pi-run-reducer';
 import { resolveRunner, runnerAccentVars } from '../../lib/runners';
 import { useResolvedTokens } from '../../lib/skin-tokens';
-import { canInterruptRun } from '../../lib/task-steer';
+import { canInterruptRun, canResumeJob, resumeChipLabel } from '../../lib/task-steer';
 import { RUN_COPY } from '../../lib/worker-copy';
 import { ClarifyCard } from './ClarifyCard';
 
@@ -84,11 +84,14 @@ export function RunCard({ run, question, resolved, onAnswered }: RunCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(true);
   const detail = useTaskDetail(run.jobId, { live: false });
   const cancel = useTaskCancel();
+  const resume = useTaskResume();
   const [steerOpen, setSteerOpen] = useState(false);
 
   const row = detail.data ?? undefined;
   // Hidden until the row's capabilities say the runner can take a steer (D16).
   const canInterrupt = canInterruptRun(view.buttons, row?.capabilities);
+  const canResume = canResumeJob(run.status, row?.capabilities);
+  const resumedChip = resumeChipLabel(row?.resumeCount);
   const label = row?.label ?? shortId(run.jobId);
   const nowLine = resolveNowLine(run.status, run.now);
 
@@ -116,6 +119,9 @@ export function RunCard({ run, question, resolved, onAnswered }: RunCardProps) {
           />
           {RUN_COPY.statusChip(run.status, run.elapsedMs)}
         </span>
+        {resumedChip ? (
+          <span className="run-card-chip run-card-chip--neutral">{resumedChip}</span>
+        ) : null}
       </header>
 
       {row?.prompt ? <p className="run-card-task">{row.prompt}</p> : null}
@@ -182,6 +188,11 @@ export function RunCard({ run, question, resolved, onAnswered }: RunCardProps) {
         {canInterrupt ? (
           <Button size="small" onClick={() => setSteerOpen((v) => !v)}>
             Interrupt
+          </Button>
+        ) : null}
+        {canResume ? (
+          <Button size="small" loading={resume.isPending} onClick={() => resume.mutate(run.jobId)}>
+            Resume
           </Button>
         ) : null}
         {view.buttons.includes('cancel') ? (

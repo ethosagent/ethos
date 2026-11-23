@@ -8,6 +8,7 @@ import type {
   RunnerCapabilities,
   TurnAudience,
 } from '@ethosagent/types';
+import { resumePrompt } from './resume';
 import { SUMMARY_INSTRUCTION } from './summary';
 
 /** The name the executor and `delegate_task` treat as the default runner. */
@@ -16,16 +17,20 @@ export const ETHOS_RUNNER_NAME = 'ethos';
 /**
  * Capabilities of an in-process Ethos child turn.
  *
- * No takeover (there is no foreign process to attach to), no resume (the child
- * turn is not restartable from a persisted harness log), steering rides the
+ * No takeover (there is no foreign process to attach to), steering rides the
  * existing SteerSink, and containment is the in-process `ScopedFs` / toolset
- * allowlist rather than a sandbox.
+ * allowlist rather than a sandbox. Resume is `'session'` and `autoResume` is on:
+ * the child's turns are persisted as they happen, so a requeued job continues
+ * the same child session (durable-background-jobs D1/D2). Pinned by
+ * `__tests__/runner-capabilities.test.ts`; the Pi and coding-agent
+ * counterparts are pinned in their own packages' `capabilities.test.ts`.
  */
 export const ETHOS_RUNNER_CAPABILITIES: RunnerCapabilities = {
   interactionKinds: ['input', 'pick'],
   answerScopes: ['once'],
   takeover: 'none',
-  resume: 'none',
+  resume: 'session',
+  autoResume: true,
   steer: true,
   sandbox: 'process',
   transport: 'in-process',
@@ -76,7 +81,9 @@ export class EthosJobRunner implements JobRunner {
   run(job: BackgroundJob, ctx: JobRunnerContext): AsyncIterable<AgentEvent> {
     // Background jobs always run in summary mode — the parent re-ingests only a
     // bounded digest, so append the summary instruction to the child prompt.
-    const childPrompt = job.prompt + SUMMARY_INSTRUCTION;
+    // A resumed run re-enters the same child session (the task is already in its
+    // history), so it gets the resume prompt instead of the task prompt.
+    const childPrompt = (ctx.resume ? resumePrompt(ctx.resume) : job.prompt) + SUMMARY_INSTRUCTION;
     return this.loop.run(childPrompt, {
       sessionKey: job.childSessionKey,
       ...(job.personalityId ? { personalityId: job.personalityId } : {}),
@@ -96,6 +103,9 @@ export class EthosJobRunner implements JobRunner {
       // V2-SEC-2 — the child read untrusted content: the executor records it on
       // the row (`BackgroundJob.tainted`) so a parent-review turn starts armed.
       ...(ctx.markTainted ? { onUntrustedRead: () => ctx.markTainted?.() } : {}),
+      // A resumed child that had already read untrusted content starts armed —
+      // the persisted flag, not the in-memory one, survives the restart.
+      ...(job.tainted ? { untrustedOrigin: true } : {}),
     });
   }
 }

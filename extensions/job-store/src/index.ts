@@ -10,6 +10,7 @@ import type {
   BackgroundJobStatus,
   CreateBackgroundJobInput,
   GetJobEventsOptions,
+  JobClaimFence,
   JobSteer,
   JobSteerSource,
   JobSteerState,
@@ -17,189 +18,23 @@ import type {
 } from '@ethosagent/types';
 import {
   JOB_ABORTED_BY_SHUTDOWN,
+  JOB_CLAIM_LOST,
   JOB_STEER_MAX_CHARS,
   JOB_STEER_MAX_PENDING,
 } from '@ethosagent/types';
+import {
+  addAdditiveColumns,
+  DELIVERY_INDEX,
+  JOB_STORE_MIGRATIONS,
+  JOB_STORE_SCHEMA_VERSION,
+  SCHEMA,
+} from './schema';
 
-// ---------------------------------------------------------------------------
-// Schema
-// ---------------------------------------------------------------------------
-
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS jobs (
-    id                 TEXT PRIMARY KEY,
-    owner              TEXT NOT NULL,
-    parent_session_key TEXT NOT NULL,
-    root_session_key   TEXT NOT NULL,
-    child_session_key  TEXT NOT NULL,
-    personality_id     TEXT,
-    depth              INTEGER NOT NULL,
-    status             TEXT NOT NULL DEFAULT 'queued',
-    label              TEXT,
-    prompt             TEXT NOT NULL,
-    summary            TEXT,
-    error              TEXT,
-    spend_usd          REAL NOT NULL DEFAULT 0,
-    max_cost_usd       REAL,
-    cancel_requested   INTEGER NOT NULL DEFAULT 0,
-    heartbeat_at       INTEGER,
-    created_at         INTEGER NOT NULL,
-    started_at         INTEGER,
-    finished_at        INTEGER,
-    delivered_at       INTEGER,
-    origin_platform    TEXT,
-    origin_bot_key     TEXT,
-    origin_chat_id     TEXT,
-    origin_thread_id   TEXT,
-    remote_peer        TEXT,
-    remote_job_id      TEXT,
-    runner             TEXT,
-    blocked_since      INTEGER,
-    blocked_request_id TEXT,
-    deliver            TEXT NOT NULL DEFAULT 'user',
-    origin_user_id     TEXT,
-    toolset_narrowing  TEXT,
-    tainted            INTEGER NOT NULL DEFAULT 0
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS job_events (
-    id         INTEGER PRIMARY KEY,
-    job_id     TEXT NOT NULL REFERENCES jobs(id),
-    seq        INTEGER NOT NULL,
-    event_type TEXT NOT NULL,
-    payload    TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  ) STRICT;
-
-  -- G5 — the second delivery claim. One row per PUSHED mid-run notice, keyed by
-  -- the pending question's requestId. Insert-wins is the claim: the PRIMARY KEY
-  -- makes a concurrent second insert a no-op, so two processes racing the same
-  -- question push it exactly once. Deliberately a table and not a column on
-  -- jobs: a job parks on more than one question over its life, and each park
-  -- needs its own claim (a column would be spent after the first).
-  CREATE TABLE IF NOT EXISTS job_notices (
-    request_id TEXT PRIMARY KEY,
-    job_id     TEXT NOT NULL,
-    claimed_at INTEGER NOT NULL
-  ) STRICT;
-
-  -- The steer queue (plan background-job-steer D2/D18(a)). In the BASELINE, not
-  -- a numbered migration: migrate execs the baseline on every open, so
-  -- CREATE TABLE IF NOT EXISTS reaches old and new databases alike, and
-  -- user_version stays 10 (a bump would lock older builds sharing ~/.ethos out
-  -- of jobs.db, D18(a)). NO foreign key to jobs: foreign_keys is ON, and an
-  -- older build's pruneTerminal deletes jobs rows without knowing this table;
-  -- an FK would make that delete fail. job_notices has no FK for the same
-  -- reason. pruneTerminal here also deletes orphans.
-  CREATE TABLE IF NOT EXISTS job_steers (
-    id                INTEGER PRIMARY KEY,
-    job_id            TEXT NOT NULL,
-    text              TEXT NOT NULL,
-    state             TEXT NOT NULL DEFAULT 'pending',
-    source            TEXT NOT NULL,
-    requester_user_id TEXT,
-    created_at        INTEGER NOT NULL,
-    read_at           INTEGER
-  ) STRICT;
-
-  CREATE INDEX IF NOT EXISTS job_steers_job ON job_steers(job_id, state, id);
-  CREATE INDEX IF NOT EXISTS job_events_job ON job_events(job_id, seq);
-  CREATE INDEX IF NOT EXISTS job_notices_job ON job_notices(job_id);
-  CREATE INDEX IF NOT EXISTS jobs_root_status ON jobs(root_session_key, status);
-  CREATE INDEX IF NOT EXISTS jobs_owner_status ON jobs(owner, status);
-  CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs(status, created_at);
-`;
-
-/**
- * The restore sweep's index. NOT in the baseline: `migrate` execs the baseline
- * BEFORE the migration chain, so on an older database `delivered_at` does not
- * exist yet and the CREATE INDEX would fail. It goes after the chain instead,
- * where the column is guaranteed to be there.
- */
-const DELIVERY_INDEX =
-  'CREATE INDEX IF NOT EXISTS jobs_undelivered ON jobs(origin_bot_key, status, delivered_at)';
-
-const JOB_STORE_SCHEMA_VERSION = 10;
-
-/**
- * Forward-only DDL steps. Each brings a `(N-1)` database to `N`; the baseline
- * above already describes v10, so a FRESH database never runs one. The
- * `table_info` guards keep each ALTER idempotent even if a database was
- * hand-repaired to the newer shape without its `user_version` being bumped.
- */
-const JOB_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
-  2: (db) => {
-    addColumnIfMissing(db, 'remote_peer', 'TEXT');
-    addColumnIfMissing(db, 'remote_job_id', 'TEXT');
-  },
-  // v2 -> v3: the delivery claim. `ALTER TABLE ... ADD COLUMN` keeps the table
-  // STRICT (STRICT is a table property, not a column one) and leaves every
-  // existing row intact with `delivered_at` NULL — i.e. "never announced",
-  // which is the honest state for a job that finished before this code existed.
-  3: (db) => addColumnIfMissing(db, 'delivered_at', 'INTEGER'),
-  // v3 -> v4: which runner executed the row. NULL on every pre-existing row,
-  // which reads as "the default runner" — the only one that existed then.
-  4: (db) => addColumnIfMissing(db, 'runner', 'TEXT'),
-  // v4 -> v5: the `blocked` state's two fields. Same ALTER shape as v2/v3 —
-  // existing rows get NULLs, which is the honest state for every job that
-  // finished before a run could park on a human answer.
-  5: (db) => {
-    addColumnIfMissing(db, 'blocked_since', 'INTEGER');
-    addColumnIfMissing(db, 'blocked_request_id', 'TEXT');
-  },
-  // v5 -> v6: G5's second delivery claim (`job_notices`). No DDL of its own —
-  // the baseline's `CREATE TABLE IF NOT EXISTS` already ran by the time this
-  // step executes, on a fresh AND on an upgraded database alike (`migrate`
-  // execs the baseline before the chain). The step exists so `user_version`
-  // moves, which is what the downgrade guard reads.
-  6: () => {},
-  // v6 -> v7: who sees the result first (plan openclaw-9.5-adoption item 6).
-  // The DEFAULT makes every existing row read `'user'` — the only behaviour
-  // that existed before the column.
-  7: (db) => addColumnIfMissing(db, 'deliver', `TEXT NOT NULL DEFAULT 'user'`),
-  // v7 -> v8: who started the job (`BackgroundJob.originUserId`). NULL on
-  // every existing row — no originator was ever recorded for them.
-  8: (db) => addColumnIfMissing(db, 'origin_user_id', 'TEXT'),
-  // v8 -> v9: the spawning turn's tool narrowing, as JSON
-  // (`BackgroundJob.toolsetNarrowing`). NULL on every existing row, which
-  // reads as "no narrowing" — what those jobs actually ran under.
-  9: (db) => addColumnIfMissing(db, 'toolset_narrowing', 'TEXT'),
-  // v9 -> v10: the run read untrusted content (`BackgroundJob.tainted`,
-  // V2-SEC-2). The DEFAULT reads every existing row as untainted — no taint was
-  // ever recorded for them.
-  10: (db) => addColumnIfMissing(db, 'tainted', 'INTEGER NOT NULL DEFAULT 0'),
-};
-
-/**
- * Additive nullable columns added on EVERY open, idempotently, whatever
- * `user_version` says — and deliberately NOT a migration step (plan
- * personality-memory-boundary D18(a)). Every older build refuses a database
- * stamped newer than itself (`migrate`'s downgrade guard), and all of them
- * tolerate an extra nullable column (`create` names its columns; `rowToJob`
- * maps fields by name), so a bump would only lock older CLIs/desktops sharing
- * `~/.ethos` out of jobs.db. The goal-store convention
- * (extensions/goal-store/src/index.ts, "an ADDITIVE NULLABLE column does not
- * bump user_version"), also used by session-sqlite.
- *
- * Rule-5 conflict, flagged not rewritten: steps 2–10 of `JOB_STORE_MIGRATIONS`
- * above bumped `user_version` for additive columns too (step 10, `tainted`,
- * landed on main beside this helper). New additive columns go
- * here; those steps are left as they are (rewriting a shipped chain is its own
- * change) and are a cleanup candidate.
- *
- * `room_audience` — `BackgroundJob.roomAudience`; NULL on every existing row,
- * which reads as "unstamped" and resolves from the origin chat (D11).
- * Pinned by the 'room audience column' cases in `__tests__/job-store.test.ts`.
- */
-function addAdditiveColumns(db: Database.Database): void {
-  addColumnIfMissing(db, 'room_audience', 'TEXT');
-}
-
-function addColumnIfMissing(db: Database.Database, column: string, type: string): void {
-  const cols = db.pragma('table_info(jobs)') as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE jobs ADD COLUMN ${column} ${type}`);
-  }
+/** The `AND owner = ? AND started_at = ?` tail that confines a write to one claim; empty without a fence. */
+function fenceClause(fence?: JobClaimFence): { sql: string; params: Array<string | number> } {
+  return fence
+    ? { sql: ' AND owner = ? AND started_at = ?', params: [fence.owner, fence.startedAt] }
+    : { sql: '', params: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +76,10 @@ interface JobRow {
   toolset_narrowing: string | null;
   room_audience: string | null;
   tainted: number;
+  resume_affinity: string | null;
+  no_resume: number;
+  resume_count: number;
+  requeued_at: number | null;
 }
 
 interface JobEventRow {
@@ -292,6 +131,10 @@ function rowToJob(r: JobRow): BackgroundJob {
     blockedRequestId: r.blocked_request_id ?? undefined,
     deliver: r.deliver === 'parent' ? 'parent' : 'user',
     ...(r.tainted === 1 ? { tainted: true } : {}),
+    resumeCount: r.resume_count,
+    ...(r.no_resume === 1 ? { noResume: true } : {}),
+    resumeAffinity: r.resume_affinity ?? undefined,
+    requeuedAt: r.requeued_at ?? undefined,
   };
 }
 
@@ -424,8 +267,8 @@ export class SQLiteJobStore implements JobStore {
           max_cost_usd, cancel_requested, created_at,
           origin_platform, origin_bot_key, origin_chat_id, origin_thread_id,
           remote_peer, remote_job_id, runner, deliver, origin_user_id, toolset_narrowing,
-          room_audience)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          room_audience, no_resume)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -453,6 +296,7 @@ export class SQLiteJobStore implements JobStore {
         input.originUserId ?? null,
         input.toolsetNarrowing ? JSON.stringify(input.toolsetNarrowing) : null,
         input.roomAudience ?? null,
+        input.noResume === true ? 1 : 0,
       );
 
     this.appendEventSync(id, 'queued', {});
@@ -528,6 +372,124 @@ export class SQLiteJobStore implements JobStore {
     })();
   }
 
+  async setResumeAffinity(id: string, affinity: string | null): Promise<void> {
+    this.db
+      .prepare(
+        `UPDATE jobs SET resume_affinity = ?
+         WHERE id = ? AND status = 'running' AND (? IS NULL OR no_resume = 0)`,
+      )
+      .run(affinity, id, affinity);
+  }
+
+  /**
+   * running|blocked -> queued under `released:<resume_affinity>`, counted. Runs
+   * inside the caller's transaction. Deliberately NOT `recordTerminalSync`: that
+   * sweeps pending steers to `unread`, and a pending steer belongs to the
+   * resumed run. `ineligible` = no affinity or wrong status; `capped` = has
+   * affinity but `resume_count` is already at `maxResumes` — the cap lives in
+   * the WHERE clause so no reader can race past it.
+   */
+  private requeueSync(
+    id: string,
+    reason: 'restart' | 'crash',
+    fromStatuses: readonly ('running' | 'blocked')[],
+    maxResumes: number,
+  ): 'requeued' | 'ineligible' | 'capped' {
+    const marks = fromStatuses.map(() => '?').join(', ');
+    const row = this.db
+      .prepare(
+        `UPDATE jobs SET status = 'queued', owner = 'released:' || resume_affinity,
+           resume_count = resume_count + 1, requeued_at = ?, heartbeat_at = NULL,
+           error = NULL, blocked_since = NULL, blocked_request_id = NULL
+         WHERE id = ? AND status IN (${marks}) AND resume_affinity IS NOT NULL
+           AND cancel_requested = 0 AND resume_count < ?
+         RETURNING resume_count`,
+      )
+      .get(Date.now(), id, ...fromStatuses, maxResumes) as { resume_count: number } | undefined;
+    if (row !== undefined) {
+      this.appendRequeuedSync(id, reason, row.resume_count);
+      return 'requeued';
+    }
+    const affinity = this.db
+      .prepare(
+        'SELECT 1 AS x FROM jobs WHERE id = ? AND resume_affinity IS NOT NULL AND cancel_requested = 0',
+      )
+      .get(id);
+    return affinity === undefined ? 'ineligible' : 'capped';
+  }
+
+  /**
+   * Appends the `requeued` event, recording the tools the previous claim
+   * started and never finished (`interruptedTools`) so a resume reads them from
+   * one event instead of re-deriving them from the trail. The previous claim is
+   * everything after the newest `claimed` event — at requeue time that is the
+   * claim being ended. Per tool name: `tool_headline` count minus `tool_end`
+   * count, in first-start order. Runs inside the caller's transaction; pinned by
+   * `__tests__/durable-resume.test.ts`.
+   */
+  private appendRequeuedSync(
+    id: string,
+    reason: 'restart' | 'crash' | 'manual',
+    attempt: number,
+  ): void {
+    const claim = this.db
+      .prepare(`SELECT MAX(seq) AS seq FROM job_events WHERE job_id = ? AND event_type = 'claimed'`)
+      .get(id) as { seq: number | null };
+    const rows = this.db
+      .prepare(
+        `SELECT event_type, payload FROM job_events
+         WHERE job_id = ? AND seq > ? AND event_type IN ('tool_headline', 'tool_end')
+         ORDER BY seq ASC`,
+      )
+      .all(id, claim.seq ?? 0) as Array<{ event_type: string; payload: string }>;
+    const open = new Map<string, number>();
+    for (const r of rows) {
+      // One malformed payload must not roll back the sweep's whole transaction.
+      let name: unknown;
+      try {
+        name = (JSON.parse(r.payload) as { toolName?: unknown } | null)?.toolName;
+      } catch {
+        continue;
+      }
+      if (typeof name !== 'string') continue;
+      if (r.event_type === 'tool_headline') open.set(name, (open.get(name) ?? 0) + 1);
+      else open.set(name, Math.max(0, (open.get(name) ?? 0) - 1));
+    }
+    const interruptedTools = [...open].filter(([, n]) => n > 0).map(([name]) => name);
+    this.appendEventSync(id, 'requeued', { reason, attempt, interruptedTools });
+  }
+
+  async requeueForResume(
+    id: string,
+    opts: { reason: 'restart' | 'crash'; maxResumes: number },
+  ): Promise<boolean> {
+    return (
+      this.db.transaction(() =>
+        this.requeueSync(id, opts.reason, ['running', 'blocked'], opts.maxResumes),
+      )() === 'requeued'
+    );
+  }
+
+  async requeueStale(id: string, releasedAs: string): Promise<boolean> {
+    return this.db.transaction((): boolean => {
+      const row = this.db
+        .prepare(
+          `UPDATE jobs SET status = 'queued', owner = ?, requeued_at = ?, heartbeat_at = NULL,
+             error = NULL, finished_at = NULL
+           WHERE id = ? AND status = 'stale'
+           RETURNING resume_count`,
+        )
+        .get(releasedAs, Date.now(), id) as { resume_count: number } | undefined;
+      if (row === undefined) return false;
+      this.appendRequeuedSync(id, 'manual', row.resume_count);
+      return true;
+    })();
+  }
+
+  async markTainted(id: string): Promise<void> {
+    this.db.prepare('UPDATE jobs SET tainted = 1 WHERE id = ?').run(id);
+  }
+
   async heartbeat(id: string): Promise<void> {
     // The column update IS the beat — no event, to avoid write amplification.
     this.db
@@ -535,9 +497,12 @@ export class SQLiteJobStore implements JobStore {
       .run(Date.now(), id);
   }
 
-  async updateSpend(id: string, spendUsd: number): Promise<void> {
+  async updateSpend(id: string, spendUsd: number, fence?: JobClaimFence): Promise<void> {
     // No event — the executor coalesces spend updates.
-    this.db.prepare('UPDATE jobs SET spend_usd = ? WHERE id = ?').run(spendUsd, id);
+    const f = fenceClause(fence);
+    this.db
+      .prepare(`UPDATE jobs SET spend_usd = ? WHERE id = ?${f.sql}`)
+      .run(spendUsd, id, ...f.params);
   }
 
   async requestCancel(id: string): Promise<void> {
@@ -548,14 +513,15 @@ export class SQLiteJobStore implements JobStore {
     tx();
   }
 
-  async markBlocked(id: string, requestId: string): Promise<void> {
+  async markBlocked(id: string, requestId: string, fence?: JobClaimFence): Promise<void> {
+    const f = fenceClause(fence);
     const tx = this.db.transaction(() => {
       const result = this.db
         .prepare(
           `UPDATE jobs SET status = 'blocked', blocked_since = ?, blocked_request_id = ?
-           WHERE id = ? AND status = 'running'`,
+           WHERE id = ? AND status = 'running'${f.sql}`,
         )
-        .run(Date.now(), requestId, id);
+        .run(Date.now(), requestId, id, ...f.params);
       // Guarded, not asserted: the row may have been cancelled or finished
       // between the question being asked and this write. No transition, no event.
       if (result.changes === 1) this.appendEventSync(id, 'blocked', { requestId });
@@ -563,7 +529,8 @@ export class SQLiteJobStore implements JobStore {
     tx();
   }
 
-  async resumeFromBlocked(id: string): Promise<void> {
+  async resumeFromBlocked(id: string, fence?: JobClaimFence): Promise<void> {
+    const f = fenceClause(fence);
     const tx = this.db.transaction(() => {
       // heartbeat_at is bumped here, not left as it was: a run parked longer than
       // staleMs would otherwise be swept stale in the gap between resuming and
@@ -572,9 +539,9 @@ export class SQLiteJobStore implements JobStore {
         .prepare(
           `UPDATE jobs SET status = 'running', blocked_since = NULL,
              blocked_request_id = NULL, heartbeat_at = ?
-           WHERE id = ? AND status = 'blocked'`,
+           WHERE id = ? AND status = 'blocked'${f.sql}`,
         )
-        .run(Date.now(), id);
+        .run(Date.now(), id, ...f.params);
       if (result.changes === 1) this.appendEventSync(id, 'resumed', {});
     });
     tx();
@@ -584,12 +551,19 @@ export class SQLiteJobStore implements JobStore {
     id: string,
     terminal: 'done' | 'failed' | 'aborted',
     fields: { summary?: string; error?: string; tainted?: boolean },
+    fence?: JobClaimFence,
   ): Promise<void> {
     const tx = this.db.transaction(() => {
-      const row = this.db.prepare('SELECT status FROM jobs WHERE id = ?').get(id) as
-        | { status: string }
-        | undefined;
+      const row = this.db
+        .prepare('SELECT status, owner, started_at FROM jobs WHERE id = ?')
+        .get(id) as { status: string; owner: string; started_at: number | null } | undefined;
       if (!row) throw new Error(`finish: job ${id} not found`);
+      // Pinned by `__tests__/durable-resume-fence.test.ts` ('fenced finish').
+      if (fence && (row.owner !== fence.owner || row.started_at !== fence.startedAt)) {
+        throw Object.assign(new Error(`finish: job ${id} is no longer held by this claim`), {
+          code: JOB_CLAIM_LOST,
+        });
+      }
       // `blocked` is a legal SOURCE (a parked run is still cancellable — §4.1's
       // blocked card offers Cancel) but never a terminal ARGUMENT.
       if (row.status !== 'running' && row.status !== 'stale' && row.status !== 'blocked') {
@@ -826,8 +800,9 @@ export class SQLiteJobStore implements JobStore {
     return result.changes;
   }
 
-  async reclaimStale(staleMs: number): Promise<BackgroundJob[]> {
+  async reclaimStale(staleMs: number, opts?: { maxResumes?: number }): Promise<BackgroundJob[]> {
     const threshold = Date.now() - staleMs;
+    const maxResumes = opts?.maxResumes ?? 0;
     const ids = this.db.transaction((): string[] => {
       // `status = 'running'` is what keeps `blocked` out of the sweep, and that
       // is deliberate, not incidental: the executor stops beating for a parked
@@ -843,12 +818,25 @@ export class SQLiteJobStore implements JobStore {
 
       const transitioned: string[] = [];
       for (const { id } of rows) {
+        // D13: this transaction is the one atomic owner of the move out of
+        // `running` — requeue when eligible, otherwise go stale.
+        const requeued = this.requeueSync(id, 'crash', ['running'], maxResumes);
+        if (requeued === 'requeued') {
+          transitioned.push(id);
+          continue;
+        }
+        const capped = maxResumes > 0 && requeued === 'capped';
         const result = this.db
           .prepare(
-            `UPDATE jobs SET status = 'stale', error = 'stalled — no heartbeat'
+            `UPDATE jobs SET status = 'stale', error = ?
              WHERE id = ? AND status = 'running'`,
           )
-          .run(id);
+          .run(
+            capped
+              ? `stalled — no heartbeat (auto-resume limit ${maxResumes} reached)`
+              : 'stalled — no heartbeat',
+            id,
+          );
         if (result.changes === 1) {
           this.recordTerminalSync(id, 'stale', {});
           transitioned.push(id);
@@ -860,12 +848,19 @@ export class SQLiteJobStore implements JobStore {
     return ids.map((id) => this.getSync(id)).filter((j): j is BackgroundJob => j !== null);
   }
 
-  async expireQueued(ttlMs: number): Promise<BackgroundJob[]> {
-    const threshold = Date.now() - ttlMs;
+  async expireQueued(ttlMs: number, opts?: { resumeTtlMs?: number }): Promise<BackgroundJob[]> {
+    const now = Date.now();
+    const threshold = now - ttlMs;
+    const resumeThreshold = now - (opts?.resumeTtlMs ?? ttlMs);
     const ids = this.db.transaction((): string[] => {
+      // A requeued row is measured from `requeued_at` (its wait for a successor
+      // began then), a never-requeued row from `created_at` — as before.
       const rows = this.db
-        .prepare(`SELECT id FROM jobs WHERE status = 'queued' AND created_at <= ?`)
-        .all(threshold) as Array<{ id: string }>;
+        .prepare(
+          `SELECT id FROM jobs WHERE status = 'queued' AND
+             ((requeued_at IS NULL AND created_at <= ?) OR (requeued_at IS NOT NULL AND requeued_at <= ?))`,
+        )
+        .all(threshold, resumeThreshold) as Array<{ id: string }>;
       if (rows.length === 0) return [];
 
       const transitioned: string[] = [];
@@ -1036,6 +1031,10 @@ export class SQLiteJobStore implements JobStore {
   async getEvents(jobId: string, opts?: GetJobEventsOptions): Promise<BackgroundJobEvent[]> {
     const params: unknown[] = [jobId];
     let where = 'job_id = ?';
+    if (opts?.eventType !== undefined) {
+      where += ' AND event_type = ?';
+      params.push(opts.eventType);
+    }
     if (opts?.beforeSeq !== undefined) {
       where += ' AND seq < ?';
       params.push(opts.beforeSeq);

@@ -3,7 +3,7 @@ title: "config.yaml: background agents, browser and search keys"
 description: "config.yaml background agent, browser and search keys."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-23
 ---
 
 ## Synopsis {#synopsis}
@@ -36,6 +36,37 @@ Notes:
 - `gemini`'s `--acp` is the CLI's own documented flag ("Starts the agent in ACP mode" per `gemini --help`); `--experimental-acp` also exists but is deprecated in favor of it.
 - An entry with both `command` and `image` set registers immediately; there is no separate enable switch. Removing an entry (or its `image`) unregisters that runner — a job naming it then gets the same `not_available` answer a machine that never built the image would.
 - Each entry needs its own container image with credentials for that agent mounted in — there is no shared auth story across entries. Neither agent's credential mount is wired yet.
+
+## background.resume_on_restart, max_resumes, resume_ttl_ms {#background-resume}
+
+Type: dotted keys · Default: `true` / `3` / `86400000`
+
+A background job on the Ethos runner survives a restart: a graceful stop or a crash puts the job back in the queue on its own child session, and the model continues from its saved history. Pi and coding-agent runners are unchanged (Pi keeps no auto-resume).
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `background.resume_on_restart` | boolean | `true` | Global switch. `false` restores the old behaviour: an interrupted job ends `aborted` or `stale`. |
+| `background.max_resumes` | integer | `3` | Automatic resumes allowed per job. At the cap the job ends as before. A manual **Resume** is not counted. |
+| `background.resume_ttl_ms` | integer (ms) | `86400000` | How long a requeued job may wait for a host before it expires. |
+
+```yaml
+background.resume_on_restart: true
+background.max_resumes: 3
+background.resume_ttl_ms: 86400000
+```
+
+Notes:
+
+- Opt one job out with `delegate_task resume_on_restart: false`.
+- Only `ethos serve`, `ethos boot` and the gateway (system loop and bots) adopt a requeued job. `ethos chat` and the desktop app never adopt one, and their own jobs (never stamped resumable) stay `stale`. If one of them sweeps a crashed serve job first, it requeues it for serve rather than staling it.
+- After a crash the job waits for `background.stale_ms` (90 s) before it is requeued. A graceful stop requeues at once.
+- A stale job whose runner resumes by session and re-reads the resume context (the Ethos runner; not Pi) shows a **Resume** button in the web UI (`tasks.resume`). Channels get no message on resume; the completion notice says "(resumed after a restart)".
+- Limitation: a requeued job whose host never comes back expires silently. If nothing with the job's affinity restarts (a removed or re-keyed bot, switching from `ethos boot` to separate serve and gateway processes, or a host that is simply never restarted), the job stays `queued` until `background.resume_ttl_ms`, then becomes `expired` with no notice to the chat.
+- Limitation: a tool call in flight at the crash is not re-run. The model is told it was interrupted and to verify, but a careless model can still repeat a side effect.
+- Limitation: spend of a call in flight at a crash is not counted against `maxCostUsd`.
+- Limitation: a steer drained but not yet marked read at a crash can be delivered twice.
+
+Enforced by `SQLiteJobStore.reclaimStale` and `requeueForResume` (`extensions/job-store/src/index.ts`), `BackgroundExecutor.runOne` (`extensions/job-runner/src/index.ts`) and `INTERRUPTED_TOOL_RESULT` (`packages/core/src/agent-loop/history.ts`). Pinned by `extensions/job-store/src/__tests__/durable-resume.test.ts`, `extensions/job-runner/src/__tests__/durable-resume.test.ts`, `extensions/job-runner/src/__tests__/durable-resume-review.test.ts` and `packages/core/src/__tests__/interrupted-tool-result.test.ts`.
 
 ## browser.\<field\> {#browser}
 

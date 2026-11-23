@@ -21,6 +21,8 @@ export type TasksSteerResult =
   | { ok: true; steerId: number }
   | Extract<SteerOutcome, { ok: false }>
   | { ok: false; reason: 'not_available' };
+type ResumeOutcome = Awaited<ReturnType<JobControl['resume']>>;
+export type TasksResumeResult = ResumeOutcome | { ok: false; reason: 'not_available' };
 export type TasksEventsResult =
   | { ok: true; events: BackgroundJobEventWire[] }
   | { ok: false; reason: 'not_found' | 'not_available' };
@@ -72,6 +74,8 @@ function toSummary(job: BackgroundJob): BackgroundJobSummaryWire {
     rootSessionKey: job.rootSessionKey,
     parentSessionKey: job.parentSessionKey,
     runner: job.runner ?? null,
+    resumeCount: job.resumeCount ?? 0,
+    resumeOnRestart: job.resumeAffinity !== undefined,
   };
 }
 
@@ -135,6 +139,7 @@ function toCapabilities(
     answerScopes: [...caps.answerScopes],
     takeover: caps.takeover,
     resume: caps.resume,
+    autoResume: caps.autoResume === true,
     steer: caps.steer,
     sandbox: caps.sandbox,
     transport: caps.transport,
@@ -220,6 +225,14 @@ export class TasksService {
     const job = await this.store.get(id);
     if (!job) return { ok: false, reason: 'not_found' };
     return this.control.steer(job, { text, source: 'web', requesterAudience: 'private' });
+  }
+
+  /** Requeue a `stale` job through JobControl (audience gate, capability, executor nudge). */
+  async resume(id: string): Promise<TasksResumeResult> {
+    if (!this.store || !this.control) return { ok: false, reason: 'not_available' };
+    const job = await this.store.get(id);
+    if (!job) return { ok: false, reason: 'not_found' };
+    return this.control.resume(job, { requesterAudience: 'private' });
   }
 
   /** Rows with `seq > afterSeq`, oldest first — the Tasks page's transcript cursor. */

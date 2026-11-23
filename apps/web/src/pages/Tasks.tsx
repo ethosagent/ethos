@@ -1,13 +1,13 @@
 import type { BackgroundJobEventWire, BackgroundJobStatusWire } from '@ethosagent/web-contracts';
-import { Drawer, Empty, Popconfirm, Select, Spin, Typography } from 'antd';
+import { Button, Drawer, Empty, Popconfirm, Select, Spin, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useRecentSessions } from '../features/sessions/api/queries';
-import { useTaskCancel } from '../features/tasks/api/mutations';
+import { useTaskCancel, useTaskResume } from '../features/tasks/api/mutations';
 import { useTaskDetail, useTasksList } from '../features/tasks/api/queries';
 import { TaskSteerInput } from '../features/tasks/components/TaskSteerInput';
 import { SteersList, TranscriptPane } from '../features/tasks/components/TaskSteersAndTranscript';
-import { canSteerJob } from '../lib/task-steer';
+import { canResumeJob, canSteerJob, resumeChipLabel } from '../lib/task-steer';
 import {
   filterSessionsByPersonality,
   filterTasksForLibrary,
@@ -119,6 +119,25 @@ function StatusChip({ status }: { status: BackgroundJobStatusWire }) {
   );
 }
 
+function ResumedChip({ count }: { count: number | undefined }) {
+  const label = resumeChipLabel(count);
+  if (!label) return null;
+  return (
+    <span
+      style={{
+        marginLeft: 6,
+        padding: '2px 8px',
+        borderRadius: 9999,
+        fontSize: 11,
+        color: 'var(--text-secondary)',
+        background: 'var(--bg-elevated)',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function EventTrail({ events }: { events: BackgroundJobEventWire[] }) {
   if (events.length === 0) {
     return <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>No events yet.</span>;
@@ -156,6 +175,7 @@ function EventTrail({ events }: { events: BackgroundJobEventWire[] }) {
 
 function TaskDetailDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const { data, isLoading } = useTaskDetail(id);
+  const resumeMut = useTaskResume();
 
   return (
     <Drawer
@@ -175,6 +195,16 @@ function TaskDetailDrawer({ id, onClose }: { id: string | null; onClose: () => v
         <>
           <section style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <StatusChip status={data.status} />
+            <ResumedChip count={data.resumeCount} />
+            {canResumeJob(data.status, data.capabilities) ? (
+              <Button
+                size="small"
+                loading={resumeMut.isPending}
+                onClick={() => resumeMut.mutate(data.id)}
+              >
+                Resume
+              </Button>
+            ) : null}
             <span style={CELL_MUTED}>
               {data.personalityId ?? 'no personality'} · depth {data.depth}
             </span>
@@ -438,6 +468,7 @@ export function Tasks() {
               </span>
               <span>
                 <StatusChip status={job.status} />
+                <ResumedChip count={job.resumeCount} />
               </span>
               <span style={CELL_MUTED}>{formatTime(job.startedAt ?? job.createdAt)}</span>
               <span style={CELL_MUTED}>{formatDuration(job.startedAt, job.finishedAt)}</span>

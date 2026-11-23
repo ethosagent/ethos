@@ -625,11 +625,12 @@
       "toolResult": "e2c973a8273b65d81b8c80a9616ef4922bb07b85d23b606602c328c8f9133415"
     },
     "tasks": {
-      "list": "69da3e3912b8ce04e257741efbb819123705a71f7af7497074e0164d0fb91c0a",
-      "get": "43887f3fbd9eedce69dfebc7103d60186984cebed5a513050bf34e8e31b1aff4",
+      "list": "4163778d600dc8738d520198e5d5326db7692d1a9d2bcada7fdb0e1e8b4d1ee9",
+      "get": "4efd1c69bf32434db92871a6d630a2f39439cff526b520f21ae71470fd026f6a",
       "cancel": "ec2e72b9bad9296d2f508702aa7494a4534d5686c232a6996435911db42400bd",
       "steer": "b907fd57c1c6fc12457ad091f901208b34644cd05c3c47bd59a404a61f5fdb41",
-      "events": "42afbca05367c0e1f198ae2f5c80a77cb54e065995e07c983e09f39a544dc85f"
+      "resume": "ec2e72b9bad9296d2f508702aa7494a4534d5686c232a6996435911db42400bd",
+      "events": "15fc98cf061c589aa6a77f28e8b903e2f5ceeb650cd6ee7ae22c28e8ea2495e9"
     },
     "digest": {
       "latest": "8279a368f731b43e6ef0fcb18af2109663ba0021cda01a7213ecfb284feda679",
@@ -780,11 +781,11 @@
     "ApprovalRequestSchema": "868a6d6edda29eeafb823ced63a31c8a1688fd0d4b71822bb670e2b8cc778fe7",
     "ApprovalResolvedEventSchema": "df9b728cc9f346d9d96c49d01d07b4bbbdb8668c4a6ab248ebdf80634501080e",
     "ApprovalScopeSchema": "5f29845702164c6f62f3340467778cf810bf85f1edbca45fc35dd1ce08e25261",
-    "BackgroundJobDetailSchema": "e158da14c6288104663b6c56c13a7160f49c98c9bf706db6164b76706ecda152",
-    "BackgroundJobEventSchema": "1fffcdf0c09991f79c86e2271f997dd90b1355b85ce85f5f757fb5cfbf229ca1",
-    "BackgroundJobEventTypeSchema": "d761df04d606cace36bbaeb490ebdcc2b7a0c64534d5ac707a6426c4725fe6ae",
+    "BackgroundJobDetailSchema": "6f5143f7f2d5adbaff9681ecc907f67eb915c3d78717d4f11c0564fdefdd42b6",
+    "BackgroundJobEventSchema": "1e8ef6deb3b7db059b610f2c76073b7f374867e2a9db487a03c6a785def17609",
+    "BackgroundJobEventTypeSchema": "3eb1bc8c5e9e01ca85d5410a618ff26612ecc82bd3f8ceaa028d840b925d3355",
     "BackgroundJobStatusSchema": "0bb45d31ada5262efd4a578abf4c8a2989f0dc2906618b3714b90c11aca7f1c9",
-    "BackgroundJobSummarySchema": "6aa4379300252a1bc10dd23722abcdc12a46a33adda07dca843c681edcfa3330",
+    "BackgroundJobSummarySchema": "2688996695cab7bd2e71a5f983071ed78979c2c0c5dee2b1451c1aa096c1cd5a",
     "BatchRunInfoSchema": "1d939711d24b6d1c976288dcfb51f3a75fae258e5398e099e9eff2c42670c3f5",
     "BatchRunStatusSchema": "14f0b2fd55fbece8210b1ff36cec46b40a91b27e98d20dcf478af71a5f59ef19",
     "BotBindingSchema": "709a68e7ffbda4f7a5b0f0747070ea575e98348e3e25aed1878035750fa24040",
@@ -1019,7 +1020,7 @@
     "RunDetailRowSchema": "ff75584f2c08ee1bb7ac090d0ff2aae4ac111c70b741749ab72becee47e5ce9a",
     "RunStartEventSchema": "7776c63072a6b0a196cec1f5c3b8a841cc82e5cf921afd34c259217f31b9b9e8",
     "RunUpdateEventSchema": "72dff64a3f5c144aa6d814b16ed7f5618d34e6b49fa76d06381e7ed3fe50453d",
-    "RunnerCapabilitiesSchema": "15287eb9e2b15dac8e8c5aa0fd04c43bbbe2450bc757bd6b6f0f356934415f29",
+    "RunnerCapabilitiesSchema": "3a8d039ac9d59bba1a574b5af5eb5c10bd55c896b858d715166383d1105f31c3",
     "SessionCardSchema": "05eaa2063c0f47088cdac298024cd8972313ab821b83e6912d60c34f44fd1e1c",
     "SessionDecisionSchema": "ba7f5cd7f0c35087ab510cea4724f33e492631cf4424d3a1ecea4d5ed4ab3d0d",
     "SessionSchema": "2f0b0ec0b5988ba577f08a140c81303c9a3b09f4d251645a37d1353c5580cf3f",

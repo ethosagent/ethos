@@ -120,6 +120,7 @@ function fakeControl(over: Partial<Control> = {}): Control & { calls: string[] }
       calls.push(`tail:${req.audience}:${req.afterSeq}:${req.limit}`);
       return { ok: true, events: [makeEvent({ id: 9, seq: 5, eventType: 'text' })] };
     },
+    resume: async () => ({ ok: true }),
     steers: async (): Promise<JobSteer[]> => [
       { id: 7, jobId: 'job-1', text: 'hi', state: 'pending', source: 'web', createdAt: 5 },
     ],

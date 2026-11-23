@@ -1,6 +1,10 @@
 import { JOB_STEER_MAX_PENDING } from '@ethosagent/types';
 import { ORPCError } from '@orpc/server';
-import type { TasksEventsResult, TasksSteerResult } from '../services/tasks.service';
+import type {
+  TasksEventsResult,
+  TasksResumeResult,
+  TasksSteerResult,
+} from '../services/tasks.service';
 import { os } from './context';
 
 // Reads plus cancel and steer over the background JobStore. `list` scopes to a
@@ -10,9 +14,9 @@ import { os } from './context';
 // step; `events` is a cursor read of the trail. All mapping domain→wire lives
 // in TasksService; the failure→status mapping below follows rpc/outbox.ts.
 
-type Failure = Extract<TasksSteerResult | TasksEventsResult, { ok: false }>;
+type Failure = Extract<TasksSteerResult | TasksEventsResult | TasksResumeResult, { ok: false }>;
 
-function refuse(result: Failure): never {
+function refuse(result: Failure, operation: 'steer' | 'resume' | 'events' = 'steer'): never {
   const status = 'status' in result && result.status ? ` (${result.status})` : '';
   switch (result.reason) {
     case 'not_found':
@@ -24,10 +28,15 @@ function refuse(result: Failure): never {
         status: 409,
         message: 'job runs on a remote node and cannot take steers',
       });
+    case 'not_stale':
+      throw new ORPCError('CONFLICT', { status: 409, message: `job is not stale${status}` });
     case 'unsupported':
       throw new ORPCError('CONFLICT', {
         status: 409,
-        message: "this job's runner cannot take steers",
+        message:
+          operation === 'resume'
+            ? "this job's runner cannot resume"
+            : "this job's runner cannot take steers",
       });
     case 'full':
       throw new ORPCError('TOO_MANY_REQUESTS', {
@@ -52,6 +61,11 @@ export const tasksRouter = {
     const res = await context.tasks.steer(input.id, input.text);
     if (!res.ok) refuse(res);
     return { steerId: res.steerId };
+  }),
+  resume: os.tasks.resume.handler(async ({ input, context }) => {
+    const res = await context.tasks.resume(input.id);
+    if (!res.ok) refuse(res, 'resume');
+    return { ok: true };
   }),
   events: os.tasks.events.handler(async ({ input, context }) => {
     const res = await context.tasks.events(input.id, input.afterSeq, input.limit);

@@ -18,6 +18,21 @@ export function useTaskCancel() {
   });
 }
 
+export function useTaskResume() {
+  const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
+  return useMutation({
+    mutationFn: (id: string) => rpc.tasks.resume({ id }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: tasksKeys.all() }),
+    onError: (err) =>
+      notification.error({
+        message: 'Resume failed',
+        description: err instanceof Error ? err.message : String(err),
+        placement: 'topRight',
+      }),
+  });
+}
+
 export function useTaskSteer() {
   const queryClient = useQueryClient();
   const { notification } = AntApp.useApp();

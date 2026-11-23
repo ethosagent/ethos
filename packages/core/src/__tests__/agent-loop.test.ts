@@ -1270,7 +1270,7 @@ describe('AgentLoop', () => {
       expect(results.map((r) => r.tool_use_id).sort()).toEqual(['tcA', 'tcB']);
       for (const r of results) {
         expect(r.is_error).toBe(true);
-        expect(r.content).toBe('[result unavailable — interrupted before completion]');
+        expect(r.content).toMatch(/^\[interrupted — /);
       }
     });
 

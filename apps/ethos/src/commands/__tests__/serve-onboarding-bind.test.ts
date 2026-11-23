@@ -29,7 +29,7 @@ describe('serve.ts — one builder for every serve loop', () => {
     const src = await readServe();
     expect(src).toMatch(/createAgentLoop\(\s*agentConfig,\s*serveLoopOptions\(/);
     expect(
-      src.match(/createAgentLoop\([^;]*?serveLoopOptions\(\{ meshName: activeMeshName/gs),
+      src.match(/createAgentLoop\([^;]*?serveLoopOptions\(\{\s*meshName: activeMeshName/gs),
     ).toHaveLength(2);
     // No createAgentLoop call in serve builds its own option object any more.
     expect(src).not.toMatch(/createAgentLoop\([^)]*\{\s*profile:/s);

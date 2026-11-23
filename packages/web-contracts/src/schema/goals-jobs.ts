@@ -130,6 +130,8 @@ export type BackgroundJobStatusWire = z.infer<typeof BackgroundJobStatusSchema>;
 
 export const BackgroundJobEventTypeSchema = z.enum([
   'queued',
+  // A non-terminal run went back to `queued` to continue (payload: reason, attempt, interruptedTools).
+  'requeued',
   'claimed',
   'running',
   'heartbeat',
@@ -190,6 +192,10 @@ export const BackgroundJobSummarySchema = z.object({
    * connected for, and a run card cannot draw its runner badge without it.
    */
   runner: z.string().nullable(),
+  /** Automatic resumes so far (0 when never requeued). */
+  resumeCount: z.number().int(),
+  /** true when the row is stamped auto-resumable — `resume_affinity IS NOT NULL`. */
+  resumeOnRestart: z.boolean(),
 });
 export type BackgroundJobSummaryWire = z.infer<typeof BackgroundJobSummarySchema>;
 
@@ -220,6 +226,8 @@ export const RunnerCapabilitiesSchema = z.object({
   answerScopes: z.array(z.enum(['once', 'run', 'always'])),
   takeover: z.enum(['pty', 'none']),
   resume: z.enum(['session', 'fork', 'none']),
+  /** The executor may requeue this runner's interrupted runs itself; manual Resume needs it too. */
+  autoResume: z.boolean().optional(),
   steer: z.boolean(),
   sandbox: z.enum(['process', 'external', 'none']),
   transport: z.string(),

@@ -10,6 +10,7 @@ import { BackgroundJobEventTypeSchema } from '../schema/goals-jobs';
 // key without a schema option (or vice versa) fails the comparison below.
 const UNION_MEMBERS = {
   queued: true,
+  requeued: true,
   claimed: true,
   running: true,
   heartbeat: true,

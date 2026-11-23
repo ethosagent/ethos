@@ -21,6 +21,19 @@ export type ServePersonalityRegistry = Awaited<ReturnType<typeof createPersonali
 
 export type ServeLoopOptions = NonNullable<Parameters<typeof createAgentLoop>[1]>;
 
+/** What `serveLoopFields` takes; `serveLoopOptions` (serve.ts) adds the mesh name. */
+export interface ServeLoopFieldsInput {
+  cronScheduler?: ServeLoopOptions['cronScheduler'] | null;
+  watcherManager?: ServeLoopOptions['watcherManager'];
+  outbox?: ServeLoopOptions['outbox'];
+  /**
+   * The loop's job affinity (durable-background-jobs D6). Default `'serve'`. A `--team`
+   * member passes its own: members share a dataDir, and a flat `serve` label would let
+   * one member adopt another's job and run it on the wrong loop.
+   */
+  jobAffinity?: string;
+}
+
 /** Every `ethos serve` loop runs the web profile: no terminal guard — the web
  *  approval hook is the gate for dangerous calls. */
 export const SERVE_LOOP_PROFILE = 'web' as const;
@@ -54,4 +67,30 @@ export function buildServeDangerPredicate(
     executionPostureFor,
     usageMeter,
   });
+}
+
+/**
+ * The `createAgentLoop` options of an `ethos serve` loop, shared by the normal
+ * branch and the loop onboarding boots in-process so the two cannot drift.
+ * Cron, watchers and the approval outbox exist only when serve starts with a
+ * config, so onboarding passes none of them. Pinned by
+ * commands/__tests__/serve-onboarding-bind.test.ts.
+ *
+ * `outbox` travels with `watcherManager` because the watcher tools are what
+ * give a serve loop a path to a channel (see `createOutboxProposalSide`). The
+ * two loops without them — onboarding and `--team` coordinator — cannot reach a
+ * channel at all: `send_message` answers "Gateway not active", because nothing
+ * in this process calls `setMessagingSend`.
+ */
+export function serveLoopFields(
+  opts: ServeLoopFieldsInput & { meshRegistryPath: string },
+): ServeLoopOptions {
+  return {
+    profile: SERVE_LOOP_PROFILE,
+    meshRegistryPath: opts.meshRegistryPath,
+    jobAffinity: opts.jobAffinity ?? 'serve',
+    ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
+    ...(opts.watcherManager ? { watcherManager: opts.watcherManager } : {}),
+    ...(opts.outbox ? { outbox: opts.outbox } : {}),
+  };
 }

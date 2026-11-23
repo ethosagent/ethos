@@ -89,6 +89,7 @@ import type {
   WiringConfig,
   WiringProfile,
 } from './index';
+import { resolveJobAffinity } from './job-affinity';
 import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
 import { detectLocalRuntime } from './local-models';
@@ -137,6 +138,8 @@ import { buildVoiceStack } from './voice-stack';
  * from the package, so nothing but this composition root holds it.
  */
 const APPROVER_DECISION_SINKS = new ApproverDecisionSinks();
+
+export type { JobAffinityOptions } from './job-affinity';
 
 export interface BuildAgentLoopDeps {
   infra: InfrastructureResult;
@@ -1577,13 +1580,7 @@ export async function buildAgentLoop(
       loop,
       runners: jobRunners,
       owner,
-      // F06 — who inherits this executor's queued rows when its loop is
-      // disposed. A bot's loop: any loop answering as the same bot — the
-      // replacement after a live bot edit, or the next boot's. A loop with no
-      // bot identity: only a successor in THIS process (desktop restart, a
-      // chat model switch) — `ethos chat`, `ethos serve` and `ethos gateway`'s
-      // system loop may share one jobs.db, and none may run another's jobs.
-      affinity: `${profile}:${opts.originBotKey ?? `pid-${process.pid}`}`,
+      ...resolveJobAffinity(profile, opts),
       config: {
         maxConcurrentJobs: bg.maxConcurrentJobs,
         staleMs: bg.staleMs,
@@ -1591,6 +1588,9 @@ export async function buildAgentLoop(
         queuedTtlMs: bg.queuedTtlMs,
         maxRootBackgroundUsd: bg.maxRootBackgroundUsd,
         retentionMs: bg.retentionDays * 86_400_000,
+        resumeOnRestart: bg.resumeOnRestart,
+        maxResumes: bg.maxResumes,
+        resumeTtlMs: bg.resumeTtlMs,
       },
       log: (msg) => log.info(`[background] ${msg}`),
       // Phase 5 — cancelling a run withdraws whatever question it is parked

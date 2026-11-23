@@ -200,3 +200,21 @@ describe('run digest (G9/D11/D20)', () => {
     expect((await store.get(job.id))?.status).toBe('done');
   });
 });
+
+describe('RunDigestBoard ownership', () => {
+  it('an update from a run that does not own the digest is a no-op', async () => {
+    const { RunDigestBoard } = await import('../run-digest');
+    const board = new RunDigestBoard('ethos', undefined);
+    const seen: RunUpdateDigest[] = [];
+    board.subscribe((u) => seen.push(u));
+    const job = await new SQLiteJobStore(':memory:').create(createInput());
+    const owner = new AbortController();
+    board.open(job, owner);
+    seen.length = 0;
+    board.update(job.id, { status: 'blocked' }, new AbortController());
+    expect(seen).toHaveLength(0);
+    board.update(job.id, { status: 'blocked' }, owner);
+    expect(seen.map((u) => u.status)).toEqual(['blocked']);
+    board.clear();
+  });
+});

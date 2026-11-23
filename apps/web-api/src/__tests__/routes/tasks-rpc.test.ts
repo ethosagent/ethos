@@ -63,6 +63,7 @@ describe('tasks.steer / tasks.events RPC', () => {
         ],
       }),
       steers: async () => [],
+      resume: async () => ({ ok: true }),
     } satisfies Control;
     app = createWebApi({
       dataDir,

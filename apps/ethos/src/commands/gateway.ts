@@ -958,8 +958,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // Cron, dreams and watcher wakes run here, and a gated personality's
     // `send_message` must queue from this loop exactly as it does from a bot's.
     outbox: outbox.wiring,
-    // No bot configured: this loop is also the idle gateway bot's
-    // (`idleGatewayBotLoopOpts`).
+    // No bot configured: this loop is also the idle gateway bot's (`idleGatewayBotLoopOpts`); `originBotKey` wins in `resolveJobAffinity`.
+    jobAffinity: 'gateway',
     ...(bots.length === 0 ? idleGatewayBotLoopOpts(gatewayTurnOrigin(() => gatewayRef)) : {}),
   });
   systemLoop = systemLoopReady;

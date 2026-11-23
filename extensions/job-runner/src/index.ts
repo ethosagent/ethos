@@ -3,18 +3,22 @@ import type { AgentLoop } from '@ethosagent/core';
 import type {
   ArtifactChange,
   BackgroundJob,
-  BackgroundJobStatus,
+  BackgroundJobEvent,
   HookRegistry,
+  JobClaimFence,
   JobRunner,
+  JobRunnerContext,
   JobRunnerRegistry,
   JobSteer,
   JobStore,
   RunUpdateDigest,
 } from '@ethosagent/types';
-import { answerSuffix, JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
+import { answerSuffix, isClaimLostError, JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
 import { EthosJobRunner } from './ethos-job-runner';
 import { createJobSteerSink } from './job-steer-sink';
-import { BoundedLogBuffer } from './log-buffer';
+import { resumeContextFor } from './resume';
+import { RunDigestBoard } from './run-digest';
+import { createLogSink, createTextSink } from './run-sinks';
 import { capText, extractSummarySection, SUMMARY_RESULT_CAP } from './summary';
 
 export {
@@ -45,6 +49,7 @@ export {
 } from './job-ref';
 export { createJobSteerSink, type JobSteerSink } from './job-steer-sink';
 export { BoundedLogBuffer, type RunnerLogLine } from './log-buffer';
+export { resumePrompt } from './resume';
 // Every background job runs in summary mode, whatever the runner: the parent
 // re-ingests only a bounded digest. Exported so an out-of-process runner
 // appends the SAME instruction rather than growing a third copy of it.
@@ -83,6 +88,17 @@ export interface BackgroundExecutorConfig {
   pollMs?: number;
   /** Retention GC window: terminal rows older than this are pruned. 0/absent disables. */
   retentionMs?: number;
+  /**
+   * Requeue an interrupted run (graceful stop or crash) instead of aborting or
+   * staling it, so a successor with the same affinity continues it. Default
+   * false here — a standalone executor keeps today's behaviour; wiring passes
+   * `background.resume_on_restart` (default true).
+   */
+  resumeOnRestart?: boolean;
+  /** Automatic resumes per job before it falls back to abort/stale. Default 3. */
+  maxResumes?: number;
+  /** How long a requeued row waits for a successor, from the requeue. Default 24 h. */
+  resumeTtlMs?: number;
 }
 
 export interface BackgroundExecutorDeps {
@@ -114,6 +130,13 @@ export interface BackgroundExecutorDeps {
    * to `owner`, as before.
    */
   affinity?: string;
+  /**
+   * The affinity stamped on a resumable run (`setResumeAffinity`), set only
+   * when it survives a process restart (a bot key or a `jobAffinity` host label,
+   * `resolveJobAffinity` in packages/wiring/src/job-affinity.ts); a pid
+   * affinity never auto-resumes (D6). Absent = this executor never auto-resumes.
+   */
+  resumeAffinity?: string;
   config: BackgroundExecutorConfig;
   /** Optional log sink. Library code never touches console.* — use this or nothing. */
   log?: (msg: string) => void;
@@ -139,20 +162,8 @@ export interface BackgroundExecutorDeps {
 }
 
 const DEFAULT_POLL_MS = 3_000;
-
-// --- Child-text persistence bounds -----------------------------------------
-// The child's text is persisted WHILE it runs so a crash mid-job does not lose
-// everything it wrote. Three constants bound that, and each answers a different
-// failure mode — do not collapse them into one:
-//   CHARS  — one row per token would be write amplification of ~2000x. Buffer
-//            until a chunk is worth a row.
-//   MS     — a slow, chatty child would otherwise sit under the char threshold
-//            for minutes with nothing durable. Time-bounds the loss window.
-//   ROWS   — the only unbounded axis left is a child that writes forever. Past
-//            the cap the stream stops growing and says so, once.
-const TEXT_CHUNK_CHARS = 2_000;
-const TEXT_FLUSH_MS = 5_000;
-const TEXT_MAX_EVENTS = 100;
+const DEFAULT_MAX_RESUMES = 3;
+const DEFAULT_RESUME_TTL_MS = 86_400_000;
 
 /**
  * Per-artifact cap on the unified diff a runner hands over. The file list
@@ -162,35 +173,6 @@ const TEXT_MAX_EVENTS = 100;
  * sink uses.
  */
 const ARTIFACT_DIFF_CAP = 20_000;
-
-// --- Runner-log persistence bounds (I-LOG1) ---------------------------------
-// A runner subprocess's own stdout/stderr is batched into `runner_log`
-// job_events rather than one write per line: `@ethosagent/sqlite` is
-// synchronous, so a chatty child would otherwise burst many blocking writes
-// onto the executor's event loop. Two independent triggers flush a batch,
-// whichever fires first — the same two-trigger shape `createTextSink` already
-// uses for the child's own text output, for the same reason:
-const LOG_BATCH_LINES = 20;
-const LOG_BATCH_MS = 250;
-// Hard cap on lines held in the IN-MEMORY buffer awaiting flush, so a
-// subprocess that out-produces the flush cadence cannot grow memory without
-// bound. In normal operation the batch triggers above empty this well before
-// it's ever reached — it's a defensive backstop, not the retention cap. The
-// OLDEST buffered line is dropped first here — for a log tail, the freshest
-// output is the one worth keeping.
-const LOG_MAX_BUFFERED_LINES = 100;
-// Separate concern: the total number of runner-log LINES persisted to the
-// store over a job's whole lifetime. Without this, a long-running chatty
-// job's `runner_log` rows would accumulate in `job_events` forever — the
-// same unbounded-growth failure mode `TEXT_MAX_EVENTS` above already guards
-// against for `text` rows. Matches `task_logs`'s existing `tail` cap (100
-// events) and `TEXT_MAX_EVENTS`, per the plan's Open Question 4
-// recommendation. Uses the SAME cap-and-stop policy as `TEXT_MAX_EVENTS`
-// (write one final marker, then stop), not oldest-eviction: evicting already
-// -persisted rows would need a delete/prune method on `JobStore`, which the
-// interface doesn't have — out of scope here, and worth a follow-up if a
-// true "keep the freshest" retention policy is wanted later.
-const LOG_TOTAL_MAX_LINES = 100;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -240,30 +222,19 @@ export { JOB_ABORTED_BY_SHUTDOWN };
 export const JOB_OBSERVE_MS = 1_000;
 
 /**
- * Minimum gap between two digests for the SAME run (D11's "≤1 Hz per run").
- * Per-run, not global: ten concurrent runs each get their own second.
+ * The abort reason of a run that lost its row (requeued or claimed away). The
+ * abort listener in `startRun` skips `cancelInteractions` for it: the questions
+ * under that job id may already be the same-process successor's.
  */
-const RUN_UPDATE_MIN_INTERVAL_MS = 1_000;
+const OWNERSHIP_LOST = new Error('ownership of the job row was lost');
+
+/** The claim a row was taken under; undefined only for a row that was never claimed. */
+function fenceOf(job: BackgroundJob): JobClaimFence | undefined {
+  return job.startedAt === undefined ? undefined : { owner: job.owner, startedAt: job.startedAt };
+}
 
 /** Cap on the `now` line — one line of the card, not a paragraph. */
 const NOW_LINE_MAX_CHARS = 120;
-
-/**
- * Live digest state for one running job. `pending` is the trailing-edge timer:
- * a burst of tool events inside one second collapses into a single publish at
- * the end of it, which is the whole point of coalescing rather than throttling.
- */
-interface RunDigest {
-  parentSessionKey: string;
-  runner: string;
-  status: BackgroundJobStatus;
-  now: string;
-  startedAt: number;
-  spendUsd: number;
-  toolCount: number;
-  lastPublishedAt: number;
-  pending: ReturnType<typeof setTimeout> | undefined;
-}
 
 export class BackgroundExecutor {
   private readonly store: JobStore;
@@ -273,6 +244,8 @@ export class BackgroundExecutor {
    *  gateway creating `/background` jobs) can stamp the same owner this executor
    *  claims by. */
   readonly owner: string;
+  /** Stamped on a resumable run at claim (`setResumeAffinity`); see `deps.resumeAffinity`. */
+  private readonly resumeAffinity: string | undefined;
   /** The label queued rows are handed back under, and adopted by (`affinity`). */
   private readonly releasedAs: string | undefined;
   private readonly config: BackgroundExecutorConfig;
@@ -284,14 +257,13 @@ export class BackgroundExecutor {
   /** onComplete subscribers, invoked after every terminal transition. */
   private readonly completeHandlers: Array<(job: BackgroundJob) => void> = [];
 
-  /** onRunUpdate subscribers — the run card's liveness feed (G9/D11/D20). */
-  private readonly runUpdateHandlers: Array<(update: RunUpdateDigest) => void> = [];
-
-  /** job.id -> its coalescing digest state, for the lifetime of the run. */
-  private readonly runDigests = new Map<string, RunDigest>();
+  /** The run card's liveness feed (G9/D11/D20): per-run coalescing digests + onRunUpdate subscribers. */
+  private readonly digests: RunDigestBoard;
 
   /** job.id -> the job's dedicated (unchained) AbortController. */
   private readonly activeControllers = new Map<string, AbortController>();
+  /** job.id -> the claim the active run holds; fences its park/unpark writes. */
+  private readonly activeFences = new Map<string, JobClaimFence>();
   /** job.id -> the in-flight run promise (resolves after its finish is written). */
   private readonly activeRuns = new Map<string, Promise<void>>();
   /** Per running job: one observe pass (cancel flag + pending steers). See `pokeSteer`. */
@@ -339,10 +311,12 @@ export class BackgroundExecutor {
     this.defaultRunner = new EthosJobRunner(deps.loop);
     this.runners = deps.runners;
     this.owner = deps.owner;
+    this.resumeAffinity = deps.resumeAffinity;
     this.releasedAs = deps.affinity !== undefined ? `released:${deps.affinity}` : undefined;
     this.config = deps.config;
     this.pollMs = deps.config.pollMs ?? DEFAULT_POLL_MS;
     this.log = deps.log;
+    this.digests = new RunDigestBoard(this.defaultRunner.name, deps.log);
     this.hooks = deps.hooks;
     this.cancelInteractions = deps.cancelInteractions;
   }
@@ -373,11 +347,7 @@ export class BackgroundExecutor {
    * its `run.update` push event.
    */
   onRunUpdate(handler: (update: RunUpdateDigest) => void): () => void {
-    this.runUpdateHandlers.push(handler);
-    return () => {
-      const idx = this.runUpdateHandlers.indexOf(handler);
-      if (idx !== -1) this.runUpdateHandlers.splice(idx, 1);
-    };
+    return this.digests.subscribe(handler);
   }
 
   /** Number of jobs currently running in the pool. */
@@ -398,19 +368,22 @@ export class BackgroundExecutor {
    * row's beat, and tracking it here would leak a pause that nothing clears.
    */
   async markJobBlocked(jobId: string, requestId: string): Promise<void> {
-    if (!this.activeControllers.has(jobId)) return;
+    const run = this.activeControllers.get(jobId);
+    if (!run) return;
     this.blockedJobs.set(jobId, requestId);
-    await this.store.markBlocked(jobId, requestId);
+    // Fenced: a run that lost its row must not park the claim that took it.
+    await this.store.markBlocked(jobId, requestId, this.activeFences.get(jobId));
     // Empty `now`: "paused — waiting on you" is UI copy and lives in the copy
     // module, not here. The status is the fact; the phrasing is the surface's.
-    this.updateDigest(jobId, { status: 'blocked', now: '' });
+    this.digests.update(jobId, { status: 'blocked', now: '' }, run);
   }
 
   /** The counterpart: `blocked` -> `running`, and the heartbeat resumes. */
   async resumeJob(jobId: string): Promise<void> {
     if (!this.blockedJobs.delete(jobId)) return;
-    await this.store.resumeFromBlocked(jobId);
-    this.updateDigest(jobId, { status: 'running' });
+    await this.store.resumeFromBlocked(jobId, this.activeFences.get(jobId));
+    const run = this.activeControllers.get(jobId);
+    if (run) this.digests.update(jobId, { status: 'running' }, run);
   }
 
   /**
@@ -508,10 +481,14 @@ export class BackgroundExecutor {
   /**
    * Graceful drain: stop timers, hand the queued rows on (`affinity`), abort
    * every active job's controller, and wait for the in-flight runs to unwind.
-   * Each aborted run finishes itself as ('aborted', `JOB_ABORTED_BY_SHUTDOWN`)
-   * via the shutdown terminal branch in runOne —
+   * A RESUMABLE run (`resumeOnRestart`, a stable affinity, a runner with
+   * `autoResume`, not `noResume`, under `maxResumes`) is requeued for its
+   * successor instead of ended — pinned by `__tests__/durable-resume.test.ts`.
+   * Every other aborted run finishes itself as ('aborted',
+   * `JOB_ABORTED_BY_SHUTDOWN`) via the shutdown terminal branch in runOne —
    * so shutdown does NOT call store.finish itself (a second finish on an
-   * already-terminal row throws; runOne stays the single finish owner per job).
+   * already-terminal row throws; runOne stays the single owner of a run's last
+   * transition).
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
@@ -538,10 +515,7 @@ export class BackgroundExecutor {
 
     // Each run's own teardown drops its digest; anything left here belongs to a
     // run that never unwound, and its trailing timer must not outlive us.
-    for (const digest of this.runDigests.values()) {
-      if (digest.pending) clearTimeout(digest.pending);
-    }
-    this.runDigests.clear();
+    this.digests.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -563,26 +537,55 @@ export class BackgroundExecutor {
    */
   async bootSweep(): Promise<void> {
     try {
-      await this.store.reclaimStale(this.config.staleMs);
+      await this.store.reclaimStale(this.config.staleMs, { maxResumes: this.autoResumeMax });
     } catch (err) {
       this.log?.(`boot reclaimStale failed: ${errMsg(err)}`);
     }
     try {
-      await this.store.expireQueued(this.config.queuedTtlMs);
+      await this.store.expireQueued(this.config.queuedTtlMs, { resumeTtlMs: this.resumeTtlMs });
     } catch (err) {
       this.log?.(`boot expireQueued failed: ${errMsg(err)}`);
     }
     await this.claimLoop();
   }
 
+  /**
+   * The `maxResumes` a sweep passes: 0 (never requeue) when auto-resume is off.
+   * Deliberately not gated on this executor's own `resumeAffinity`: a
+   * non-resumable process (`ethos chat`, desktop) sweeping a crashed serve job
+   * must requeue it for serve (the row's stamped `resume_affinity` decides who
+   * adopts), not stale it for good. Pinned by `__tests__/durable-resume.test.ts`.
+   */
+  private get autoResumeMax(): number {
+    return this.config.resumeOnRestart === true
+      ? (this.config.maxResumes ?? DEFAULT_MAX_RESUMES)
+      : 0;
+  }
+
+  private get resumeTtlMs(): number {
+    return this.config.resumeTtlMs ?? DEFAULT_RESUME_TTL_MS;
+  }
+
+  /**
+   * Manual Resume seam (`JobControl.resume`): a `stale` row goes back to
+   * `queued` under this executor's label and is claimed on the next nudge. Not
+   * counted against `maxResumes`. False when the row is not `stale` (or the store
+   * cannot requeue).
+   */
+  async requeueStale(jobId: string): Promise<boolean> {
+    const ok = (await this.store.requeueStale?.(jobId, this.releasedAs ?? this.owner)) ?? false;
+    if (ok) this.nudge();
+    return ok;
+  }
+
   private async sweep(): Promise<void> {
     try {
-      await this.store.reclaimStale(this.config.staleMs);
+      await this.store.reclaimStale(this.config.staleMs, { maxResumes: this.autoResumeMax });
     } catch (err) {
       this.log?.(`reclaimStale failed: ${errMsg(err)}`);
     }
     try {
-      await this.store.expireQueued(this.config.queuedTtlMs);
+      await this.store.expireQueued(this.config.queuedTtlMs, { resumeTtlMs: this.resumeTtlMs });
     } catch (err) {
       this.log?.(`expireQueued failed: ${errMsg(err)}`);
     }
@@ -659,6 +662,7 @@ export class BackgroundExecutor {
     controller.signal.addEventListener(
       'abort',
       () => {
+        if (controller.signal.reason === OWNERSHIP_LOST) return;
         void this.cancelInteractions?.(job.id).catch((err) => {
           this.log?.(`cancelling pending questions failed for ${job.id}: ${errMsg(err)}`);
         });
@@ -666,20 +670,25 @@ export class BackgroundExecutor {
       { once: true },
     );
     this.activeControllers.set(job.id, controller);
-    const run = this.runOne(job, controller).finally(() => {
-      this.activeControllers.delete(job.id);
-      this.activeRuns.delete(job.id);
-      // A run that ended while parked (cancelled from the blocked card) must not
-      // leave its pause behind.
-      this.blockedJobs.delete(job.id);
-      // Belt and braces: `finishAndNotify` closes the digest on every path it
-      // owns, but a throw between openDigest and the finish would strand a
-      // timer. Dropping a live digest here can only orphan a card the run no
-      // longer feeds anyway.
-      const digest = this.runDigests.get(job.id);
-      if (digest) {
-        if (digest.pending) clearTimeout(digest.pending);
-        this.runDigests.delete(job.id);
+    const fence = fenceOf(job);
+    if (fence) this.activeFences.set(job.id, fence);
+    const run = this.runOne(job, controller, fence).finally(() => {
+      // A sweep can requeue a live row and this executor re-adopt it while this
+      // run is still unwinding; then the maps hold the NEW run's entries and
+      // none of them are ours to delete. Pinned by
+      // `__tests__/durable-resume-review.test.ts` ('an old run settling does not
+      // untrack its successor').
+      if (this.activeControllers.get(job.id) === controller) {
+        this.activeControllers.delete(job.id);
+        this.activeFences.delete(job.id);
+        if (this.activeRuns.get(job.id) === run) this.activeRuns.delete(job.id);
+        // A run that ended while parked (cancelled from the blocked card) must not
+        // leave its pause behind.
+        this.blockedJobs.delete(job.id);
+        // Belt and braces: `finishAndNotify` closes the digest on every path it
+        // owns, but a throw between openDigest and the finish would strand a
+        // timer.
+        this.digests.dropOwnedBy(job.id, controller);
       }
       // A slot freed — pull the next queued row (unless we're draining).
       if (!this.shuttingDown) void this.claimLoop();
@@ -706,21 +715,40 @@ export class BackgroundExecutor {
     return runner;
   }
 
-  private async runOne(job: BackgroundJob, controller: AbortController): Promise<void> {
+  private async runOne(
+    job: BackgroundJob,
+    controller: AbortController,
+    fence: JobClaimFence | undefined,
+  ): Promise<void> {
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     let observeTimer: ReturnType<typeof setInterval> | undefined;
-    const stopTimers = (): void => {
+    let ownObserve: (() => Promise<void>) | undefined;
+    // `fence` is this claim's identity: every terminal and spend write is fenced
+    // on it, so a run that lost its row cannot write over the claim that took it.
+    // Set by the observe pass when the row was requeued or claimed away under this
+    // run. From then on this run writes nothing to the row: no beat, no read marks,
+    // no events (`__tests__/durable-resume-review.test.ts`, 'a lost run goes quiet').
+    let lost = false;
+    const skipIfLost = (): boolean => {
+      if (lost) this.log?.(`run lost ownership of ${job.id}; not finishing`);
+      return lost;
+    };
+    const stopBeat = (): void => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
-      if (observeTimer) clearInterval(observeTimer);
       heartbeatTimer = undefined;
+    };
+    const stopTimers = (): void => {
+      stopBeat();
+      if (observeTimer) clearInterval(observeTimer);
       observeTimer = undefined;
-      this.observers.delete(job.id);
+      if (ownObserve && this.observers.get(job.id) === ownObserve) this.observers.delete(job.id);
     };
     // The durable steer queue's in-memory face (D1). `markReadChain` keeps the
     // `pending -> read` writes in drain order.
     const steerSink = createJobSteerSink();
     let markReadChain: Promise<void> = Promise.resolve();
     const markDrained = (): void => {
+      if (lost) return;
       const ids = steerSink.takeDrainedIds();
       const mark = this.store.markSteersRead?.bind(this.store);
       if (ids.length === 0 || !mark) return;
@@ -733,7 +761,17 @@ export class BackgroundExecutor {
     // in its own transaction, so a drained-but-unmarked steer would otherwise
     // be reported unread although the model read it.
     // V2-SEC-2 — set by the runner's `markTainted`; every terminal write carries it.
-    const tainted = { value: false };
+    // Seeded from the row: a resumed run that already read untrusted content stays tainted.
+    const tainted = { value: job.tainted === true };
+    // Resolved after `runnerFor` below; the shutdown branches read it.
+    let resumable = false;
+    // D4 — a graceful stop requeues the run for its successor instead of ending it.
+    // Same read-mark ordering as `finish`: settle the drained steers first.
+    const trySuspend = async (): Promise<boolean> => {
+      markDrained();
+      await markReadChain;
+      return this.suspendForResume(job.id);
+    };
     const finish = (
       terminal: 'done' | 'failed' | 'aborted',
       fields: { summary?: string; error?: string },
@@ -745,17 +783,18 @@ export class BackgroundExecutor {
           job.id,
           terminal,
           tainted.value ? { ...fields, tainted: true } : fields,
+          fence,
         );
       })();
     try {
-      // Pre-start aggregate spend gate. Sum spend across the root's jobs
-      // (excluding this one); refuse to run if the cap is already reached.
+      // Pre-start aggregate spend gate. Sum spend across the root's jobs;
+      // refuse to run if the cap is already reached.
       const cap = this.config.maxRootBackgroundUsd;
       if (cap !== null) {
+        // Includes this job: a resumed run carries its earlier spend (D11); a
+        // first run's own spend is 0, so nothing changes there.
         const siblings = await this.store.listByRoot(job.rootSessionKey);
-        const sum = siblings
-          .filter((j) => j.id !== job.id)
-          .reduce((acc, j) => acc + (j.spendUsd ?? 0), 0);
+        const sum = siblings.reduce((acc, j) => acc + (j.spendUsd ?? 0), 0);
         if (sum >= cap) {
           await finish('failed', {
             error: `root background spend cap $${cap} reached (already spent $${sum})`,
@@ -793,6 +832,25 @@ export class BackgroundExecutor {
       const observePass = async (): Promise<void> => {
         try {
           const fresh = await this.store.get(job.id);
+          // Ownership loss, whatever the row's status now: it went back to
+          // `queued`, or another claim took it (a different owner or startedAt —
+          // also when that claim is already blocked or terminal), under this
+          // live run (a late heartbeat swept by a peer, D13). Pinned by
+          // `__tests__/durable-resume-review.test.ts` ('a claim that moved on').
+          // `stale` with the same owner and startedAt is NOT lost — that path still
+          // ends in `recovered`.
+          if (
+            fresh &&
+            !lost &&
+            (fresh.status === 'queued' ||
+              fresh.owner !== this.owner ||
+              fresh.startedAt !== job.startedAt)
+          ) {
+            lost = true;
+            stopBeat();
+            controller.abort(OWNERSHIP_LOST);
+          }
+          if (lost) return;
           if (fresh?.cancelRequested && !cancelled) {
             cancelled = true;
             controller.abort();
@@ -817,28 +875,63 @@ export class BackgroundExecutor {
         })();
         return observing;
       };
+      ownObserve = observe;
       this.observers.set(job.id, observe);
       observeTimer = setInterval(() => void observe(), JOB_OBSERVE_MS);
       observeTimer.unref?.();
 
       const runner = this.runnerFor(job);
 
+      // D2/D6 — stamp the row resumable only when every condition holds; stamped
+      // on every claim so a switch turned off since the last one takes effect.
+      resumable =
+        this.config.resumeOnRestart === true &&
+        this.resumeAffinity !== undefined &&
+        runner.capabilities.autoResume === true &&
+        job.noResume !== true &&
+        this.store.requeueForResume !== undefined;
+      if (resumable || job.resumeAffinity !== undefined) {
+        try {
+          await this.store.setResumeAffinity?.(
+            job.id,
+            resumable ? (this.resumeAffinity ?? null) : null,
+          );
+        } catch (err) {
+          this.log?.(`setResumeAffinity failed for ${job.id}: ${errMsg(err)}`);
+        }
+      }
+
+      // An unreadable trail still resumes (continuation prompt, not the original
+      // task prompt): `resumeContextFor` falls back to an empty trail.
+      let resume: JobRunnerContext['resume'];
+      if (job.requeuedAt !== undefined) {
+        let trail: BackgroundJobEvent[] = [];
+        try {
+          trail = await this.store.getEvents(job.id, { eventType: 'requeued', limit: 1 });
+        } catch (err) {
+          this.log?.(`reading the resume trail failed for ${job.id}: ${errMsg(err)}`);
+        }
+        resume = resumeContextFor(job, trail);
+      }
+
       // G9/D11 — from here the card is fed by the digest and nothing else. Open
       // it AFTER the spend gate above, which can end the run before it starts.
-      this.openDigest(job);
+      this.digests.open(job, controller);
 
       let output = '';
-      let spend = 0;
+      // D11 — a resumed run starts from the spend it already carries.
+      let spend = job.spendUsd ?? 0;
       let errorText: string | undefined;
       let costBreached = false;
       let turnDone = false;
 
-      const text = this.createTextSink(job.id);
-      const logSink = this.createLogSink(job.id);
+      const text = createTextSink(this.store, job.id, this.log);
+      const logSink = createLogSink(this.store, job.id, this.log);
 
       for await (const ev of runner.run(job, {
         signal: controller.signal,
         steerSink,
+        ...(resume ? { resume } : {}),
         // Artifacts are a job-event-log concern, not an event-stream one:
         // `AgentEvent` is frozen at 17 variants with no artifact slot, so a
         // file change becomes an `artifact_change` ROW and the inspector's Diff
@@ -848,6 +941,7 @@ export class BackgroundExecutor {
         // appendEvent here: losing an audit row must never fail the job it
         // describes.
         emitArtifact: (change: ArtifactChange) => {
+          if (lost) return;
           void this.store
             .appendEvent(job.id, 'artifact_change', {
               ...change,
@@ -862,10 +956,18 @@ export class BackgroundExecutor {
         // I-LOG1 — same out-of-band, synchronous-by-contract shape as
         // `emitArtifact` above, batched by `createLogSink` into bounded
         // `runner_log` rows instead of one write per line.
-        appendLog: (stream, line) => logSink.appendLog(stream, line),
+        appendLog: (stream, line) => {
+          if (!lost) logSink.appendLog(stream, line);
+        },
         // V2-SEC-2 — recorded with the terminal transition (`finishAndNotify`).
+        // D12 — also written to the row now, so a crash after the read still
+        // leaves a tainted row for the resumed run and a parent-review turn.
         markTainted: () => {
+          if (tainted.value) return;
           tainted.value = true;
+          void Promise.resolve(this.store.markTainted?.(job.id)).catch((err) =>
+            this.log?.(`markTainted failed for ${job.id}: ${errMsg(err)}`),
+          );
         },
       })) {
         // Cancel, cost cap, shutdown: stop here rather than drain (contrast
@@ -896,11 +998,13 @@ export class BackgroundExecutor {
           } catch (err) {
             this.log?.(`appendEvent failed for ${job.id}: ${errMsg(err)}`);
           }
-          this.updateDigest(job.id, { now: nowLine(ev.toolName, ev.args) });
+          this.digests.update(job.id, { now: nowLine(ev.toolName, ev.args) }, controller);
         } else if (ev.type === 'tool_end') {
-          this.updateDigest(job.id, {
-            toolCount: (this.runDigests.get(job.id)?.toolCount ?? 0) + 1,
-          });
+          this.digests.update(
+            job.id,
+            { toolCount: this.digests.toolCount(job.id) + 1 },
+            controller,
+          );
           try {
             await this.store.appendEvent(job.id, 'tool_end', {
               toolName: ev.toolName,
@@ -915,11 +1019,11 @@ export class BackgroundExecutor {
         } else if (ev.type === 'usage') {
           spend += ev.estimatedCostUsd ?? 0;
           try {
-            await this.store.updateSpend(job.id, spend);
+            await this.store.updateSpend(job.id, spend, fence);
           } catch (err) {
             this.log?.(`updateSpend failed for ${job.id}: ${errMsg(err)}`);
           }
-          this.updateDigest(job.id, { spendUsd: spend });
+          this.digests.update(job.id, { spendUsd: spend }, controller);
           if (job.maxCostUsd != null && spend > job.maxCostUsd) {
             costBreached = true;
             controller.abort();
@@ -947,6 +1051,7 @@ export class BackgroundExecutor {
       }
 
       stopTimers();
+      if (skipIfLost()) return;
 
       // Whatever the terminal state, the tail of the child's text belongs in the
       // stream before the terminal event.
@@ -978,6 +1083,9 @@ export class BackgroundExecutor {
             : {}),
         });
       } else if (this.shuttingDown && !answered) {
+        // A resumable run is requeued (the cap lives in the store's SQL); at the
+        // cap, or when the store refuses, it ends as before.
+        if (resumable && (await trySuspend())) return;
         await finish('aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
       } else if (errorText) {
         await finish('failed', { error: errorText });
@@ -989,10 +1097,12 @@ export class BackgroundExecutor {
       }
     } catch (err) {
       stopTimers();
+      if (skipIfLost()) return;
       // A thrown error fails the job — unless we're draining, where an abort is
-      // the honest terminal state.
+      // the honest terminal state (or a requeue, for a resumable run).
       try {
         if (this.shuttingDown) {
+          if (resumable && (await trySuspend())) return;
           await finish('aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
         } else {
           await finish('failed', { error: errMsg(err) });
@@ -1004,135 +1114,22 @@ export class BackgroundExecutor {
   }
 
   /**
-   * Buffered writer for the child's text output. `push` accumulates and writes
-   * a `text` event once a chunk is worth a row (size) or the loss window is
-   * long enough (time); `flush` drains whatever is left. Both swallow store
-   * errors — losing an audit row must never fail the job it describes.
+   * `running|blocked -> queued` for the successor (D4). True when the store
+   * requeued the row; the card then closes as `queued` and no completion fires.
    */
-  private createTextSink(jobId: string): {
-    push(t: string): Promise<void>;
-    flush(): Promise<void>;
-  } {
-    let buffer = '';
-    let lastFlush = Date.now();
-    let written = 0;
-    let capNoted = false;
-
-    const write = async (chunk: string, payload: Record<string, unknown> = {}): Promise<void> => {
-      try {
-        await this.store.appendEvent(jobId, 'text', { text: chunk, ...payload });
-      } catch (err) {
-        this.log?.(`appendEvent(text) failed for ${jobId}: ${errMsg(err)}`);
-      }
-    };
-
-    const drain = async (all: boolean): Promise<void> => {
-      while (buffer.length > 0 && (all || buffer.length >= TEXT_CHUNK_CHARS)) {
-        if (written >= TEXT_MAX_EVENTS) {
-          buffer = '';
-          if (!capNoted) {
-            capNoted = true;
-            written++;
-            await write('', { truncated: true });
-          }
-          return;
-        }
-        const chunk = buffer.slice(0, TEXT_CHUNK_CHARS);
-        buffer = buffer.slice(chunk.length);
-        written++;
-        await write(chunk);
-      }
-      lastFlush = Date.now();
-    };
-
-    return {
-      async push(t: string): Promise<void> {
-        buffer += t;
-        // A stale buffer drains ENTIRELY (`all`) — a size-only drain would leave
-        // the sub-chunk remainder in memory and reset the clock, so the
-        // time-bound would never actually bound anything.
-        const stale = Date.now() - lastFlush >= TEXT_FLUSH_MS;
-        if (buffer.length >= TEXT_CHUNK_CHARS || stale) await drain(stale);
-      },
-      flush: () => drain(true),
-    };
-  }
-
-  /**
-   * Buffered writer for the runner subprocess's own stdout/stderr
-   * (`JobRunnerContext.appendLog`, I-LOG1). Batches already-split lines into
-   * one `runner_log` job_event per flush — either `LOG_BATCH_LINES` lines or
-   * `LOG_BATCH_MS` have elapsed since the oldest still-buffered line, whichever
-   * comes first. The in-memory buffer is bounded independently of the flush
-   * cadence (`LOG_MAX_BUFFERED_LINES`, oldest dropped first) as a defensive
-   * backstop. Separately, and this is the actual per-job retention cap:
-   * `LOG_TOTAL_MAX_LINES` bounds how many lines get PERSISTED over the job's
-   * whole life, same cap-and-stop shape as `TEXT_MAX_EVENTS` above — the batch
-   * that crosses the cap is truncated to exactly the remaining budget (never
-   * skipped entirely), then one marker row is written on the next flush and
-   * the rest is dropped, so `job_events` can't grow without bound for a
-   * long-running chatty job.
-   * Swallows store errors — losing an audit row must never fail the job it
-   * describes.
-   */
-  private createLogSink(jobId: string): {
-    appendLog(stream: 'stdout' | 'stderr', line: string): void;
-    flush(): Promise<void>;
-  } {
-    const buffer = new BoundedLogBuffer(LOG_MAX_BUFFERED_LINES);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let totalWritten = 0;
-    let cappedNoted = false;
-
-    const doFlush = async (): Promise<void> => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-      if (buffer.length === 0) return;
-      const { entries, dropped } = buffer.drain();
-      const remaining = LOG_TOTAL_MAX_LINES - totalWritten;
-      if (remaining <= 0) {
-        if (!cappedNoted) {
-          cappedNoted = true;
-          try {
-            await this.store.appendEvent(jobId, 'runner_log', { lines: [], truncated: true });
-          } catch (err) {
-            this.log?.(`appendEvent(runner_log) failed for ${jobId}: ${errMsg(err)}`);
-          }
-        }
-        return;
-      }
-      // The batch that crosses the cap is truncated to exactly the remaining
-      // budget rather than skipped entirely — `totalWritten` must never exceed
-      // `LOG_TOTAL_MAX_LINES` after this flush. If more lines arrive after this,
-      // the NEXT call sees `remaining <= 0` and fires the truncation marker.
-      const toWrite = entries.length > remaining ? entries.slice(0, remaining) : entries;
-      totalWritten += toWrite.length;
-      try {
-        await this.store.appendEvent(jobId, 'runner_log', {
-          lines: toWrite,
-          ...(dropped > 0 ? { dropped } : {}),
-        });
-      } catch (err) {
-        this.log?.(`appendEvent(runner_log) failed for ${jobId}: ${errMsg(err)}`);
-      }
-    };
-
-    return {
-      appendLog(stream: 'stdout' | 'stderr', line: string): void {
-        buffer.push({ stream, line });
-        if (buffer.length >= LOG_BATCH_LINES) {
-          void doFlush();
-          return;
-        }
-        if (!timer) {
-          timer = setTimeout(() => void doFlush(), LOG_BATCH_MS);
-          timer.unref?.();
-        }
-      },
-      flush: () => doFlush(),
-    };
+  private async suspendForResume(jobId: string): Promise<boolean> {
+    try {
+      const ok = await this.store.requeueForResume?.(jobId, {
+        reason: 'restart',
+        maxResumes: this.config.maxResumes ?? DEFAULT_MAX_RESUMES,
+      });
+      if (ok !== true) return false;
+      this.digests.close(jobId, 'queued');
+      return true;
+    } catch (err) {
+      this.log?.(`requeueForResume failed for ${jobId}: ${errMsg(err)}`);
+      return false;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1150,11 +1147,21 @@ export class BackgroundExecutor {
     id: string,
     terminal: 'done' | 'failed' | 'aborted',
     fields: { summary?: string; error?: string; tainted?: boolean },
+    fence?: JobClaimFence,
   ): Promise<void> {
-    await this.store.finish(id, terminal, fields);
+    try {
+      await this.store.finish(id, terminal, fields, fence);
+    } catch (err) {
+      // A fenced refusal means another claim holds the row: no completion fires.
+      if (isClaimLostError(err)) {
+        this.log?.(`finish for ${id} refused: the row is held by another claim`);
+        return;
+      }
+      throw err;
+    }
     // The card's last sample. Published before the completion notice so the run
     // card is already terminal when Ethos's hand-back message lands under it.
-    this.closeDigest(id, terminal);
+    this.digests.close(id, terminal);
     const fresh = await this.store.get(id);
     if (!fresh) return;
     this.fireComplete(fresh);
@@ -1176,96 +1183,5 @@ export class BackgroundExecutor {
         this.log?.(`onComplete handler failed for ${job.id}: ${errMsg(err)}`);
       }
     }
-  }
-
-  // -------------------------------------------------------------------------
-  // Run digest — the run card's liveness feed (G9/D11/D20)
-  // -------------------------------------------------------------------------
-
-  /** Open the digest for a run and publish its first sample immediately. */
-  private openDigest(job: BackgroundJob): void {
-    this.runDigests.set(job.id, {
-      parentSessionKey: job.parentSessionKey,
-      runner: job.runner ?? this.defaultRunner.name,
-      status: 'running',
-      now: '',
-      startedAt: job.startedAt ?? Date.now(),
-      spendUsd: job.spendUsd ?? 0,
-      toolCount: 0,
-      lastPublishedAt: 0,
-      pending: undefined,
-    });
-    this.publishDigest(job.id);
-  }
-
-  /**
-   * Fold new facts into a run's digest and schedule its publication. A status
-   * change publishes immediately; everything else coalesces.
-   *
-   * A no-op for a job with no open digest — `markJobBlocked` may be called for a
-   * row this process is not running, and a completion write races the run's own
-   * teardown.
-   */
-  private updateDigest(
-    jobId: string,
-    patch: Partial<Pick<RunDigest, 'status' | 'now' | 'spendUsd' | 'toolCount'>>,
-  ): void {
-    const digest = this.runDigests.get(jobId);
-    if (!digest) return;
-    const statusChanged = patch.status !== undefined && patch.status !== digest.status;
-    Object.assign(digest, patch);
-    if (statusChanged) {
-      this.publishDigest(jobId);
-      return;
-    }
-    const wait = RUN_UPDATE_MIN_INTERVAL_MS - (Date.now() - digest.lastPublishedAt);
-    if (wait <= 0) {
-      this.publishDigest(jobId);
-      return;
-    }
-    // Trailing edge: one publish at the end of the window carrying the LATEST
-    // state, not the sample that happened to arrive first.
-    if (digest.pending) return;
-    digest.pending = setTimeout(() => this.publishDigest(jobId), wait);
-    digest.pending.unref?.();
-  }
-
-  /** Emit the digest's current state and reset its coalescing window. */
-  private publishDigest(jobId: string): void {
-    const digest = this.runDigests.get(jobId);
-    if (!digest) return;
-    if (digest.pending) {
-      clearTimeout(digest.pending);
-      digest.pending = undefined;
-    }
-    digest.lastPublishedAt = Date.now();
-    const update: RunUpdateDigest = {
-      parentSessionKey: digest.parentSessionKey,
-      jobId,
-      runner: digest.runner,
-      status: digest.status,
-      now: digest.now,
-      elapsedMs: Math.max(0, Date.now() - digest.startedAt),
-      spendUsd: digest.spendUsd,
-      toolCount: digest.toolCount,
-    };
-    for (const handler of [...this.runUpdateHandlers]) {
-      try {
-        handler(update);
-      } catch (err) {
-        this.log?.(`onRunUpdate handler failed for ${jobId}: ${errMsg(err)}`);
-      }
-    }
-  }
-
-  /** Publish the terminal sample, then drop the digest and its timer. */
-  private closeDigest(jobId: string, status: BackgroundJobStatus): void {
-    const digest = this.runDigests.get(jobId);
-    if (!digest) return;
-    digest.status = status;
-    digest.now = '';
-    this.publishDigest(jobId);
-    if (digest.pending) clearTimeout(digest.pending);
-    this.runDigests.delete(jobId);
   }
 }

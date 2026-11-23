@@ -32,6 +32,9 @@ export const PI_RUNNER_CAPABILITIES: RunnerCapabilities = {
   // left dangling (assistant toolCall persisted, no toolResult) — NOT
   // auto-re-executed. Side effects are not replayed.
   resume: 'session',
+  // pi-delegation D5 — no auto-resume: a Pi run is never requeued by the executor
+  // (pinned by `__tests__/capabilities.test.ts`).
+  autoResume: false,
   // CONFIRMED live: `{"type":"steer",...}` queues, fires queue_update,
   // delivers after the in-flight tool call's turn completes, drains cleanly.
   steer: true,
