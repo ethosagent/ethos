@@ -64,6 +64,8 @@ async function run(opts: {
   requestTokens: typeof REQUEST_TOKENS | undefined;
   hooks?: DefaultHookRegistry;
   key: string;
+  compaction?: { pressure?: number; maxContextTokens?: number };
+  maxCompletionTokens?: number;
 }) {
   const attrs: Array<Record<string, unknown> | undefined> = [];
   const llmSpans = new Set<string>();
@@ -93,6 +95,7 @@ async function run(opts: {
     observability,
     memory,
     ...(opts.hooks ? { hooks: opts.hooks } : {}),
+    ...(opts.compaction ? { compaction: opts.compaction } : {}),
     injectors: [
       injector('skills', 'S'.repeat(400), 50),
       injector('memory-guidance', 'G'.repeat(300), 40),
@@ -100,7 +103,12 @@ async function run(opts: {
       injector('other', 'O'.repeat(500), 20),
     ],
   });
-  for await (const _e of loop.run('go', { sessionKey: opts.key })) {
+  for await (const _e of loop.run('go', {
+    sessionKey: opts.key,
+    ...(opts.maxCompletionTokens !== undefined
+      ? { maxCompletionTokens: opts.maxCompletionTokens }
+      : {}),
+  })) {
     // drain
   }
   return { attrs, sent, llm };
@@ -140,5 +148,19 @@ describe('llm_call span context-meter attrs', () => {
     expect('systemSections' in (attrs[0] ?? {})).toBe(false);
     expect('compactAtTokens' in (attrs[0] ?? {})).toBe(false);
     expect(attrs[0]?.contextWindow).toBe(200_000);
+  });
+
+  it('feeds the configured pressure, ceiling and output reserve into compactAtTokens', async () => {
+    const compaction = { pressure: 0.6, maxContextTokens: 50_000 };
+    const { attrs, llm } = await run({
+      requestTokens: REQUEST_TOKENS,
+      key: 'cli:cm-4',
+      compaction,
+      maxCompletionTokens: 3000,
+    });
+    const expected = meterGateTokens({ llm, reservedOutputTokens: 3000, ...compaction }, 1200);
+    expect(attrs[0]?.compactAtTokens).toBe(expected);
+    // Guards the plumbing: the defaults would give a different gate.
+    expect(expected).not.toBe(meterGateTokens({ llm }, 1200));
   });
 });

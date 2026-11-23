@@ -12,14 +12,13 @@ function anatomy(over: Partial<ContextAnatomyWire> = {}): ContextAnatomyWire {
     system: 1000,
     tools: 400,
     messages: 5000,
-    total: 6400,
+    total: 90_000,
     inputTokens: 6400,
     cacheReadTokens: 3200,
     cacheHitRate: 0.5,
     llmCallCount: 1,
     memory: 200,
     skills: 100,
-    promptTokens: 90_000,
     contextWindow: 200_000,
     compactAtTokens: 100_000,
     ...over,
@@ -71,7 +70,7 @@ describe('ContextMeter', () => {
   });
 
   it('shows a plain percent with no glyph when normal', () => {
-    const html = meter(anatomy({ promptTokens: 40_000 }), null);
+    const html = meter(anatomy({ total: 40_000 }), null);
     expect(html).toContain('20%');
     expect(html).not.toContain('⚠');
     expect(html).toContain('aria-label="Context: 20% of 200K used"');
@@ -120,7 +119,7 @@ describe('ContextMeterPanel', () => {
 
   it('states the over condition in words', () => {
     expect(panel(anatomy(), 120_000)).toContain(
-      'Past the auto-compaction point — the next turn compacts unless one ran in the last 5 turns.',
+      'Past the auto-compaction point — auto-compaction is due on a coming turn.',
     );
   });
 

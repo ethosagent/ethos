@@ -13,7 +13,7 @@ import {
 } from '../test-helpers';
 
 // `sessions.contextAnatomy` carries the context-meter fields (memory, skills,
-// promptTokens, contextWindow, compactAtTokens) end-to-end through the contract.
+// contextWindow, compactAtTokens) end-to-end through the contract.
 
 const anatomy: ContextAnatomyWire = {
   system: 1000,
@@ -26,7 +26,6 @@ const anatomy: ContextAnatomyWire = {
   llmCallCount: 3,
   memory: 250,
   skills: 100,
-  promptTokens: 80_310,
   contextWindow: null,
   compactAtTokens: 150_000,
 };
@@ -65,7 +64,7 @@ describe('sessions.contextAnatomy RPC', () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  it('round-trips all 13 anatomy fields, including a null contextWindow', async () => {
+  it('round-trips all 12 anatomy fields, including a null contextWindow', async () => {
     const session = await store.createSession({
       key: 'web:anatomy',
       platform: 'web',
@@ -95,7 +94,7 @@ describe('sessions.contextAnatomy RPC', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { json: { anatomy: ContextAnatomyWire } };
-    expect(Object.keys(body.json.anatomy)).toHaveLength(13);
+    expect(Object.keys(body.json.anatomy)).toHaveLength(12);
     expect(body.json.anatomy).toEqual(anatomy);
   });
 });

@@ -25,7 +25,7 @@ You can read the window share in the web Chat composer, open a five-row breakdow
 
 ### 1. Read the ring
 
-The ring sits in the composer's action row and shows a percentage, for example `42%`. It is the size of the latest request, including [cached](../../getting-started/glossary.md) prompt tokens, as a share of the model's window. Fresh input, cache reads and cache creation are summed, so on Anthropic the number reads larger than it did before this release. That is a correction: the old figure left the cached prompt out.
+The ring sits in the composer's action row and shows a percentage, for example `42%`. It is the provider-measured prompt size of the latest model call (system prompt, tool schemas and messages) as a share of the model's window. It refreshes after each model call and when a turn ends (`apps/web/src/hooks/useContextAnatomy.ts`, pinned by `apps/web/src/hooks/__tests__/useContextAnatomy.test.ts`). The number is `total` in `computeContextAnatomy` (`extensions/observability-sqlite/src/context-anatomy.ts`). It is not a sum of input and cache tokens, because providers disagree on whether cached tokens are inside `inputTokens`.
 
 If the model's window is unknown, the meter shows the token count with no ring.
 
@@ -36,7 +36,7 @@ Click the ring. The popover lists five rows with tokens and a share of the windo
 | Row | What it counts |
 |---|---|
 | System | The system prompt, without the memory and skills below |
-| Memory | `MEMORY.md` and `USER.md` text in the prompt |
+| Memory | `MEMORY.md` and `USER.md` text, the memory-guidance block and team memory indexes in the prompt |
 | Skills | Skill text in the prompt |
 | Tool schemas | The tool definitions sent with every request |
 | Messages | The conversation so far |
@@ -47,19 +47,21 @@ The popover also shows the cache-hit rate and a tick on the bar where auto-compa
 
 ### 3. Watch the warning
 
-The warning state starts at 90% of the auto-compaction point, not 90% of the window. The ring turns amber and shows `⚠` with the number, never color alone.
+The warning state starts at 90% of the auto-compaction point, not 90% of the window. The ring turns amber and shows `⚠` with the number, never color alone (`ContextMeter.tsx`, pinned by `apps/web/src/components/chat/__tests__/context-meter.test.ts`).
 
-Past the point, the ring says `⚠ compacting next turn`. A turn compacts unless one ran in the last 5 turns; the cooldown is `cooldownTurns` in `packages/core/src/agent-loop/compaction.ts`. With auto-compaction off it says `⚠ over compaction point`.
+Past the point the ring still shows `⚠ NN%`. Only the popover adds a sentence: auto-compaction is due on a coming turn.
+
+**Limitation.** The meter and the compaction trigger can differ slightly on Anthropic. The meter reads the provider-measured request size; the trigger reads the model's reported input tokens, which on Anthropic leave cached tokens out. So the trigger can lag the meter, and a turn past the point may not compact right away. Nothing makes the two identical for that case; `packages/core/src/__tests__/meter-gate-equality.test.ts` pins only that the tick position equals the gate.
 
 ### 4. Compact now
 
 Press **Compact now** in the popover. It runs the same compaction as `/compact`, with no focus, and shows the same confirmation toast. Your draft stays in the composer, because the button never reads or writes it.
 
-The button is disabled while a turn runs and during a browser takeover.
+The button is disabled while a turn runs, during a browser takeover and while its own compaction is in flight (`apps/web/src/pages/__tests__/chat-context-meter.test.ts`, `useContextAnatomy.test.ts`). A typed `/compact` updates the ring the same way.
 
 **Limitation.** It does not lock against other clients or a `/compact` typed in another window. Two compactions at once can race. Nothing refuses the second one: `AgentLoop.compact` takes no turn lock.
 
-The ring updates after the next turn, not right after compaction. The measured numbers come from the last model call, and compaction does not make one.
+Right after compaction the ring shows the compaction's estimated size. Compaction makes no model call, so the estimate stands until the next model call lands, then the ring shows the measured size. Switching sessions drops the estimate.
 
 ### 5. Compact with a focus
 
@@ -105,7 +107,6 @@ One resolution feeds the meter and the compaction gate, so they agree: the `cont
 
 - **No ring.** The session has no finished model call, or the provider reports no request breakdown. Send a message.
 - **`window unknown` in the CLI.** The session's last call predates this feature. Send a message and run it again.
-- **The number jumped up after an upgrade.** Cached tokens now count. See the [changelog](../../changelog.md).
 - **Compact now is greyed out.** A turn is running or a takeover is open. Wait or hand back.
 
 ## See also

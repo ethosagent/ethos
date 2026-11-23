@@ -1,5 +1,5 @@
-// A prompt's size is its fresh input plus both cache buckets — providers that
-// cache report `inputTokens` as only the uncached tail.
+// Fallback chip size: fresh input plus both cache buckets, for providers (Anthropic)
+// that report `inputTokens` as only the uncached tail. The ring does not use this.
 export function promptTokensOf(e: {
   inputTokens: number;
   cacheReadTokens?: number;

@@ -799,7 +799,7 @@ export interface TeamLoopInfo {
   jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
   backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
   jobControl?: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'];
-  /** Round-3 Issue 2 — the coordinator's own `createAgentLoop` call-capture closure; undefined unless configured. */
+  /** Round-3 Issue 2 — the coordinator's own call-capture closure; equivalent to any loop's because `isCallCaptureToolsEnabled` gates on darwin + `callCapture.personalityId` alone. Undefined unless configured. */
   runCallCapture?: import('@ethosagent/wiring').CreateAgentLoopResult['runCallCapture'];
   /** Re-load this loop's personality registry — same seam `createAgentLoop` returns. */
   refreshPersonalities: import('@ethosagent/wiring').CreateAgentLoopResult['refreshPersonalities'];

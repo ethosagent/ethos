@@ -112,9 +112,6 @@
                 "messages": {
                   "type": "number"
                 },
-                "promptTokens": {
-                  "type": "number"
-                },
                 "skills": {
                   "type": "number"
                 },
@@ -139,7 +136,6 @@
                 "llmCallCount",
                 "memory",
                 "skills",
-                "promptTokens",
                 "contextWindow",
                 "compactAtTokens"
               ],

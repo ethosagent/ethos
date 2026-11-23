@@ -137,7 +137,6 @@ const ContextAnatomySchema = z.object({
   llmCallCount: z.number(),
   memory: z.number(),
   skills: z.number(),
-  promptTokens: z.number(),
   contextWindow: z.number().nullable(),
   compactAtTokens: z.number().nullable(),
 });

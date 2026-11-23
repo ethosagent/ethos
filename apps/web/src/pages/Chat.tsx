@@ -67,7 +67,6 @@ import { retryTurnText } from '../lib/chat-retry';
 import { INCOGNITO_PARAM, INCOGNITO_PLACEHOLDER } from '../lib/incognito';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
-import { notifyCompactResult } from '../lib/notify-compact-result';
 import { rewindPromptAt } from '../lib/rewind';
 import { accentVars, personalityTheme } from '../lib/theme';
 import { buildTeamPath } from '../lib/workspaceRoutes';
@@ -374,7 +373,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // `state.isStreaming` only flips on the first stream event; rewind must also
   // refuse in the gap between send and that event.
   const turnBusy = isTurnBusy(state);
-  const meter = useContextAnatomy(currentSessionId, { turnBusy, liveTokens: state.contextTokens });
+  const meter = useContextAnatomy(currentSessionId, {
+    turnBusy,
+    liveTokens: state.contextTokens,
+    compact,
+    notification,
+  });
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const handleEditStart = useCallback((id: string) => setEditingMessageId(id), []);
   const handleEditCancel = useCallback(() => setEditingMessageId(null), []);
@@ -482,7 +486,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         });
         return;
       }
-      notifyCompactResult(notification, await compact(focus || undefined));
+      await meter.runCompact(focus || undefined);
       return;
     }
 
@@ -1245,13 +1249,8 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
             <ContextMeter
               anatomy={meter.anatomy}
               usedTokens={meter.usedTokens}
-              compactDisabled={turnBusy || takeoverActive}
-              onCompact={() =>
-                void compact().then((r) => {
-                  notifyCompactResult(notification, r);
-                  meter.afterCompact(r);
-                })
-              }
+              compactDisabled={turnBusy || takeoverActive || meter.compacting}
+              onCompact={() => void meter.runCompact()}
             />
           }
           suggestion={suggestion}

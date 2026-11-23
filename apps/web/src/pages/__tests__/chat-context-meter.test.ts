@@ -1,4 +1,4 @@
-// Chat wires the context meter and routes /compact through the shared toast.
+// Chat wires the context meter and routes /compact through the hook's runCompact.
 //
 // Read from source: Chat needs a router, query client, SSE stream and voice
 // call to render. Precedent: `chat-voice-clarify-refusal.test.ts`.
@@ -15,19 +15,22 @@ function stripComments(source: string): string {
 const chat = stripComments(readFileSync(join(import.meta.dirname, '..', 'Chat.tsx'), 'utf8'));
 
 describe('Chat context meter wiring', () => {
-  it('disables Compact now while a turn runs or a takeover holds the session', () => {
-    expect(chat).toContain('compactDisabled={turnBusy || takeoverActive}');
+  it('disables Compact now while a turn runs, a takeover holds the session, or it compacts', () => {
+    expect(chat).toContain('compactDisabled={turnBusy || takeoverActive || meter.compacting}');
   });
 
-  it('calls compact with no focus argument from the button, then toasts and refreshes', () => {
-    expect(chat).toContain('compact().then(');
-    expect(chat).not.toMatch(/compact\([^)\s][^)]*\)\.then\(/);
-    expect(chat).toContain('notifyCompactResult(notification, r)');
-    expect(chat).toContain('meter.afterCompact(r)');
+  it('calls compact with no focus argument from the button, via the hook', () => {
+    expect(chat).toContain('onCompact={() => void meter.runCompact()}');
+    expect(chat).not.toMatch(/void meter\.runCompact\([^)\s]/);
   });
 
-  it('routes the /compact command through notifyCompactResult', () => {
-    expect(chat).toContain('notifyCompactResult(notification, await compact(focus || undefined))');
+  it('hands compact and the notifier to the hook, so toast and meter refresh stay together', () => {
+    expect(chat).toMatch(/useContextAnatomy\(currentSessionId, \{[^}]*\bcompact,\s*notification/);
+    expect(chat).not.toContain('notifyCompactResult');
+  });
+
+  it('routes the /compact command through the hook', () => {
+    expect(chat).toContain('await meter.runCompact(focus || undefined)');
   });
 
   it('points /compact status at the context ring', () => {

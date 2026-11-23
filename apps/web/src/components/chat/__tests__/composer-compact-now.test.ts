@@ -51,7 +51,6 @@ const anatomy: ContextAnatomyWire = {
   llmCallCount: 1,
   memory: 200,
   skills: 100,
-  promptTokens: 90_000,
   contextWindow: 200_000,
   compactAtTokens: 100_000,
 };

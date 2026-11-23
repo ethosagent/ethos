@@ -13,7 +13,7 @@ type MeterState = 'normal' | 'warning' | 'over';
 
 export interface ContextMeterProps {
   anatomy: ContextAnatomyWire | null;
-  /** Live context size (last usage event / post-compact estimate); falls back to the anatomy's. */
+  /** Post-compact estimate, else the anatomy's measured size; the live chip size when there is no anatomy. */
   usedTokens: number | null;
   compactDisabled: boolean;
   onCompact: () => void;
@@ -114,8 +114,7 @@ export function ContextMeterPanel({
       <p className="context-meter-note">Cache hit {Math.round(anatomy.cacheHitRate * 100)}%</p>
       {over ? (
         <p className="context-meter-note">
-          Past the auto-compaction point — the next turn compacts unless one ran in the last 5
-          turns.
+          Past the auto-compaction point — auto-compaction is due on a coming turn.
         </p>
       ) : null}
       <p className="context-meter-foot">
@@ -139,7 +138,7 @@ export function ContextMeter({
     if (!usedTokens) return null;
     return <span className="composer-context-meter">{formatContextTokens(usedTokens)} tokens</span>;
   }
-  const used = usedTokens ?? anatomy.promptTokens;
+  const used = usedTokens ?? anatomy.total;
   const state = meterState(used, anatomy.compactAtTokens);
   const panel = (
     <ContextMeterPanel

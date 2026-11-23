@@ -16,7 +16,10 @@ export interface ContextAnatomy {
   tools: number;
   /** Message-history tokens on the most recent llm_call. */
   messages: number;
-  /** system + tools + messages of the most recent llm_call. */
+  /** system + tools + messages of the most recent llm_call. This is the context
+   *  meter's numerator: the provider-measured prompt, which stays correct across
+   *  providers whose `inputTokens` include cached tokens (Codex, xAI) and those
+   *  whose do not (Anthropic), unlike any input+cache sum. */
   total: number;
   /** Fresh (non-cached) input tokens on the most recent llm_call. */
   inputTokens: number;
@@ -31,8 +34,6 @@ export interface ContextAnatomy {
   memory: number;
   /** Approximate skills tokens inside `system` (by character share); 0 on legacy spans. */
   skills: number;
-  /** Real prompt size of the latest call: fresh input + cache-read + cache-creation. */
-  promptTokens: number;
   /** Model window the latest call ran against; null when its span predates the meter. */
   contextWindow: number | null;
   /** Token count at which auto-compaction fires; null when absent from the latest span. */
@@ -41,6 +42,12 @@ export interface ContextAnatomy {
 
 function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** A window or gate of 0 or less is meaningless; treat it as absent. */
+function positiveOrNull(v: unknown): number | null {
+  const n = numOrNull(v);
+  return n !== null && n > 0 ? n : null;
 }
 
 const num = (v: unknown): number => numOrNull(v) ?? 0;
@@ -78,7 +85,6 @@ export function computeContextAnatomy(spans: Span[]): ContextAnatomy | null {
   let latestSlice: { system: number; tools: number; messages: number } | null = null;
   let latestInput = 0;
   let latestCacheRead = 0;
-  let latestCacheCreation = 0;
   let latestAttrs: Record<string, unknown> | undefined;
 
   for (const span of calls) {
@@ -91,7 +97,6 @@ export function computeContextAnatomy(spans: Span[]): ContextAnatomy | null {
       latestSlice = slice;
       latestInput = num(attrs?.inputTokens);
       latestCacheRead = num(attrs?.cacheReadTokens);
-      latestCacheCreation = num(attrs?.cacheCreationTokens);
       latestAttrs = attrs;
     }
   }
@@ -111,8 +116,7 @@ export function computeContextAnatomy(spans: Span[]): ContextAnatomy | null {
     cacheHitRate,
     llmCallCount: calls.length,
     ...sections(latestAttrs),
-    promptTokens: latestInput + latestCacheRead + latestCacheCreation,
-    contextWindow: numOrNull(latestAttrs?.contextWindow),
-    compactAtTokens: numOrNull(latestAttrs?.compactAtTokens),
+    contextWindow: positiveOrNull(latestAttrs?.contextWindow),
+    compactAtTokens: positiveOrNull(latestAttrs?.compactAtTokens),
   };
 }

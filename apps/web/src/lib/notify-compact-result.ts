@@ -10,11 +10,11 @@ export type CompactResult = {
   summariesEnabled: boolean;
 } | null;
 
+/** The slice of antd's notification API the compaction toast needs. */
+export type CompactNotifier = Pick<NotificationInstance, 'info' | 'success'>;
+
 /** Toast the outcome of a manual compaction (`/compact` and the context meter's button). */
-export function notifyCompactResult(
-  notification: Pick<NotificationInstance, 'info' | 'success'>,
-  result: CompactResult,
-): void {
+export function notifyCompactResult(notification: CompactNotifier, result: CompactResult): void {
   if (!result?.ok) {
     notification.info({
       message: 'Compaction',

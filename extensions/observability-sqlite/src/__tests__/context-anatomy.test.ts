@@ -92,7 +92,8 @@ describe('computeContextAnatomy', () => {
     ]);
     expect(a?.memory).toBe(250);
     expect(a?.skills).toBe(100);
-    expect(a?.promptTokens).toBe(100 + 80_000 + 300);
+    // The meter numerator is the measured request size, not input + cache.
+    expect(a?.total).toBe(1250);
     expect(a?.contextWindow).toBe(200_000);
     expect(a?.compactAtTokens).toBe(150_000);
   });
@@ -105,7 +106,24 @@ describe('computeContextAnatomy', () => {
     expect(a?.compactAtTokens).toBeNull();
     expect(a?.memory).toBe(0);
     expect(a?.skills).toBe(0);
-    expect(a?.promptTokens).toBe(5);
+    expect(a?.total).toBe(3);
+  });
+
+  it('treats a window or compaction point of 0 or less as absent', () => {
+    for (const bad of [0, -5]) {
+      const a = computeContextAnatomy([
+        llmSpan(
+          {
+            requestTokens: { system: 1, tools: 1, messages: 1 },
+            contextWindow: bad,
+            compactAtTokens: bad,
+          },
+          100,
+        ),
+      ]);
+      expect(a?.contextWindow).toBeNull();
+      expect(a?.compactAtTokens).toBeNull();
+    }
   });
 
   it('ignores malformed meter attrs', () => {

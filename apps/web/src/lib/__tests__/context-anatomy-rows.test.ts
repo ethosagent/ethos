@@ -14,7 +14,6 @@ function anatomy(over: Partial<ContextAnatomyWire> = {}): ContextAnatomyWire {
     llmCallCount: 1,
     memory: 200,
     skills: 100,
-    promptTokens: 6400,
     contextWindow: 200000,
     compactAtTokens: 100000,
     ...over,
