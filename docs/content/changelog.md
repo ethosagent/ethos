@@ -50,6 +50,11 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 | [0.2.6](#v0-2-6) | 2026-04-28 | beta | — |
 | [0.2.5](#v0-2-5) | 2026-04-10 | beta | — |
 
+## Unreleased {#unreleased}
+
+- **Context number counts cached tokens.** The web Chat context figure now sums fresh, cache-read and cache-creation prompt tokens, so it reads larger on Anthropic. This is a correction: the old figure left the cached prompt out.
+- **CLI uses the model's real window.** `/compact status`, `ethos sessions show` and the chat status bar read the model's resolved context window instead of a fixed 200K, and show the memory and skills split. See [Watch and compact your context](using/how-to/watch-and-compact-context.md).
+
 ## 0.9.0 {#v0-9-0}
 
 Date · 2026-09-29

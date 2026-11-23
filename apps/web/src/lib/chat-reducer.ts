@@ -26,6 +26,7 @@ import {
   seedClarify,
 } from './clarify-queue';
 import { applyRunEvent, emptyRunsState, type RunsState, seedRun } from './pi-run-reducer';
+import { promptTokensOf } from './prompt-tokens';
 import {
   appendTrailEntry,
   applyTrailEvent,
@@ -781,8 +782,7 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
     }
 
     case 'usage':
-      // Track the most recent input-token count as the current context size.
-      return { ...state, contextTokens: event.inputTokens };
+      return { ...state, contextTokens: promptTokensOf(event) };
 
     case 'tool_progress': {
       const turn = ensureTurn(state.currentTurn, now);

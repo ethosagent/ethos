@@ -187,3 +187,18 @@ describe('FW-1 column counts', () => {
     expect(r.columns).toBeLessThanOrEqual(50);
   });
 });
+
+describe('status bar with an unknown window (contextMax 0)', () => {
+  it('shows ? as the max and a finite percent, never 0 or Infinity', () => {
+    const r = renderStatusBar({
+      model: 'm',
+      contextTokens: 12_400,
+      contextMax: 0,
+      elapsedSecs: 5,
+      columns: 80,
+    });
+    expect(r.text).toContain('12.4K/?');
+    expect(r.text).not.toContain('Infinity');
+    expect(r.text).not.toContain('NaN');
+  });
+});

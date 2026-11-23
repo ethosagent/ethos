@@ -780,14 +780,15 @@ export async function createAgentLoop(
 
 export interface TeamLoopInfo {
   loop: AgentLoop;
-  /** The concrete registry `createAgentLoop` returned — `serve.ts` resolves
-   *  `mcp_export` against it for the character sheet, which needs
-   *  `toolNamesForPersonality`. */
+  /** The registry `createAgentLoop` returned — `serve.ts` resolves `mcp_export`
+   *  against it (the character sheet needs `toolNamesForPersonality`). */
   toolRegistry: DefaultToolRegistry;
   /** Personality the coordinator runs as. */
   coordinatorPersonality: string;
   /** Mesh name (team name unless manifest.mesh overrides it). */
   meshName: string;
+  /** Coordinator loop's resolved model window (`CreateAgentLoopResult.contextWindow`). */
+  contextWindow?: number;
   /** Forward the improvement-fork callback setter so `serve.ts` can wire SSE. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
   /** v2.2 — Notification router for registering per-session adapters. */
@@ -798,14 +799,7 @@ export interface TeamLoopInfo {
   jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
   backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
   jobControl?: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'];
-  /**
-   * Round-3 Issue 2 — forwarded from the coordinator's own `createAgentLoop`
-   * call below. `isCallCaptureToolsEnabled` gates on darwin +
-   * `callCapture.personalityId` alone (not on which personality the loop
-   * itself is "for"), so the coordinator's loop produces an equivalent
-   * closure to any other loop's. Undefined on every deployment that hasn't
-   * configured call capture, same as the non-team `createAgentLoop` path.
-   */
+  /** Round-3 Issue 2 — the coordinator's own `createAgentLoop` call-capture closure; undefined unless configured. */
   runCallCapture?: import('@ethosagent/wiring').CreateAgentLoopResult['runCallCapture'];
   /** Re-load this loop's personality registry — same seam `createAgentLoop` returns. */
   refreshPersonalities: import('@ethosagent/wiring').CreateAgentLoopResult['refreshPersonalities'];
@@ -894,6 +888,7 @@ export async function createTeamAgentLoop(
     backgroundExecutor,
     jobControl,
     runCallCapture,
+    contextWindow,
     refreshPersonalities,
     goals,
     memoryBundle,
@@ -933,6 +928,7 @@ export async function createTeamAgentLoop(
     toolRegistry,
     coordinatorPersonality,
     meshName,
+    contextWindow,
     setOnSkillProposed,
     notificationRouter,
     pluginLoader,
@@ -978,6 +974,8 @@ export interface ActiveLoop {
   personalityId: string;
   /** Human-readable label for the banner: "researcher" or "team:myteam". */
   displayName: string;
+  /** The loop's resolved model window (`CreateAgentLoopResult.contextWindow`). */
+  contextWindow?: number;
   /** Forward the skill-evolution callback setter so surfaces can wire SSE/CLI notifications. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
   /** memory-experience §3.3 — subscribe to proactive-capture notices (CLI prints them). */
@@ -1021,6 +1019,7 @@ export async function resolveActiveLoop(
       loop: teamResult.loop,
       personalityId: teamResult.coordinatorPersonality,
       displayName: `team:${teamName}`,
+      contextWindow: teamResult.contextWindow ?? 0,
       setOnSkillProposed: teamResult.setOnSkillProposed,
       // Team-scope capture is deferred (open-question 6); no notice forwarding.
       notificationRouter: teamResult.notificationRouter,
@@ -1050,6 +1049,7 @@ export async function resolveActiveLoop(
     loop: result.loop,
     personalityId,
     displayName: personalityId,
+    contextWindow: result.contextWindow,
     setOnSkillProposed: result.setOnSkillProposed,
     ...(result.onMemoryCaptured ? { onMemoryCaptured: result.onMemoryCaptured } : {}),
     notificationRouter: result.notificationRouter,

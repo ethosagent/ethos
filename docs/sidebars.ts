@@ -141,6 +141,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/use-team-memory',
             'using/how-to/group-chat-memory',
             'using/how-to/incognito-sessions',
+            'using/how-to/watch-and-compact-context',
             'using/how-to/get-to-know-new-users',
             splitDoc('using/how-to/peer-two-ethos-agents', 'Peer two Ethos agents over A2A', [
               '/peer-identities',

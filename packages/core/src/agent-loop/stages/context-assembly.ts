@@ -15,7 +15,9 @@ import {
 } from '../../attachment-text-resolver';
 import { estimateMessagesTokens, estimateTokens } from '../../context-engines/token-estimator';
 import { buildVoiceOriginAnnotation } from '../../voice-origin';
+import { loadAgingState, saveAgingState } from '../aging-state-store';
 import { maybeCompact } from '../compaction';
+import { type SystemSectionChars, sectionKindOf } from '../context-sections';
 import { skillCallsFromMessages, usesSkillIndexMode } from '../ghost-skills';
 import { dedupHistory, toLLMMessages } from '../history';
 import {
@@ -27,70 +29,13 @@ import {
 import { applyMicroToView } from '../micro-compaction';
 import { loadMicroState } from '../micro-state';
 import { recordSkillsExposed } from '../skill-telemetry';
-import {
-  type AgingState,
-  advanceAgingState,
-  applyAgingToView,
-  DEFAULT_AGING_STATE,
-} from '../tool-result-aging';
+import { advanceAgingState, applyAgingToView } from '../tool-result-aging';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
 import { ageVisionBlocks, degradeRejectedRows, KEEP_RECENT_VISION_TURNS } from '../vision-aging';
 import { readVisionRejected } from '../vision-rejection';
 import { checkContextDrift } from './context-drift';
 import { emitContextEvents } from './context-emit';
 import { turnToolDefinitions } from './stream-step';
-
-// Phase 1a — aging state is persisted per session so the batched-at-crossings
-// invariant survives across turns. Best-effort: any storage error degrades to
-// the default (no aging) rather than breaking the turn.
-function agingStatePath(dataDir: string, sessionId: string): string {
-  return `${dataDir}/aging/${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
-}
-
-function parseAgingState(raw: string): AgingState {
-  try {
-    const v = JSON.parse(raw) as Partial<AgingState>;
-    const level = v.level === 'soft' || v.level === 'hard' ? v.level : 'none';
-    const soft = Array.isArray(v.soft)
-      ? v.soft.filter((s): s is string => typeof s === 'string')
-      : [];
-    const hard = Array.isArray(v.hard)
-      ? v.hard.filter((s): s is string => typeof s === 'string')
-      : [];
-    return { level, soft, hard };
-  } catch {
-    return DEFAULT_AGING_STATE;
-  }
-}
-
-async function loadAgingState(
-  storage: LoopDeps['storage'],
-  dataDir: string | undefined,
-  sessionId: string,
-): Promise<AgingState> {
-  if (!storage || !dataDir) return DEFAULT_AGING_STATE;
-  try {
-    const raw = await storage.read(agingStatePath(dataDir, sessionId));
-    return raw ? parseAgingState(raw) : DEFAULT_AGING_STATE;
-  } catch {
-    return DEFAULT_AGING_STATE;
-  }
-}
-
-async function saveAgingState(
-  storage: LoopDeps['storage'],
-  dataDir: string | undefined,
-  sessionId: string,
-  state: AgingState,
-): Promise<void> {
-  if (!storage || !dataDir) return;
-  try {
-    await storage.mkdir(`${dataDir}/aging`);
-    await storage.writeAtomic(agingStatePath(dataDir, sessionId), JSON.stringify(state));
-  } catch {
-    // Best-effort — a persistence miss just re-derives the state next turn.
-  }
-}
 
 /**
  * The per-run memory read gate. `RunOptions` (`../../agent-loop`) extends it,
@@ -478,6 +423,8 @@ export async function* assembleContext(
   };
 
   const systemParts: string[] = [];
+  // Context meter: lengths only, read from what is pushed below; never alters systemParts.
+  const sectionChars: SystemSectionChars = { memory: 0, skills: 0 };
 
   // Ch.3a — prepend the injection-defense prelude so the model knows how to
   // read `<untrusted>` blocks before any personality content sets the tone.
@@ -524,6 +471,8 @@ export async function* assembleContext(
     if (injector.shouldInject && !injector.shouldInject(promptCtx)) continue;
     const result = await injector.inject(promptCtx);
     if (result) {
+      const kind = sectionKindOf(injector.id);
+      if (kind) sectionChars[kind] += result.content.length;
       if (result.position === 'prepend') {
         systemParts.unshift(result.content);
       } else {
@@ -573,9 +522,9 @@ export async function* assembleContext(
       })
       .map((e) => `- ${labels[e.key] ?? e.key} (\`${e.key}\`)`);
     if (names.length > 0) {
-      systemParts.push(
-        `## Memory\n\nStored notes are available on demand — call \`memory_read\` to load them:\n${names.join('\n')}`,
-      );
+      const indexBlock = `## Memory\n\nStored notes are available on demand — call \`memory_read\` to load them:\n${names.join('\n')}`;
+      sectionChars.memory += indexBlock.length;
+      systemParts.push(indexBlock);
     }
   } else if (memSnapshot && memSnapshot.entries.length > 0) {
     const blocks: string[] = [];
@@ -602,6 +551,7 @@ export async function* assembleContext(
         // less per-token signal than the freshest facts.
         rendered = `[...truncated]\n\n${rendered.slice(-MEMORY_MAX_CHARS)}`;
       }
+      sectionChars.memory += rendered.length;
       systemParts.push(rendered);
     }
   }
@@ -844,5 +794,6 @@ export async function* assembleContext(
     baseMessageCount: allMessages.length,
     userScopeId,
     compactedThisTurn: compacted.notice !== undefined,
+    ...(buildResult.overrideSystem ? {} : { systemSectionChars: sectionChars }),
   };
 }

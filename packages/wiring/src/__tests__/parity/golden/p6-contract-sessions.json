@@ -80,13 +80,42 @@
                 "cacheReadTokens": {
                   "type": "number"
                 },
+                "compactAtTokens": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "contextWindow": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "inputTokens": {
                   "type": "number"
                 },
                 "llmCallCount": {
                   "type": "number"
                 },
+                "memory": {
+                  "type": "number"
+                },
                 "messages": {
+                  "type": "number"
+                },
+                "promptTokens": {
+                  "type": "number"
+                },
+                "skills": {
                   "type": "number"
                 },
                 "system": {
@@ -107,7 +136,12 @@
                 "inputTokens",
                 "cacheReadTokens",
                 "cacheHitRate",
-                "llmCallCount"
+                "llmCallCount",
+                "memory",
+                "skills",
+                "promptTokens",
+                "contextWindow",
+                "compactAtTokens"
               ],
               "type": "object"
             },

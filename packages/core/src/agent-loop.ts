@@ -851,8 +851,7 @@ export class AgentLoop {
         return;
       }
 
-      // One LLM call's context, read at call time (cacheBreakpoints and
-      // turnCount change between iterations).
+      // One LLM call's context, read at call time (breakpoints/turnCount change per iteration).
       const stepCtx = () => ({
         sessionId,
         sessionKey,
@@ -872,6 +871,8 @@ export class AgentLoop {
         filterOpts,
         toolLoading: setup.toolLoading,
         systemPrompt,
+        systemSectionChars: assembled.systemSectionChars,
+        compaction: turnDeps.compaction,
         llmMessages,
         cacheBreakpoints,
         abortSignal,
@@ -1086,10 +1087,9 @@ export class AgentLoop {
       ...(this.turnAuditors ? { turnAuditors: this.turnAuditors } : {}),
     });
 
-    // Phase 3 — turn-end maintenance (opt-in memory flush at 70%, auto-compaction at 80%,
-    // default on). Runs AFTER `done`, so only a consumer that drains the iterator gets it,
-    // and it races no inbound turn only while that consumer holds the lane — the gateway
-    // does (`Gateway.runTurn`; extensions/gateway/src/__tests__/turn-tail.test.ts).
+    // Phase 3 — turn-end maintenance (opt-in flush at 70%, auto-compaction at 80%, default on).
+    // Runs AFTER `done`, so only a consumer that drains the iterator gets it, and it races
+    // no inbound turn only while that consumer holds the lane — the gateway does (`Gateway.runTurn`; extensions/gateway/src/__tests__/turn-tail.test.ts).
     const turnEndExtras = {
       userScopeId,
       compactedThisTurn,

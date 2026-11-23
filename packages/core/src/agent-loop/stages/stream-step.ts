@@ -21,6 +21,11 @@ import {
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
 import { currentTurnFitError, currentTurnStart } from '../compaction';
+import {
+  contextMeterAttrs,
+  type MeterCompaction,
+  type SystemSectionChars,
+} from '../context-sections';
 import { routeTurnModel } from '../model-route';
 import { rejectCutOffToolCalls } from '../output-cap';
 import { isContextOverflowError } from '../overflow';
@@ -121,6 +126,10 @@ export interface StreamStepContext {
    *  active for the turn (`TurnSetup.toolLoading`). */
   toolLoading?: ToolLoadingState;
   systemPrompt: string | undefined;
+  /** Context meter — `AssembledContext.systemSectionChars`. */
+  systemSectionChars?: SystemSectionChars | undefined;
+  /** Context meter — this turn's gate inputs (`turnDeps.compaction`, after the small-window overlay). */
+  compaction?: MeterCompaction | undefined;
   llmMessages: Message[];
   cacheBreakpoints: number[] | undefined;
   abortSignal: AbortSignal;
@@ -345,6 +354,18 @@ export async function* streamStep(
   let llmEstimatedCostUsd = 0;
   let llmRequestTokens: { system: number; tools: number; messages: number } | undefined;
   let llmFinishReason: StepFinishReason | undefined;
+  // Context meter attrs, read at span close (requestTokens arrives with the stream).
+  const meterAttrs = () =>
+    contextMeterAttrs({
+      llm: deps.llm,
+      gateWindowTokens: ctx.gateWindowTokens,
+      systemPrompt: ctx.systemPrompt,
+      systemSectionChars: ctx.systemSectionChars,
+      compaction: ctx.compaction,
+      serverCompactionActive: ctx.serverCompaction?.active,
+      maxCompletionTokens: ctx.opts.maxCompletionTokens,
+      requestTokens: llmRequestTokens,
+    });
   // B2 — the provider's server-assigned id for this call, when it reports one.
   let providerRequestId: string | undefined;
   // Gap 3 — why `llmEstimatedCostUsd` is what it is, for the
@@ -442,6 +463,7 @@ export async function* streamStep(
       clientRequestId: requestId,
       ...(providerRequestId ? { providerRequestId } : {}),
       ...(llmRequestTokens ? { requestTokens: llmRequestTokens } : {}),
+      ...meterAttrs(),
       // Gap 2/3 (P2-counters) — `provider` and `costBasis` on the span so
       // Prometheus counters can be derived from spans alone, no re-derivation
       // through @ethosagent/pricing at read time.
@@ -485,6 +507,7 @@ export async function* streamStep(
       clientRequestId: requestId,
       ...(providerRequestId ? { providerRequestId } : {}),
       ...(llmRequestTokens ? { requestTokens: llmRequestTokens } : {}),
+      ...meterAttrs(),
       provider: deps.llm.name,
       ...(llmCostBasis ? { costBasis: llmCostBasis } : {}),
     });

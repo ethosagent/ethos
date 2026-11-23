@@ -65,6 +65,8 @@ export const UsageEventSchema = z.object({
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   estimatedCostUsd: z.number().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative().optional(),
+  cacheCreationTokens: z.number().int().nonnegative().optional(),
 });
 
 export const ContextMetaEventSchema = z.object({

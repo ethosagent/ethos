@@ -1,10 +1,16 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { useQuery } from '@tanstack/react-query';
 import { Dropdown, Input } from 'antd';
-import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { TalkMicIcon } from '../../features/voice/TalkMode';
 import type { AttachmentPreview } from '../../lib/attachments';
-import { formatContextTokens } from '../../lib/format-context-tokens';
 import { rpc } from '../../rpc';
 import { VoiceButton } from './VoiceButton';
 
@@ -19,9 +25,8 @@ export interface ComposerProps {
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (localId: string) => void;
   onGoalRun?: () => void;
-  /** Input-token count from the last turn — the current context size. Renders
-   *  nothing when null/0 (before the first turn). */
-  contextTokens?: number | null;
+  /** Context meter slot; Composer never reads it, so the draft is untouched. */
+  contextMeter?: ReactNode;
   /** Text pushed in from a suggestion pill. `seq` makes picking the same
    *  suggestion twice a fresh event; the draft is replaced, not appended.
    *  `onlyIfEmpty` restores instead of replacing: a failed send's Discard
@@ -49,7 +54,7 @@ export function Composer({
   onAttach,
   onRemoveAttachment,
   onGoalRun,
-  contextTokens,
+  contextMeter,
   suggestion,
   onTalkMode,
   talkModeActive,
@@ -470,11 +475,7 @@ export function Composer({
               </button>
             </Dropdown>
             <div className="composer-actions-spacer" />
-            {contextTokens ? (
-              <span className="composer-context-meter">
-                {formatContextTokens(contextTokens)} tokens
-              </span>
-            ) : null}
+            {contextMeter}
             {onTalkMode ? (
               <button
                 type="button"

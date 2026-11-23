@@ -9,6 +9,7 @@ import {
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { SearchResult, Session, SessionUsage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { formatContextAnatomy } from '../lib/context-anatomy-format';
 import { runSessionsRepair } from './sessions-repair';
 
 // ---------------------------------------------------------------------------
@@ -255,19 +256,7 @@ export async function runSessionShow(argv: string[]): Promise<void> {
         `${bold('Compactions:')} ${compactionCount}${compactionSuffix}\n`,
     );
 
-    if (anatomy) {
-      const n = (v: number) => v.toLocaleString();
-      const hitPct = Math.round(anatomy.cacheHitRate * 100);
-      process.stdout.write(
-        `\n${bold('Context anatomy')} ${dim(`(latest of ${anatomy.llmCallCount} llm call${anatomy.llmCallCount === 1 ? '' : 's'})`)}\n` +
-          `  ${'system'.padEnd(10)}${n(anatomy.system)} tok\n` +
-          `  ${'tools'.padEnd(10)}${n(anatomy.tools)} tok\n` +
-          `  ${'messages'.padEnd(10)}${n(anatomy.messages)} tok\n` +
-          `  ${dim('─────────')}\n` +
-          `  ${'total'.padEnd(10)}${n(anatomy.total)} tok\n` +
-          `  ${'cache hit'.padEnd(10)}${hitPct}%\n`,
-      );
-    }
+    if (anatomy) process.stdout.write(`\n${formatContextAnatomy(anatomy, { bold, dim })}`);
     process.stdout.write('\n');
   } finally {
     store.close();

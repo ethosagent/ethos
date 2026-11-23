@@ -27,10 +27,28 @@ export interface ContextAnatomy {
   cacheHitRate: number;
   /** Number of llm_call spans aggregated. */
   llmCallCount: number;
+  /** Approximate memory tokens inside `system` (by character share); 0 on legacy spans. */
+  memory: number;
+  /** Approximate skills tokens inside `system` (by character share); 0 on legacy spans. */
+  skills: number;
+  /** Real prompt size of the latest call: fresh input + cache-read + cache-creation. */
+  promptTokens: number;
+  /** Model window the latest call ran against; null when its span predates the meter. */
+  contextWindow: number | null;
+  /** Token count at which auto-compaction fires; null when absent from the latest span. */
+  compactAtTokens: number | null;
 }
 
-function num(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+const num = (v: unknown): number => numOrNull(v) ?? 0;
+
+function sections(attrs: Record<string, unknown> | undefined): { memory: number; skills: number } {
+  const v = attrs?.systemSections;
+  if (typeof v !== 'object' || v === null) return { memory: 0, skills: 0 };
+  return { memory: num(Reflect.get(v, 'memory')), skills: num(Reflect.get(v, 'skills')) };
 }
 
 function requestSlice(attrs: Record<string, unknown> | undefined): {
@@ -60,6 +78,8 @@ export function computeContextAnatomy(spans: Span[]): ContextAnatomy | null {
   let latestSlice: { system: number; tools: number; messages: number } | null = null;
   let latestInput = 0;
   let latestCacheRead = 0;
+  let latestCacheCreation = 0;
+  let latestAttrs: Record<string, unknown> | undefined;
 
   for (const span of calls) {
     const attrs = span.attrs;
@@ -71,6 +91,8 @@ export function computeContextAnatomy(spans: Span[]): ContextAnatomy | null {
       latestSlice = slice;
       latestInput = num(attrs?.inputTokens);
       latestCacheRead = num(attrs?.cacheReadTokens);
+      latestCacheCreation = num(attrs?.cacheCreationTokens);
+      latestAttrs = attrs;
     }
   }
 
@@ -88,5 +110,9 @@ export function computeContextAnatomy(spans: Span[]): ContextAnatomy | null {
     cacheReadTokens: latestCacheRead,
     cacheHitRate,
     llmCallCount: calls.length,
+    ...sections(latestAttrs),
+    promptTokens: latestInput + latestCacheRead + latestCacheCreation,
+    contextWindow: numOrNull(latestAttrs?.contextWindow),
+    compactAtTokens: numOrNull(latestAttrs?.compactAtTokens),
   };
 }

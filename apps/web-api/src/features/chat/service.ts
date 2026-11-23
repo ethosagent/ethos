@@ -20,8 +20,7 @@ import type { TeamLoopRegistry } from './team-loops';
 // (architecture rule #6). Three jobs:
 //
 //   1. Resolve / pre-create a session row before kicking off the bridge —
-//      so `chat.send` returns the same `sessionId` the SSE consumer
-//      subscribes to.
+//      so `chat.send` returns the `sessionId` the SSE consumer subscribes to.
 //   2. Maintain ONE bridge per session (re-used across multiple `send`s on
 //      the same session — the bridge has its own FIFO queue for concurrent
 //      sends per finding 1.3).
@@ -772,12 +771,13 @@ export class ChatService {
         ...(audience !== undefined ? { audience } : {}),
       });
     });
-    bridge.on('usage', (inputTokens, outputTokens, estimatedCostUsd) =>
+    bridge.on('usage', (inputTokens, outputTokens, estimatedCostUsd, cache) =>
       this.append(sessionId, {
         type: 'usage',
         inputTokens,
         outputTokens,
         estimatedCostUsd,
+        ...cache,
       }),
     );
     bridge.on('dry_run_summary', (plan, capped) =>

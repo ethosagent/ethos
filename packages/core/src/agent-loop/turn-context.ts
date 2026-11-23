@@ -26,6 +26,7 @@ import type {
 } from '@ethosagent/types';
 import type { ClarifyBridge } from '../clarify/clarify-bridge';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import type { SystemSectionChars } from './context-sections';
 import type { SmallWindowOverlay, SmallWindowResolver } from './small-window';
 import type { TierRouter } from './tier-router';
 import type { ToolLoadingResolver, ToolLoadingState } from './tool-loading';
@@ -312,6 +313,9 @@ export interface AssembledContext {
    *  The turn-end trigger reads it to avoid double-compacting / flushing right
    *  after (it shares the compaction cooldown). */
   compactedThisTurn: boolean;
+  /** Context meter: rendered chars of the memory and skills parts of `systemPrompt`.
+   *  Absent when `before_prompt_build` overrode the system prompt. */
+  systemSectionChars?: SystemSectionChars;
 }
 
 // ---------------------------------------------------------------------------

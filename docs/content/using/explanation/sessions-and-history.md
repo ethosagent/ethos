@@ -135,3 +135,4 @@ Alternatives considered:
 - [Why is personality the unit?](what-is-a-personality.md) — what does *not* change when you switch
 - [Slash commands reference](../reference/slash-commands.md) — `/new`, `/personality`, and friends
 - [CLI reference](../reference/cli.md) — `ethos sessions list` and related subcommands
+- [Watch and compact your context](../how-to/watch-and-compact-context.md) — see what fills a session's window and shrink it

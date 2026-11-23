@@ -132,7 +132,12 @@ interface BridgeEventMap {
     audience: 'internal' | 'user' | 'dashboard' | undefined,
     error: string | undefined,
   ];
-  usage: [inputTokens: number, outputTokens: number, estimatedCostUsd: number];
+  usage: [
+    inputTokens: number,
+    outputTokens: number,
+    estimatedCostUsd: number,
+    cache?: { cacheReadTokens?: number; cacheCreationTokens?: number },
+  ];
   /** S4/U1 — an early safety stop (budget or watcher). Forwarded whole; a
    *  surface renders it with `haltNotice` (@ethosagent/core). A `done` follows. */
   halt: [halt: Omit<Extract<AgentEvent, { type: 'halt' }>, 'type'>];
@@ -471,7 +476,12 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             );
             break;
           case 'usage':
-            this.emit('usage', event.inputTokens, event.outputTokens, event.estimatedCostUsd);
+            this.emit('usage', event.inputTokens, event.outputTokens, event.estimatedCostUsd, {
+              ...(event.cacheReadTokens ? { cacheReadTokens: event.cacheReadTokens } : {}),
+              ...(event.cacheCreationTokens
+                ? { cacheCreationTokens: event.cacheCreationTokens }
+                : {}),
+            });
             break;
           case 'halt': {
             const { type: _type, ...halt } = event;

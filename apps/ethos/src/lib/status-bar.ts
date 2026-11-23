@@ -99,6 +99,8 @@ export function renderStatusBar(input: StatusBarInput): RenderedStatusBar {
   const layout = pickLayout(input.columns);
   const model = truncateModel(input.model);
   const duration = formatDuration(input.elapsedSecs);
+  // contextMax 0 = the loop's window is unknown; show `?`, not `0`.
+  const max = input.contextMax > 0 ? formatTokens(input.contextMax) : '?';
   // C4 — personality and model form one identity segment; cost drops out at
   // minimal, session at compact and minimal (the layout-tier rule the file
   // already follows for the bar and the token counts).
@@ -113,10 +115,10 @@ export function renderStatusBar(input: StatusBarInput): RenderedStatusBar {
   if (layout === 'minimal') {
     text = `${label}${SEP}${duration}`;
   } else if (layout === 'compact') {
-    const tokens = `${formatTokens(input.contextTokens)}/${formatTokens(input.contextMax)}`;
+    const tokens = `${formatTokens(input.contextTokens)}/${max}`;
     text = `${label}${SEP}${tokens}${SEP}${Math.round(percent)}%${cost}${SEP}${duration}`;
   } else {
-    const tokens = `${formatTokens(input.contextTokens)}/${formatTokens(input.contextMax)}`;
+    const tokens = `${formatTokens(input.contextTokens)}/${max}`;
     const bar = buildBar(percent);
     text = `${label}${SEP}${tokens}${SEP}${bar} ${Math.round(percent)}%${cost}${SEP}${duration}${session}`;
   }

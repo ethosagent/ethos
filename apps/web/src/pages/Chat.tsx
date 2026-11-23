@@ -12,6 +12,7 @@ import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ChatErrorBanner } from '../components/chat/ChatErrorBanner';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
+import { ContextMeter } from '../components/chat/ContextMeter';
 import { CredentialCard } from '../components/chat/CredentialCard';
 import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
@@ -58,6 +59,7 @@ import {
 } from '../features/voice/voice-call-reducer';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
+import { useContextAnatomy } from '../hooks/useContextAnatomy';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
 import { type AttachmentPreview, placeholderPreview, readPreviewData } from '../lib/attachments';
 import { isTurnBusy } from '../lib/chat-reducer';
@@ -65,6 +67,7 @@ import { retryTurnText } from '../lib/chat-retry';
 import { INCOGNITO_PARAM, INCOGNITO_PLACEHOLDER } from '../lib/incognito';
 import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
+import { notifyCompactResult } from '../lib/notify-compact-result';
 import { rewindPromptAt } from '../lib/rewind';
 import { accentVars, personalityTheme } from '../lib/theme';
 import { buildTeamPath } from '../lib/workspaceRoutes';
@@ -371,6 +374,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // `state.isStreaming` only flips on the first stream event; rewind must also
   // refuse in the gap between send and that event.
   const turnBusy = isTurnBusy(state);
+  const meter = useContextAnatomy(currentSessionId, { turnBusy, liveTokens: state.contextTokens });
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const handleEditStart = useCallback((id: string) => setEditingMessageId(id), []);
   const handleEditCancel = useCallback(() => setEditingMessageId(null), []);
@@ -466,35 +470,19 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   const handleSend = async (text: string) => {
     // Phase 2 — `/compact [focus]` is handled client-side: it forces a
     // server-side compaction instead of sending a turn. `/compact status`
-    // points to the Activity tab (persisted context anatomy lives there).
+    // points to the context ring beside the composer (the anatomy popover).
     const trimmed = text.trim();
     if (/^\/compact(\s|$)/i.test(trimmed)) {
       const focus = trimmed.replace(/^\/compact\s*/i, '').trim();
       if (focus.toLowerCase() === 'status') {
         notification.info({
           message: 'Context anatomy',
-          description: 'See the Activity tab for this session’s context breakdown.',
+          description:
+            'Click the context ring beside the composer for this session’s context breakdown.',
         });
         return;
       }
-      const result = await compact(focus || undefined);
-      if (!result?.ok) {
-        notification.info({
-          message: 'Compaction',
-          description: 'Not enough history to compact yet.',
-        });
-        return;
-      }
-      const saved = Math.max(0, result.preTotalTokens - result.postTotalTokens);
-      notification.success({
-        message: `Compacted ${result.droppedCount} earlier message(s)`,
-        description:
-          `${result.engineName}: ${result.preTotalTokens.toLocaleString()} → ` +
-          `${result.postTotalTokens.toLocaleString()} tok (−${saved.toLocaleString()})` +
-          (result.summariesEnabled
-            ? ''
-            : '. Summaries disabled — set auxiliary.compression.model to enable.'),
-      });
+      notifyCompactResult(notification, await compact(focus || undefined));
       return;
     }
 
@@ -1253,7 +1241,19 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
           onAttach={handleAttach}
           onRemoveAttachment={handleRemoveAttachment}
           onGoalRun={handleGoalRunDirect}
-          contextTokens={state.contextTokens}
+          contextMeter={
+            <ContextMeter
+              anatomy={meter.anatomy}
+              usedTokens={meter.usedTokens}
+              compactDisabled={turnBusy || takeoverActive}
+              onCompact={() =>
+                void compact().then((r) => {
+                  notifyCompactResult(notification, r);
+                  meter.afterCompact(r);
+                })
+              }
+            />
+          }
           suggestion={suggestion}
           {...(canTalk
             ? {

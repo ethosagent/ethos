@@ -1271,7 +1271,7 @@ export function App({
       case 'compact': {
         const focus = args.join(' ').trim();
         if (focus.toLowerCase() === 'status') {
-          setStatusMsg('[context anatomy: run `ethos sessions show <id>` in the CLI]');
+          setStatusMsg('[context: `ethos sessions show <id>`, or the context ring in web Chat]');
           break;
         }
         setStatusMsg('[compacting context…]');

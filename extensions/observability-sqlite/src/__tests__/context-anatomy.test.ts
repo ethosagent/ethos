@@ -75,6 +75,56 @@ describe('computeContextAnatomy', () => {
     expect(a?.cacheHitRate).toBeCloseTo(400 / 600, 6);
   });
 
+  it('surfaces memory/skills, prompt size, window and compaction point from the latest span', () => {
+    const a = computeContextAnatomy([
+      llmSpan(
+        {
+          inputTokens: 100,
+          cacheReadTokens: 80_000,
+          cacheCreationTokens: 300,
+          requestTokens: { system: 1000, tools: 200, messages: 50 },
+          systemSections: { memory: 250, skills: 100 },
+          contextWindow: 200_000,
+          compactAtTokens: 150_000,
+        },
+        100,
+      ),
+    ]);
+    expect(a?.memory).toBe(250);
+    expect(a?.skills).toBe(100);
+    expect(a?.promptTokens).toBe(100 + 80_000 + 300);
+    expect(a?.contextWindow).toBe(200_000);
+    expect(a?.compactAtTokens).toBe(150_000);
+  });
+
+  it('returns null window/compaction point and zero memory/skills for legacy spans', () => {
+    const a = computeContextAnatomy([
+      llmSpan({ inputTokens: 5, requestTokens: { system: 1, tools: 1, messages: 1 } }, 100),
+    ]);
+    expect(a?.contextWindow).toBeNull();
+    expect(a?.compactAtTokens).toBeNull();
+    expect(a?.memory).toBe(0);
+    expect(a?.skills).toBe(0);
+    expect(a?.promptTokens).toBe(5);
+  });
+
+  it('ignores malformed meter attrs', () => {
+    const a = computeContextAnatomy([
+      llmSpan(
+        {
+          requestTokens: { system: 1, tools: 1, messages: 1 },
+          systemSections: 'nope',
+          contextWindow: 'big',
+          compactAtTokens: Number.NaN,
+        },
+        100,
+      ),
+    ]);
+    expect(a?.memory).toBe(0);
+    expect(a?.contextWindow).toBeNull();
+    expect(a?.compactAtTokens).toBeNull();
+  });
+
   it('aggregates ONLY llm_call spans (no double-count from other kinds)', () => {
     const spans: Span[] = [
       llmSpan({ inputTokens: 100, requestTokens: { system: 2, tools: 2, messages: 2 } }, 100),
@@ -125,6 +175,24 @@ describe('SQLiteObservabilityStore — Phase 0 span attrs + per-session query', 
     expect(attrs.cacheReadTokens).toBe(7);
     expect(attrs.requestTokens).toEqual({ system: 10, tools: 20, messages: 12 });
     expect(spans[0]?.status).toBe('ok');
+  });
+
+  it('keeps systemSections and window attrs across a close-time round trip', () => {
+    const traceId = randomUUID();
+    store.insertTrace({ traceId, sessionId: 'sess-D', kind: 'turn', startTs: Date.now() });
+    const spanId = insertLlmSpan(traceId);
+    store.closeSpan(spanId, 'ok', {
+      inputTokens: 1,
+      requestTokens: { system: 1000, tools: 200, messages: 50 },
+      systemSections: { memory: 250, skills: 100 },
+      contextWindow: 200_000,
+      compactAtTokens: 150_000,
+    });
+    const a = computeContextAnatomy(store.getLlmCallSpansForSession('sess-D'));
+    expect(a?.memory).toBe(250);
+    expect(a?.skills).toBe(100);
+    expect(a?.contextWindow).toBe(200_000);
+    expect(a?.compactAtTokens).toBe(150_000);
   });
 
   it('getLlmCallSpansForSession returns only llm_call spans for the session', () => {

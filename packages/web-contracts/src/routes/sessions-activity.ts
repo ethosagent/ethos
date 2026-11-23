@@ -135,6 +135,11 @@ const ContextAnatomySchema = z.object({
   cacheReadTokens: z.number(),
   cacheHitRate: z.number(),
   llmCallCount: z.number(),
+  memory: z.number(),
+  skills: z.number(),
+  promptTokens: z.number(),
+  contextWindow: z.number().nullable(),
+  compactAtTokens: z.number().nullable(),
 });
 const SessionContextAnatomyInput = z.object({ id: z.string() });
 const SessionContextAnatomyOutput = z.object({ anatomy: ContextAnatomySchema.nullable() });

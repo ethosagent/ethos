@@ -67,6 +67,7 @@ import {
   scanCommandsIntoRegistry,
 } from '../lib/command-loader';
 import { configWarningLinesOnce } from '../lib/config-warnings';
+import { formatContextAnatomy } from '../lib/context-anatomy-format';
 import {
   collectPluginCredential,
   createMutableOutput,
@@ -195,10 +196,6 @@ function colorForThreshold(t: Threshold): string {
   }
 }
 
-// FW-1 — model context window. Conservative default of 200K matches Anthropic
-// Sonnet/Opus and the OpenAI Compat default. Specific routes can refine later.
-const DEFAULT_CONTEXT_MAX = 200_000;
-
 // ---------------------------------------------------------------------------
 // Mutable chat state
 // ---------------------------------------------------------------------------
@@ -218,6 +215,8 @@ interface ChatState {
   busyMode: BusyInputMode;
   toolPreviewLength: number;
   modelName: string;
+  /** The loop's resolved window (`CreateAgentLoopResult.contextWindow` = `llm.maxContextTokens`); refreshed on `/model`. */
+  contextMax: number;
   /** C4 — messages in the current session (user + assistant, this process). */
   messageCount: number;
   /** N3 — reload the personality registry before each turn; returns the dim
@@ -320,7 +319,7 @@ function renderStatusBarLine(state: ChatState): void {
   const bar = renderStatusBar({
     model: state.modelName,
     contextTokens: state.contextTokens,
-    contextMax: DEFAULT_CONTEXT_MAX,
+    contextMax: state.contextMax,
     elapsedSecs: Math.floor((Date.now() - state.startedAt) / 1000),
     columns: cols,
     personality: state.personalityId,
@@ -724,6 +723,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     busyMode: config.displayBusyInputMode ?? 'interrupt',
     toolPreviewLength: config.displayToolPreviewLength ?? 0,
     modelName: config.model,
+    contextMax: runtime.contextWindow ?? 0,
     steerSink: new InMemorySteerSink(),
     inputQueue: [],
     abort: null,
@@ -1012,6 +1012,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         activePluginLoader = next.runtime.pluginLoader;
         activePersonalities = next.runtime.personalities;
         state.modelName = modelId;
+        state.contextMax = next.runtime.contextWindow ?? 0;
         state.jobStore = next.runtime.jobStore;
         state.backgroundExecutor = next.runtime.backgroundExecutor;
         state.jobControl = next.runtime.jobControl;
@@ -2598,16 +2599,8 @@ async function printCompactStatus(sessionKey: string): Promise<void> {
       out(`${c.dim}[no context data yet — send a message first]${c.reset}\n`);
       return;
     }
-    const n = (v: number) => v.toLocaleString();
-    const pct = (v: number) => `${Math.round((v / DEFAULT_CONTEXT_MAX) * 100)}%`;
     out(
-      `\n${c.bold}Context anatomy${c.reset} ${c.dim}(latest of ${anatomy.llmCallCount} llm call${anatomy.llmCallCount === 1 ? '' : 's'})${c.reset}\n` +
-        `  ${'system'.padEnd(10)}${n(anatomy.system).padStart(9)} tok  ${c.dim}${pct(anatomy.system)}${c.reset}\n` +
-        `  ${'tools'.padEnd(10)}${n(anatomy.tools).padStart(9)} tok  ${c.dim}${pct(anatomy.tools)}${c.reset}\n` +
-        `  ${'messages'.padEnd(10)}${n(anatomy.messages).padStart(9)} tok  ${c.dim}${pct(anatomy.messages)}${c.reset}\n` +
-        `  ${c.dim}─────────${c.reset}\n` +
-        `  ${'total'.padEnd(10)}${n(anatomy.total).padStart(9)} tok  ${c.dim}${pct(anatomy.total)} of ${n(DEFAULT_CONTEXT_MAX)}${c.reset}\n` +
-        `  ${'cache hit'.padEnd(10)}${`${Math.round(anatomy.cacheHitRate * 100)}%`.padStart(9)}\n\n`,
+      `\n${formatContextAnatomy(anatomy, { bold: (t) => `${c.bold}${t}${c.reset}`, dim: (t) => `${c.dim}${t}${c.reset}` })}\n`,
     );
   } finally {
     store.close();

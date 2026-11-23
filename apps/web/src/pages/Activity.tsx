@@ -17,6 +17,7 @@ import {
   MAX_GROUPS,
   mergeRows,
 } from '../lib/activityFeed';
+import { contextAnatomyRows } from '../lib/context-anatomy-rows';
 import { rpc } from '../rpc';
 import { subscribeToActivity } from '../sse';
 
@@ -377,9 +378,12 @@ function ActivityTimeline({ embedded = false }: { embedded?: boolean }) {
       {anatomy && (
         <div className="activity-context-anatomy">
           <span className="aca-title">Context</span>
-          <Tag>system {anatomy.system.toLocaleString()}</Tag>
-          <Tag>tools {anatomy.tools.toLocaleString()}</Tag>
-          <Tag>messages {anatomy.messages.toLocaleString()}</Tag>
+          {contextAnatomyRows(anatomy).map((r) => (
+            <Tag key={r.key}>
+              {r.approx ? '≈ ' : ''}
+              {r.label.toLowerCase()} {r.tokens.toLocaleString()}
+            </Tag>
+          ))}
           <Tag color="blue">total {anatomy.total.toLocaleString()} tok</Tag>
           <Tag color="green">cache {Math.round(anatomy.cacheHitRate * 100)}%</Tag>
         </div>
