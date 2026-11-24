@@ -64,12 +64,12 @@ import {
   type WakeMatch,
   type WakeRoute,
 } from '@ethosagent/voice-satellite';
-import { WebTokenRepository } from '@ethosagent/web-api';
 import { SATELLITE_SOCKET_PATH } from '@ethosagent/web-contracts';
 import type { SatelliteStatus } from '../shared/ipc-contract';
 import { getConnectionMode } from './connection';
 import { getPort } from './serve';
 import { store } from './store';
+import { createDesktopWebTokenRepository } from './web-token';
 
 /** What the mic would capture at. Reported to the server as-is, never guessed up. */
 const CAPTURE_SAMPLE_RATE = 16_000;
@@ -277,7 +277,7 @@ function wireState(state: CaptureState): 'listening' | 'muted' | 'speaking' | 'd
 }
 
 async function readAuthCookie(): Promise<string> {
-  const tokens = new WebTokenRepository({ dataDir: getDataDir(), storage: new FsStorage() });
+  const tokens = createDesktopWebTokenRepository(getDataDir(), new FsStorage());
   return `ethos_auth=${await tokens.getOrCreate()}`;
 }
 

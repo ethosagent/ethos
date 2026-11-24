@@ -2,7 +2,6 @@ import type { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { WebTokenRepository } from '@ethosagent/web-api';
 import { app, BrowserWindow, nativeTheme, session, type Tray } from 'electron';
 import type { SatelliteStatus } from '../shared/ipc-contract';
 import { initAutoUpdater } from './auto-update';
@@ -30,6 +29,7 @@ import { applySpaCsp } from './spa-csp';
 import { isBackgroundMode, logBackgroundStartup } from './startup-mode';
 import { store } from './store';
 import { createTray, destroyTray, setTrayState, setWakeTray, type TrayState } from './tray';
+import { createDesktopWebTokenRepository } from './web-token';
 
 let mainWindow: BrowserWindow | null = null;
 let trayInstance: Tray | null = null;
@@ -57,7 +57,7 @@ async function loadSpaUrl(win: BrowserWindow, port: number): Promise<void> {
   // stored web-token. Read (or create) that token and set the cookie directly,
   // every load, so it can never go stale. We avoid /auth/exchange because it
   // rotates the token and relies on Electron persisting a 302 Set-Cookie.
-  const tokens = new WebTokenRepository({ dataDir: getDataDir(), storage: new FsStorage() });
+  const tokens = createDesktopWebTokenRepository(getDataDir(), new FsStorage());
   const token = await tokens.getOrCreate();
   await session.defaultSession.cookies.set({
     url: baseUrl,

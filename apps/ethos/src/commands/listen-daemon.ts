@@ -75,10 +75,21 @@ export function protocolState(
  * the token is minted, stored, and chmod'd. Imported lazily so `listen doctor`
  * does not pay for the web-api module graph.
  */
-export async function authCookie(storage: Storage): Promise<{ authCookie?: string }> {
+export async function authCookie(
+  storage: Storage,
+  // Test seam; defaults to the real `ETHOS_WEB_TOKEN` resolution.
+  resolveEnv?: () => string | undefined,
+): Promise<{ authCookie?: string }> {
   try {
-    const { WebTokenRepository } = await import('@ethosagent/web-api');
-    const token = await new WebTokenRepository({ dataDir: ethosDir(), storage }).getOrCreate();
+    const { WebTokenRepository, resolveWebTokenEnv } = await import('@ethosagent/web-api');
+    // The server ignores the token file when ETHOS_WEB_TOKEN is set
+    // (web-token.repository.ts), so the client must resolve the same token.
+    const envToken = resolveEnv ? resolveEnv() : resolveWebTokenEnv();
+    const token = await new WebTokenRepository({
+      dataDir: ethosDir(),
+      storage,
+      ...(envToken !== undefined ? { envToken } : {}),
+    }).getOrCreate();
     return { authCookie: `ethos_auth=${token}` };
   } catch {
     // No token yet (the web-api has never run here). The upgrade will be

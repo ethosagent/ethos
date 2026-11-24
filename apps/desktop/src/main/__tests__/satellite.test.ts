@@ -44,6 +44,7 @@ vi.mock('electron', () => ({
 let tokenReadThrows = false;
 
 vi.mock('@ethosagent/web-api', () => ({
+  resolveWebTokenEnv: () => undefined,
   WebTokenRepository: class {
     async getOrCreate() {
       if (tokenReadThrows) throw new Error('token store is unreadable');
