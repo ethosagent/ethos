@@ -29,6 +29,10 @@
       "import": "./src/keyless-probe.ts",
       "types": "./src/keyless-probe.ts"
     },
+    "./nodes": {
+      "import": "./src/nodes.ts",
+      "types": "./src/nodes.ts"
+    },
     "./types": {
       "import": "./src/types.ts",
       "types": "./src/types.ts"
@@ -56,6 +60,7 @@
     "@ethosagent/execution-docker": "workspace:*",
     "@ethosagent/execution-pi": "workspace:*",
     "@ethosagent/execution-local": "workspace:*",
+    "@ethosagent/execution-node": "workspace:*",
     "@ethosagent/execution-ssh": "workspace:*",
     "@ethosagent/export-otlp": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",

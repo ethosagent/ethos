@@ -95,6 +95,7 @@ import {
   seedAllSystemJobs,
   systemJobProblem,
 } from '@ethosagent/wiring';
+import { processNodeHub } from '@ethosagent/wiring/nodes';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
@@ -1477,6 +1478,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // path on the same upgrade router; unattached it never upgrades at all, so
   // the takeover panel would sit on a socket that only ever errors.
   created.takeoverSocket.attach(server);
+  created.nodeSocket?.attach(server);
   console.log('');
   const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
   console.log(`ethos web UI listening on http://${displayHost}:${port}`);
@@ -2305,6 +2307,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     ...(pluginLoader ? { pluginLoader } : {}),
     ...(notificationRouter ? { notificationRouter } : {}),
     apiKeys,
+    ...(config.nodes?.enabled === true ? { nodes: { hub: processNodeHub() } } : {}),
     idempotencyStore,
     // The screencast takeover lane's session registry (B3). `ethos serve` and
     // `ethos boot` run the browser tools in THIS process, so the session

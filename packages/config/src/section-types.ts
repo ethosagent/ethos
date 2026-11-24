@@ -167,3 +167,22 @@ export const CURRENT_ETHOS_CONFIG_SCHEMA_VERSION = 1;
 /** The personality `parseConfigYaml` falls back to when `personality:` is
  *  absent — surfaced by `resolveEffectiveConfig` as source `default`. */
 export const DEFAULT_PERSONALITY_ID = 'researcher';
+
+/** Scale-to-zero idle watcher (moved out of config-types.ts's inline member type, size ratchet). */
+export interface IdleWatcherConfig {
+  /** Arming gate 1. Default false — the watcher is not even constructed. */
+  enabled?: boolean;
+  /** Arming gate 5 — consecutive idle duration required before exit fires. */
+  idleThresholdMs?: number;
+  /** Arming gate 4 — no evaluation for this long after boot. */
+  startupCooldownMs?: number;
+  /** How often the idle predicate is sampled. */
+  checkIntervalMs?: number;
+  /** Arming gate 3 — operator attestation that a wake path exists. */
+  wakePathConfirmed?: boolean;
+}
+
+export interface NodesConfig {
+  /** Operator switch for laptop tool nodes (plan laptop-tool-node D18). Default false: no /node routes, no node_* tools. */
+  enabled?: boolean;
+}

@@ -149,7 +149,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
     - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 691, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 664, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 136, contains: "export function checkMessage" }
@@ -178,7 +178,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 151 packages: 11 at Tier 0, 28 at Tier 1, 112 at Tier 2.
+# apps/ carries a tier. 152 packages: 11 at Tier 0, 29 at Tier 1, 112 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -385,6 +385,14 @@ tiers:
     package: "@ethosagent/execution-ssh"
     tier: 1
     assigned: 2026-09-05
+
+  # Tier 1: sits on a trust boundary. The laptop runs what a remote server
+  # asks, and NodeGuard (src/node-guard.ts) is its admission check — tool,
+  # personality, path, replay and approval — before anything executes.
+  extensions/execution-node:
+    package: "@ethosagent/execution-node"
+    tier: 1
+    assigned: 2026-11-24
 
   extensions/gateway:
     package: "@ethosagent/gateway"

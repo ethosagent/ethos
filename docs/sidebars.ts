@@ -186,6 +186,7 @@ const sidebars: SidebarsConfig = {
               '/web-path',
               '/bearer-token',
             ]),
+            'using/how-to/connect-a-laptop-node',
             'using/how-to/migrate-from-openclaw',
           ],
         },

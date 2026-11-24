@@ -139,4 +139,15 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     const body = (await denied.json()) as { code: string; error: string };
     expect(body.error).toMatch(/scope "sessions:read"/);
   });
+
+  // `node:host` is a route-level scope (the laptop-node socket), like `cron`:
+  // it has no SCOPE_MAP entry, so it grants nothing on any RPC method.
+  it('a node:host-only key is 403 on sessions.list', async () => {
+    app.post('/rpc/sessions/list', (c) => c.json({ ok: true }));
+    const res = await call('/rpc/sessions/list', await key(['node:host']));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('FORBIDDEN');
+    expect(body.error).toMatch(/scope "sessions:read"/);
+  });
 });

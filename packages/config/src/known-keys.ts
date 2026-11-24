@@ -125,6 +125,7 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'modelRouting.',
   'models.',
   'nightlyPass.',
+  'nodes.',
   'notifications.',
   'pauseClockCorrection.',
   'pauseLifecycle.',

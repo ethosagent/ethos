@@ -49,6 +49,7 @@ export const srcAliases = {
   '@ethosagent/execution-local': resolve('./extensions/execution-local/src'),
   '@ethosagent/execution-docker': resolve('./extensions/execution-docker/src'),
   '@ethosagent/execution-ssh': resolve('./extensions/execution-ssh/src'),
+  '@ethosagent/execution-node': resolve('./extensions/execution-node/src'),
   '@ethosagent/oauth': resolve('./extensions/oauth/src'),
   '@ethosagent/oauth-core': resolve('./packages/oauth-core/src'),
   '@ethosagent/storage-crypto': resolve('./extensions/storage-crypto/src'),

@@ -1728,10 +1728,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const attachWebSockets = (target: Awaited<ReturnType<typeof listenWeb>>['server']): void => {
     created.voiceSocket.attach(target);
     created.satelliteSocket.attach(target);
-    // The browser-takeover screencast lane. Same upgrade router as the two
-    // above, and it must be re-attached on a rebind for the same reason they
-    // are — a lane bound to the previous server is a lane nobody can reach.
+    // Takeover + node lanes: same router, re-attached on a rebind like the two above.
     created.takeoverSocket.attach(target);
+    created.nodeSocket?.attach(target);
   };
   /** The address ASKED for. Not the same as the one landed on — the ladder may
    *  have moved the port — and it is the requested one a rebind diffs against. */

@@ -76,6 +76,7 @@ Errors land on stderr formatted by `formatError(toEthosError(err))` and are appe
 | <a id="ethos-acp"></a>[ethos acp](cli/gateway-and-serve.md#ethos-acp) | [CLI: gateway, listen, cron, serve and status commands](cli/gateway-and-serve.md) |
 | <a id="ethos-serve"></a>[ethos serve](cli/gateway-and-serve.md#ethos-serve) | [CLI: gateway, listen, cron, serve and status commands](cli/gateway-and-serve.md) |
 | <a id="ethos-status"></a>[ethos status](cli/gateway-and-serve.md#ethos-status) | [CLI: gateway, listen, cron, serve and status commands](cli/gateway-and-serve.md) |
+| <a id="ethos-node"></a>[ethos node](cli/gateway-and-serve.md#ethos-node) | [CLI: gateway, listen, cron, serve and status commands](cli/gateway-and-serve.md) |
 | <a id="ethos-batch"></a>[ethos batch](cli/evolve-and-learn.md#ethos-batch) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-eval"></a>[ethos eval](cli/evolve-and-learn.md#ethos-eval) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-evolve"></a>[ethos evolve](cli/evolve-and-learn.md#ethos-evolve) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |

@@ -17,7 +17,7 @@ This page is the list. It has three parts: the **tiers** (which code is held to 
 
 ### The three tiers {#tiers}
 
-Tiers are assigned **per workspace package**, committed and dated in [`.architecture-state.yaml`](https://github.com/ethosagent/ethos/blob/main/.architecture-state.yaml) at the repo root. That file is authoritative for any individual package; the roster below names the members so you can read the shape without opening it. 151 packages: 11 at Tier 0, 28 at Tier 1, 112 at Tier 2.
+Tiers are assigned **per workspace package**, committed and dated in [`.architecture-state.yaml`](https://github.com/ethosagent/ethos/blob/main/.architecture-state.yaml) at the repo root. That file is authoritative for any individual package; the roster below names the members so you can read the shape without opening it. 152 packages: 11 at Tier 0, 29 at Tier 1, 112 at Tier 2.
 
 The assignment is committed **before** any report arrives. A tier decided in the same week a report lands against that module is evidence of nothing, and a reporter reading `git log` can say so with a timestamp.
 
@@ -36,7 +36,7 @@ The per-file lists for core and wiring are in the sidecar under `kernel_paths`. 
 | Group | Modules |
 |---|---|
 | Ingress | `gateway` and the seven adapters — `platform-discord`, `platform-email`, `platform-meeting`, `platform-slack`, `platform-telegram`, `platform-voice`, `platform-whatsapp` |
-| Execution | `tools-terminal`, `tools-code`, `execution-docker`, `execution-local`, `execution-ssh`, `execution-pi`, `execution-coding-agents` |
+| Execution | `tools-terminal`, `tools-code`, `execution-docker`, `execution-local`, `execution-ssh`, `execution-node`, `execution-pi`, `execution-coding-agents` |
 | Third-party code | `tools-mcp`, `skills`, `skill-evolver`, `plugin-loader` |
 | Network surface | `apps/web-api` |
 | Plugin host | `plugin-host`: the parent end of the host boundary. It authorises each secret ref per call (`authorizeSecretRef`, `extensions/plugin-host/src/secrets.ts`; pinned by `isolation-boundary.test.ts`). Host mode is **not a sandbox**: without `plugins.host.sandbox: auto` the host can still read vault files on disk, and a test pins that limitation |
@@ -138,7 +138,7 @@ Thirteen guarantees. Each carries five fields, and all five are required: a **cl
 ### G-WATCH — Watcher {#g-watch}
 
 - **Claim.** A separate observer in the same process (`createWatcherTap`) reads the agent's tool events and halts the turn on rate-limit (counted **across turns**), token-budget, compounding-error, and suspicious-sequence rules. Its rules do not depend on the per-call checks getting the classification right.
-- **Enforced at.** [`rules.ts:20`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L20) (`rateLimitRule`), [`:79`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L79) (`tokenBudgetRule`), [`:110`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L110) (`compoundingErrorRule`), [`:202`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L202) (`suspiciousSequenceRule`), composed at [`:246`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L246); constructed in wiring at [`build-agent-loop.ts:691`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/build-agent-loop.ts#L691).
+- **Enforced at.** [`rules.ts:20`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L20) (`rateLimitRule`), [`:79`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L79) (`tokenBudgetRule`), [`:110`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L110) (`compoundingErrorRule`), [`:202`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L202) (`suspiciousSequenceRule`), composed at [`:246`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L246); constructed in wiring at [`build-agent-loop.ts:664`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/build-agent-loop.ts#L664).
 - **Explicitly not covered.** **It observes and halts; it does not prevent the first bad call.** By construction it fires on a pattern, and a pattern needs at least one instance. A single catastrophic call inside budget is exactly what it does not catch. The suspicious-sequence rule fires when a credential-shaped read is followed, within the last four tool calls, by an exfiltration-shaped tool (`isExfilShapedTool`, [`rules.ts:193`](https://github.com/ethosagent/ethos/blob/main/packages/safety/watcher/src/rules.ts#L193)) or any `mcp__*` call; the name list is drift-gated by `packages/wiring/src/__tests__/watcher-exfil-tool-names.test.ts`.
 - **Verify it yourself.** `packages/safety/watcher/src/__tests__/`; the `halt` events in `observability.db` after tripping a rule deliberately.
 - **If you need more.** Per-turn budgets you set yourself, and the approval gate for the first-call case the watcher structurally cannot cover.

@@ -2,12 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FsContentStore } from '@ethosagent/cas-fs';
-import {
-  backgroundDefaults,
-  decisionToolEnabled,
-  type ResolvedDecisionsConfig,
-  resolveDecisionsConfig,
-} from '@ethosagent/config';
+import { backgroundDefaults, resolveDecisionsConfig } from '@ethosagent/config';
 import {
   AgentLoop,
   ApproverDecisionSinks,
@@ -53,7 +48,6 @@ import {
   MeshProxyReconciler,
 } from '@ethosagent/tools-delegation';
 import { createMemoryTools } from '@ethosagent/tools-memory';
-import { PROPOSE_SELF_AMENDMENT_TOOL } from '@ethosagent/tools-personality-design';
 import { createVisionTools } from '@ethosagent/tools-vision';
 import { createAgentConsultTool } from '@ethosagent/tools-voice';
 import { createWebTools } from '@ethosagent/tools-web';
@@ -109,6 +103,8 @@ import {
   resolveSmallWindowMode,
   scaleHistoryLimit,
 } from './model-catalog';
+import { NODE_TOOL_NAMES } from './nodes';
+import { buildPersonalityToolExclude } from './personality-tool-exclude';
 import { projectContextFor, resolveTurnWorkdir } from './project-context-floor';
 import { registerAcpJobRunners } from './register-acp-job-runners';
 import { createSmallWindowResolver } from './small-window-resolver';
@@ -140,6 +136,7 @@ import { buildVoiceStack } from './voice-stack';
 const APPROVER_DECISION_SINKS = new ApproverDecisionSinks();
 
 export type { JobAffinityOptions } from './job-affinity';
+export { buildPersonalityToolExclude } from './personality-tool-exclude';
 
 export interface BuildAgentLoopDeps {
   infra: InfrastructureResult;
@@ -301,30 +298,6 @@ export function shippedScopedStorageFactory(
       alwaysDeny: storageFs.defaultAlwaysDeny(stateDirs),
       stateDirs,
     });
-}
-
-/**
- * The loop's per-personality tool exclusion (`AgentLoopConfig.personalityToolExclude`).
- * Depends only on the personality, so tool definitions stay byte-stable per
- * personality. Always defined (plan personality-memory-boundary G2): it is the
- * union of
- *   - plan decision-tool D6/D13 — `decide` is visible only to a personality
- *     that picked the operator's decision model (`decisionToolEnabled`,
- *     @ethosagent/config); with no `decisions.*` there is no `decide` to hide;
- *   - `propose_self_amendment` is visible only to a personality whose toolset
- *     lists it. A personality with an undeclared toolset sees every other
- *     registered tool, so without this its tool list — and its cached prompt
- *     prefix — would change the day the tool was registered. The execute-time
- *     gate is the same list (`executeParallel`'s `excludeTools`). Pinned by
- *     packages/wiring/src/__tests__/amendment-exclude.test.ts.
- */
-export function buildPersonalityToolExclude(
-  decisions: Pick<ResolvedDecisionsConfig, 'provider'> | undefined,
-): (person: PersonalityConfig) => string[] {
-  return (person) => [
-    ...(decisions && !decisionToolEnabled(person.decisions, decisions) ? ['decide'] : []),
-    ...(person.toolset?.includes(PROPOSE_SELF_AMENDMENT_TOOL) ? [] : [PROPOSE_SELF_AMENDMENT_TOOL]),
-  ];
 }
 
 /**
@@ -800,7 +773,10 @@ export async function buildAgentLoop(
         };
       })()
     : undefined;
-  const personalityToolExclude = buildPersonalityToolExclude(decisions);
+  const personalityToolExclude = buildPersonalityToolExclude(
+    decisions,
+    config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : undefined,
+  );
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
   const tierRouter = decisionSites?.tierRouter;

@@ -45,6 +45,7 @@ import {
   notPermittedRefusal,
   type ReplayAndResolveResult,
 } from '@ethosagent/wiring';
+import type { NodeHub } from '@ethosagent/wiring/nodes';
 import type { Hono } from 'hono';
 import {
   createTakeoverSocket,
@@ -66,6 +67,9 @@ import { createPendingLoop } from './lib/pending-loop';
 import { AUTH_COOKIE } from './middleware/auth';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
 import { createCookieVerifier } from './middleware/cookie-verifier';
+import { createNodeLane } from './node/node-lane';
+import type { NodeSocket } from './node/node-socket';
+import { createPassiveMcpManager, createPassiveScheduler } from './passive-stubs';
 import { AllowlistRepository } from './repositories/allowlist.repository';
 import {
   ConfigRepository,
@@ -428,6 +432,8 @@ export interface CreateWebApiOptions {
    * against the same `sessions.db` file the session store uses.
    */
   apiKeys?: ApiKeyAdminStore;
+  /** Laptop tool nodes (plan laptop-tool-node D2). Requires `apiKeys`; absent → no /node routes. */
+  nodes?: { hub: NodeHub };
   /**
    * Returns currently registered team names for `GET /v1/models`. Boot
    * code typically scans `<dataDir>/teams/*.yaml`. When omitted, the
@@ -704,6 +710,8 @@ export interface CreateWebApiResult {
    * from the chat card only.
    */
   takeoverSocket: TakeoverSocket;
+  /** The laptop-node lane, when `nodes` was passed. Hosts call `nodeSocket?.attach(server)` beside the satellite lane. */
+  nodeSocket?: NodeSocket;
   /**
    * Force-settle every pending tool approval as a deny (audited). Boot code
    * calls this from its shutdown `cleanup()` closure before `process.exit`:
@@ -1935,6 +1943,16 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   };
   if (!loopPending) wireMainLoop(agentLoop, opts.notificationRouter);
 
+  const nodeLane =
+    opts.nodes && opts.apiKeys
+      ? createNodeLane({
+          hub: opts.nodes.hub,
+          apiKeys: opts.apiKeys,
+          ...(opts.trustProxy !== undefined ? { trustProxy: opts.trustProxy } : {}),
+        })
+      : undefined;
+  if (nodeLane) disposers.push('node lane', () => nodeLane.close());
+
   // The screencast takeover lane (B3). Same cookie, same Origin policy and the
   // same upgrade router as the voice lane. Mounted unconditionally: a lane the
   // registry cannot resolve refuses with a sentence naming the reason, and a
@@ -2183,6 +2201,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     // and reviewable, and mounts it BEFORE the static `/*` catch-all.
     routeModules: [
       ...(opts.routeModules ?? []),
+      ...(nodeLane ? [nodeLane.routeModule] : []),
       {
         basePath: '/documents',
         router: documentsRoutes({ documents: documentsService }),
@@ -2263,6 +2282,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     voiceSocket,
     satelliteSocket,
     takeoverSocket,
+    ...(nodeLane ? { nodeSocket: nodeLane.socket } : {}),
     forceSettleApprovals: () => approvalsService.forceSettleAll(),
     closeChat: () => chatService.close(),
     pendingApprovalCount: () => approvalsService.pendingCount(),
@@ -2328,54 +2348,6 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       return { recipients };
     },
   };
-}
-
-/**
- * Stand-in for the CronScheduler when no real one is wired (e.g. tests,
- * ACP-only deployments). File-backed reads still work via the
- * scheduler's own `listJobs`/`getJob`; writes/runs throw a clear error
- * so the surface can render an actionable message.
- */
-function createPassiveScheduler(): CronScheduler {
-  const notConfigured = () => {
-    throw new Error('Cron scheduler not configured for this server.');
-  };
-  return {
-    listJobs: async () => [],
-    getJob: async () => null,
-    createJob: async () => notConfigured(),
-    deleteJob: async () => notConfigured(),
-    pauseJob: async () => notConfigured(),
-    resumeJob: async () => notConfigured(),
-    runJobNow: async () => notConfigured(),
-    listRuns: async () => [],
-    readRunOutput: async () => notConfigured(),
-    start: () => {},
-    stop: () => {},
-  } as unknown as CronScheduler;
-}
-
-/**
- * Stand-in for the McpManager when no real one is wired (e.g. tests,
- * deployments where MCP isn't configured). addServer and removeServer
- * throw a clear error; listServers returns empty.
- */
-function createPassiveMcpManager(): McpManager {
-  const notConfigured = () => {
-    throw new Error('McpManager not configured for this server.');
-  };
-  return {
-    connect: async () => {},
-    disconnect: async () => {},
-    shutdown: async () => {},
-    getTools: () => [],
-    getToolsForPersonality: async () => [],
-    listServers: () => [],
-    addServer: async () => {},
-    removeServer: async () => notConfigured(),
-    invalidatePersonalityClients: () => {},
-    reconnectPersonality: async () => {},
-  } as unknown as McpManager;
 }
 
 export { type ChatDefaults, ChatService } from './features/chat/service';

@@ -165,6 +165,21 @@ ethos status
 ethos status --json
 ```
 
+## ethos node {#ethos-node}
+
+Connect this machine as a tool node for a server, or manage nodes from the server. Source: [`apps/ethos/src/commands/node.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/node.ts). Task guide: [Connect a laptop as a tool node](../../how-to/connect-a-laptop-node.md).
+
+Synopsis: `ethos node connect <url> [--root <path>[:ro]]... [--name <n>] [--personality <id>]... [--allow-terminal|--no-allow-terminal] [--writes ask|auto] [--allow-unattended|--no-allow-unattended] [--pair] | list [--url <server>] [--json] | approve <code> [--url <server>] | revoke <name> [--json]`
+
+| Subcommand | Runs on | Description |
+|---|---|---|
+| `connect <url>` | laptop | Pair if no key is stored, then hold one outbound socket and run approved tool calls. Reconnects with a 1 s to 60 s backoff; stops on 401 or a replaced connection (exit `1`). Refuses `ws://` and `http://` to any non-loopback host. |
+| `list` | server | Nodes and pending pairing codes, read from the running web API (`GET /node/admin/list`). |
+| `approve <code>` | server | Approve a pairing code (`POST /node/admin/approve`). `404` is an unknown code, `410` an expired one, `409` a laptop that hung up before approval (its key is revoked). |
+| `revoke <name>` | server | Revoke every live `node:<name>` key. A live connection closes within 25 s. Unknown name exits `1` (`NOT_FOUND`). |
+
+`list` and `approve` send the web token (`ETHOS_WEB_TOKEN`, else the local token file) as the `ethos_auth` cookie, with the first non-wildcard `ETHOS_ALLOWED_ORIGINS` entry as `Origin` when one is set; a 401 or 403 exits `1` as `UNAUTHORIZED` with the server's message; `--url` defaults to `http://127.0.0.1:<web port>`.
+
 ## See also {#see-also}
 
 - [CLI reference](../cli.md): the index of every section and its page.

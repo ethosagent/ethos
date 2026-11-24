@@ -64,6 +64,7 @@ import {
   resolveCompactionGate,
 } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
+import { isProviderAllowed } from './provider-allowed';
 import { registerBuiltinProviders } from './register-builtin-providers';
 import { reportSessionRowIssue } from './session-row-issue-sink';
 import { describeSessionsDbHolders } from './sessions-repair/holders';
@@ -147,6 +148,8 @@ export interface WiringProviderConfig {
 }
 
 export interface WiringConfig {
+  /** Laptop tool nodes (mapped from EthosConfig.nodes; plan laptop-tool-node D18). */
+  nodes?: { enabled?: boolean };
   provider: string;
   model: string;
   apiKey: string;
@@ -972,6 +975,7 @@ export {
   declaredWorkdirProjectContext,
   projectContextAtStartup,
 } from './project-context-floor';
+export { isProviderAllowed } from './provider-allowed';
 // Lane 1(b/c/e) + D8 — the shared static-floor measurement and window-scaled
 // result-budget arithmetic (consumed by build-agent-loop, `ethos bench
 // context`, and — later — Lane 6's fit verdict).
@@ -1205,19 +1209,6 @@ export async function createLLM(
     child: () => noop,
   };
   return createLLMFromRegistry(registry, config, log ?? noop, undefined, windowProbe);
-}
-
-/**
- * §4.B trust gate — default-deny for plugin-contributed LLM providers.
- * Built-in providers (no `/` in name) are always allowed.
- * Plugin providers (`pluginId/name`) require `pluginId` in the allowlist.
- * When `allowedPlugins` is undefined, all providers are allowed (backward compat).
- */
-export function isProviderAllowed(providerName: string, allowedPlugins?: string[]): boolean {
-  if (!allowedPlugins) return true;
-  if (!providerName.includes('/')) return true;
-  const pluginId = providerName.split('/')[0] ?? '';
-  return allowedPlugins.includes(pluginId);
 }
 
 /**

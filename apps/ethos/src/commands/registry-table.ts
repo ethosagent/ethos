@@ -155,6 +155,11 @@ export const COMMAND_TABLE: readonly CommandTableEntry[] = [
   { name: 'keys', group: 'Other', description: 'Manage the API-key rotation pool' },
   { name: 'secrets', group: 'Other', description: 'Manage the local secrets vault' },
   { name: 'api-key', group: 'Other', description: 'Manage web API keys' },
+  {
+    name: 'node',
+    group: 'Agents',
+    description: 'Connect this machine as a tool node, or approve/revoke nodes on a server',
+  },
   { name: 'fallback', group: 'Other', description: 'Manage the provider fallback chain' },
   {
     name: 'systemd-unit',

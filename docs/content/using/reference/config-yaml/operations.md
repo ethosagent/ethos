@@ -3,7 +3,7 @@ title: "config.yaml: logs, backup and trust keys"
 description: "config.yaml log rotation, backup and trust keys."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-24
 ---
 
 ## Synopsis {#synopsis}
@@ -115,3 +115,19 @@ Notes:
 ## See also {#see-also}
 
 - [config.yaml reference](../config-yaml.md): the index of every section and its page.
+
+## nodes {#nodes}
+
+Type: object · Default: absent (off)
+
+Operator switch for [laptop tool nodes](../../how-to/connect-a-laptop-node.md). Read in [`packages/config/src/builders/nodes.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/builders/nodes.ts); pinned by `packages/config/src/__tests__/config-nodes.test.ts`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `nodes.enabled` | boolean | `false` | Only a literal `true` or `false` is read; any other value leaves the switch off. |
+
+When `true`, a process that runs the web API (`ethos boot`, `ethos serve`) mounts `GET /node/ws` and `GET /node/pair` (node sockets), the cookie-only `/node/admin` routes, and registers `node_read_file`, `node_write_file`, `node_patch_file`, `node_search_files`, `node_terminal` and `node_list`. A personality can use them only if its `toolset.yaml` lists them. When absent or `false`, no route is mounted and no `node_*` tool exists (pinned by `packages/wiring/src/__tests__/compose-tools-node.test.ts`). A node authenticates with an API key scoped `node:host`, minted by pairing.
+
+```yaml
+nodes.enabled: true
+```

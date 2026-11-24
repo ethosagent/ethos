@@ -32,7 +32,9 @@ import type {
   AuxiliaryVisionConfig,
   AuxiliaryWebConfig,
   AwsConfig,
+  IdleWatcherConfig,
   ModelCatalogConfig,
+  NodesConfig,
   QuickCommandConfig,
   TelemetryConfig,
   WebConfig,
@@ -1468,18 +1470,12 @@ export interface EthosConfig {
    *   idleWatcher.checkIntervalMs: 15000
    *   idleWatcher.wakePathConfirmed: false
    */
-  idleWatcher?: {
-    /** Arming gate 1. Default false — the watcher is not even constructed. */
-    enabled?: boolean;
-    /** Arming gate 5 — consecutive idle duration required before exit fires. */
-    idleThresholdMs?: number;
-    /** Arming gate 4 — no evaluation for this long after boot. */
-    startupCooldownMs?: number;
-    /** How often the idle predicate is sampled. */
-    checkIntervalMs?: number;
-    /** Arming gate 3 — operator attestation that a wake path exists. */
-    wakePathConfirmed?: boolean;
-  };
+  idleWatcher?: IdleWatcherConfig;
+  /**
+   * Laptop tool nodes (plan laptop-tool-node D18). Off unless enabled.
+   * Config format: nodes.enabled: true
+   */
+  nodes?: NodesConfig;
   /**
    * Pause-clock correction (plan/phases/clock-tolerance-pass.md §7) — the
    * resume-side twin of `idleWatcher`. On a snapshotting host the guest's wall

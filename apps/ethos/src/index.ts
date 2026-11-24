@@ -45,6 +45,7 @@ import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
 import { runMigrate } from './commands/migrate-models';
 import { runModels } from './commands/models';
+import { runNode } from './commands/node';
 import { runOutbox } from './commands/outbox';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
@@ -71,6 +72,7 @@ import { runWhy } from './commands/why';
 import { appendErrorLog, errorLogPath } from './error-log';
 import { writeJson, writeJsonError } from './json-output';
 import { CliSubcommandRegistry } from './lib/cli-subcommand-registry';
+import { parseCliFlags } from './lib/parse-cli-flags';
 import { loadRequiredConfig } from './managed-mode';
 import { getSecretsResolver, getStorage } from './wiring';
 
@@ -80,7 +82,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | node | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -835,6 +837,11 @@ try {
 
     case 'api-key': {
       await runApiKey(args.slice(1));
+      break;
+    }
+
+    case 'node': {
+      process.exitCode = await runNode(args.slice(1));
       break;
     }
 
@@ -1727,22 +1734,6 @@ async function runPluginsStatus(): Promise<void> {
     );
     console.log();
   }
-}
-
-function parseCliFlags(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg?.startsWith('--')) {
-      const key = arg.slice(2);
-      const val = argv[i + 1];
-      if (val && !val.startsWith('--')) {
-        out[key] = val;
-        i++;
-      }
-    }
-  }
-  return out;
 }
 
 async function getBootCliRegistry(): Promise<CliSubcommandRegistry> {

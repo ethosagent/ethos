@@ -23,6 +23,8 @@ import { z } from 'zod';
 // the same way `chat` gates the whole `/v1/*` surface — a plain bearer-checked
 // route, not an RPC method, so it has no SCOPE_MAP entry (dual-auth.ts's
 // SCOPE_MAP is keyed by oRPC path and only applies to `/rpc/*`/`/sse/*`).
+// `node:host` gates the laptop-node socket `GET /node/ws` (apps/web-api/src/node/node-socket.ts) the
+// way `cron` gates `/cron/fire` — a route-level scope with no SCOPE_MAP entry.
 //
 // The fixed vocabulary. Every surface-gating scope is a member here; only the
 // `mcp:<id>` family below is open-ended. Kept as its own exported enum because
@@ -40,6 +42,7 @@ export const ApiKeyStaticScopeSchema = z.enum([
   'events:subscribe',
   'metrics:read',
   'cron',
+  'node:host',
 ]);
 export type ApiKeyStaticScope = z.infer<typeof ApiKeyStaticScopeSchema>;
 

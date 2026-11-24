@@ -127,8 +127,10 @@ import {
   learningSubmitPort,
 } from './learning-pipeline';
 import { createTeamMemoryProvider } from './memory-backend';
+import { loadMessagingAllowlist } from './messaging-allowlist';
 import { MODEL_CATALOG } from './model-catalog';
 import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
+import { processNodeHub, registerNodeTools } from './nodes';
 import {
   type ContainerizedDetectionInput,
   constitutionForbidsLocal,
@@ -169,33 +171,6 @@ export const platformPrompts = new Map<string, string>([
   [whatsappId, whatsappPrompt],
   ['web', WEB_PROMPT],
 ]);
-
-// ---------------------------------------------------------------------------
-// Messaging allowlist loader
-// ---------------------------------------------------------------------------
-
-/**
- * Read `<dataDir>/messaging.json` and return a `Map<personalityId, targets[]>`.
- * Missing file or parse failure → empty map (everything stays default-deny).
- */
-export async function loadMessagingAllowlist(dataDir: string): Promise<Map<string, string[]>> {
-  const storage = new FsStorage();
-  const path = join(dataDir, 'messaging.json');
-  const raw = await storage.read(path);
-  if (!raw) return new Map();
-  try {
-    const data = JSON.parse(raw) as Record<string, unknown>;
-    const out = new Map<string, string[]>();
-    for (const [personalityId, value] of Object.entries(data)) {
-      if (!Array.isArray(value)) continue;
-      const targets = value.filter((t): t is string => typeof t === 'string');
-      out.set(personalityId, targets);
-    }
-    return out;
-  } catch {
-    return new Map();
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Team memory helpers
@@ -1518,6 +1493,7 @@ export async function composeAllTools(
   tools.register(createRedditSearchTool());
   tools.register(createRedditThreadTool());
   for (const tool of createTerminalTools({ route: execRoute })) tools.register(tool);
+  if (config.nodes?.enabled === true) registerNodeTools(tools, processNodeHub(log)); // D18
   const assetDirFor = createAssetDirResolver((id) => personalities.get(id), {
     ethosHome: dataDir,
     cwd: wiringCtx.workingDir,

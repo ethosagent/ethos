@@ -160,3 +160,35 @@ describe('ApiKeyScopeSchema — `mcp:<personality-id>`', () => {
     expect(parsed.success).toBe(false);
   });
 });
+
+// laptop-tool-node — `node:host` gates the laptop-node socket `GET /node/ws`
+// (apps/web-api/src/node/node-socket.ts) the way `cron` gates `/cron/fire`.
+describe('ApiKeyScopeSchema — node:host', () => {
+  it('accepts `node:host`', () => {
+    expect(ApiKeyScopeSchema.safeParse('node:host').success).toBe(true);
+    expect(ApiKeyStaticScopeSchema.safeParse('node:host').success).toBe(true);
+  });
+
+  it('lists `node:host` in ApiKeyStaticScopeSchema.options', () => {
+    expect(ApiKeyStaticScopeSchema.options).toContain('node:host');
+  });
+
+  it('round-trips a pairing-minted node key through ApiKeyMetadataSchema', () => {
+    const parsed = ApiKeyMetadataSchema.safeParse({
+      id: 'key_3',
+      prefix: 'sk-ethos-ghi',
+      name: 'node:laptop',
+      scopes: ['node:host'],
+      allowedOrigins: [],
+      createdAt: new Date().toISOString(),
+      lastUsed: null,
+      revokedAt: null,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects `node:` alone and `node:hosts`', () => {
+    expect(ApiKeyScopeSchema.safeParse('node:').success).toBe(false);
+    expect(ApiKeyScopeSchema.safeParse('node:hosts').success).toBe(false);
+  });
+});

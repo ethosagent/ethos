@@ -1,7 +1,7 @@
 // Raw `node:fs` (`realpathSync`, `lstatSync`, `readlinkSync`) is the storage-fs
 // carve-out: this package IS the filesystem adapter, and a realpath is a
 // filesystem fact no `Storage` method answers.
-import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
+import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { type DefinitionWriteFloor, personalityDefinitionWriteFloor } from '@ethosagent/types';
@@ -283,6 +283,21 @@ export function realPathOfLongestExistingAncestor(path: string): string | null {
     cursor = parent;
   }
   return null;
+}
+
+/**
+ * Whether `path` names an existing directory (following symlinks). Missing, unreadable or
+ * non-directory paths are `false`. Lives here so callers outside the storage carve-outs need no
+ * raw `node:fs` (apps/ethos/src/__tests__/no-raw-fs.test.ts); pinned by
+ * __tests__/sensitive-paths-isdir.test.ts.
+ */
+export function isExistingDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    // ENOENT/ENOTDIR/EACCES: not a usable directory, the caller refuses.
+    return false;
+  }
 }
 
 /** A SQLite database and the two side files WAL mode keeps beside it. */

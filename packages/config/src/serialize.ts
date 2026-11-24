@@ -9,6 +9,7 @@ import { renderModelRegistry } from './model-registry-config';
 import { renderProviderChain } from './provider-chain';
 import { renderConfigLine } from './scalar';
 import { CURRENT_ETHOS_CONFIG_SCHEMA_VERSION } from './section-types';
+import { idleWatcherLines } from './serialize-sections';
 import {
   REALTIME_ENTRY_FIELDS,
   STT_ENTRY_FIELDS,
@@ -881,18 +882,8 @@ export function serializeConfigLines(config: EthosConfig): string[] {
     if (config.kanbanPoll.boardPath !== undefined)
       lines.push(`kanbanPoll.boardPath: ${config.kanbanPoll.boardPath}`);
   }
-  if (config.idleWatcher) {
-    const iw = config.idleWatcher;
-    if (iw.enabled !== undefined) lines.push(`idleWatcher.enabled: ${iw.enabled}`);
-    if (iw.idleThresholdMs !== undefined)
-      lines.push(`idleWatcher.idleThresholdMs: ${iw.idleThresholdMs}`);
-    if (iw.startupCooldownMs !== undefined)
-      lines.push(`idleWatcher.startupCooldownMs: ${iw.startupCooldownMs}`);
-    if (iw.checkIntervalMs !== undefined)
-      lines.push(`idleWatcher.checkIntervalMs: ${iw.checkIntervalMs}`);
-    if (iw.wakePathConfirmed !== undefined)
-      lines.push(`idleWatcher.wakePathConfirmed: ${iw.wakePathConfirmed}`);
-  }
+  lines.push(...idleWatcherLines(config.idleWatcher));
+  if (config.nodes?.enabled !== undefined) lines.push(`nodes.enabled: ${config.nodes.enabled}`);
   if (config.pauseClockCorrection) {
     const pcc = config.pauseClockCorrection;
     if (pcc.enabled !== undefined) lines.push(`pauseClockCorrection.enabled: ${pcc.enabled}`);

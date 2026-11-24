@@ -546,8 +546,8 @@
       "memoryWrite": "c0006604f5737d8b44d85f88b2e7e1dca8ee223325727693ce2ef30333d8ea67"
     },
     "apiKeys": {
-      "create": "f537414546c3634bf8196610774257d6d05abaa66fcb646d5627a71ce1fb7a7e",
-      "list": "0996f472f3e67f4fd986f04d34eda7b26fe27907df873358971e9fb05b78c4e7",
+      "create": "a8d6ebcbd8b2b04e91e196e3f970f74780db0adfc4473bdc6738a8918fbf312d",
+      "list": "bb0bb2d703f361ab0e723c19143994b333b6a824c9ee5399f2c160d9c7351c6b",
       "revoke": "ec4e297b32dd5f11ecacc2fdc3fc54d1f6b1126e675b2c403cd9cdd6e9c4b4c5"
     },
     "meta": {
@@ -774,9 +774,9 @@
     "AmendmentRecordViewSchema": "b32b454fe92b9dc03f6266d0ef261610ea64007c3654880595425913bae5647f",
     "AmendmentReviewViewSchema": "69664896852196586c59a2731745572a9f6c0ac9c07689b9a11df99f0c546a96",
     "AmendmentStatusSchema": "5d40fcb02372afcfaf61d764ee4b5249b030e5ba1d90f7663e882d8f300e6c78",
-    "ApiKeyMetadataSchema": "ec1bbdef43dfa299c2f6b96f769fb435b83b120a5bc81ab0ccbe1a91b454213c",
-    "ApiKeyScopeSchema": "cdc678b09bddf1d332e3339826cab534851587c1c54bfc96d6a902f8fa896c5a",
-    "ApiKeyStaticScopeSchema": "5677d97880ede354dc9c73ba3e95afcc652f40054f5253d609b15400ee51f47c",
+    "ApiKeyMetadataSchema": "c5c16a77e070348e15cf2a1282ce7808491bafb31fdfdc92f89608815697fbb0",
+    "ApiKeyScopeSchema": "57dc90d2561be8c66a54d3b2945f359e4705b2d8dc1f71428af1f3fad05b8a0c",
+    "ApiKeyStaticScopeSchema": "7ec36e901b60dff95655d52f19f8de05b10c8e07098757fd7d1878edf49545ac",
     "ApprovalLeaseSchema": "159c7d7274f01cf225bff723ff07a224b089200862cd1160198706058aa33814",
     "ApprovalRequestSchema": "868a6d6edda29eeafb823ced63a31c8a1688fd0d4b71822bb670e2b8cc778fe7",
     "ApprovalResolvedEventSchema": "df9b728cc9f346d9d96c49d01d07b4bbbdb8668c4a6ab248ebdf80634501080e",

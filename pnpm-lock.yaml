@@ -1198,6 +1198,25 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/execution-node:
+    dependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      ws:
+        specifier: ^8.22.0
+        version: 8.23.0
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
   extensions/execution-pi:
     dependencies:
       '@ethosagent/core':
@@ -2869,6 +2888,9 @@ importers:
       '@ethosagent/execution-local':
         specifier: workspace:*
         version: link:../../extensions/execution-local
+      '@ethosagent/execution-node':
+        specifier: workspace:*
+        version: link:../../extensions/execution-node
       '@ethosagent/execution-pi':
         specifier: workspace:*
         version: link:../../extensions/execution-pi

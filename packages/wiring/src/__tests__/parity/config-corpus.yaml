@@ -84,6 +84,7 @@ grounding.enabled: true
 grounding.kanban.checks: true
 idleWatcher.enabled: true
 idleWatcher.idleThresholdMs: 120000
+nodes.enabled: true
 kanban.maxInProgress: 5
 kanban.maxInProgressPerProfile: 2
 kanbanPoll.intervalMs: 7000

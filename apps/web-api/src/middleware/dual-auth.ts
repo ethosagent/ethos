@@ -2,7 +2,7 @@ import { hashApiKey } from '@ethosagent/session-sqlite';
 import { EthosError } from '@ethosagent/types';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { ApiKeyAuthStore } from './bearer-auth';
+import type { ApiKeyAuthStore, ApiKeyRecord } from './bearer-auth';
 import type { CookieVerifier } from './cookie-verifier';
 
 // Dual-auth middleware for the `/rpc/*` and `/sse/*` surfaces. Accepts
@@ -128,6 +128,120 @@ export function resolveScope(rpcPath: string): string | null {
   return nsMap[method] ?? null;
 }
 
+export interface VerifyBearerOptions {
+  /** The raw `Authorization` header value. */
+  header: string;
+  /** The request's `Origin` header, checked against the key's `allowedOrigins`. */
+  origin: string | undefined;
+  apiKeys: ApiKeyAuthStore;
+  /**
+   * The scope this request needs: a scope name or `COOKIE_ONLY` (always
+   * refused). A thunk is resolved only AFTER the key itself checks out, so a
+   * caller's own route refusals (thrown from it) rank below "your key is bad"
+   * — the order `dualAuth` has always had.
+   */
+  requiredScope: string | (() => string);
+  /** `touchLastUsed` throttle state — one map per mounted surface. */
+  lastTouchAt: Map<string, number>;
+}
+
+/**
+ * sha256 of the `sk-ethos-` secret in an `Authorization: Bearer` header, or
+ * null. Same hash `findByHash` reads.
+ */
+export function hashBearerHeader(header: string): string | null {
+  if (!header.startsWith(BEARER_PREFIX)) return null;
+  const secret = header.slice(BEARER_PREFIX.length).trim();
+  if (!secret.startsWith(SECRET_PREFIX)) return null;
+  return hashApiKey(secret);
+}
+
+/**
+ * THE bearer API-key check outside `/v1/*`. Two callers, one enforcer:
+ * `dualAuth` below (RPC and SSE) and the node-socket upgrade. In order: the
+ * Bearer scheme, the `sk-ethos-` prefix, the key row by `hashApiKey`
+ * (`SqliteApiKeyStore.findByHash` returns no revoked row, `revoked_at IS
+ * NULL`; `revokedAt` is re-checked here for any other store), the key's
+ * `allowedOrigins`, the scope, then a throttled `touchLastUsed`. Throws an
+ * `EthosError` coded UNAUTHORIZED (the credential is bad) or FORBIDDEN (it is
+ * good, but not for this). Pinned by ../__tests__/middleware/verify-bearer.test.ts.
+ */
+export async function verifyBearer(opts: VerifyBearerOptions): Promise<ApiKeyRecord> {
+  const { header, origin } = opts;
+  if (!header.startsWith(BEARER_PREFIX)) {
+    throw new EthosError({
+      code: 'UNAUTHORIZED',
+      cause: 'Authorization header must use the Bearer scheme.',
+      action: 'Use `Authorization: Bearer sk-ethos-...`.',
+    });
+  }
+
+  const secret = header.slice(BEARER_PREFIX.length).trim();
+  if (!secret.startsWith(SECRET_PREFIX)) {
+    throw new EthosError({
+      code: 'UNAUTHORIZED',
+      cause: 'API key must start with `sk-ethos-`.',
+      action: 'Create a key from the Ethos Settings page.',
+    });
+  }
+
+  const record = await opts.apiKeys.findByHash(hashApiKey(secret));
+  if (!record || record.revokedAt) {
+    throw new EthosError({
+      code: 'UNAUTHORIZED',
+      cause: 'API key is invalid or has been revoked.',
+      action: 'Check the key, or mint a new one from the Settings page.',
+    });
+  }
+
+  if (record.allowedOrigins.length > 0) {
+    if (!origin) {
+      throw new EthosError({
+        code: 'FORBIDDEN',
+        cause: 'This API key requires an Origin header but none was provided.',
+        action: 'Include the Origin header in your request, or remove allowedOrigins from the key.',
+      });
+    }
+    if (!record.allowedOrigins.includes(origin)) {
+      throw new EthosError({
+        code: 'FORBIDDEN',
+        cause: `Origin "${origin}" is not in the allowedOrigins list for this API key.`,
+        action: "Add this origin to the key's allowedOrigins, or use the correct key.",
+      });
+    }
+  }
+
+  const requiredScope =
+    typeof opts.requiredScope === 'function' ? opts.requiredScope() : opts.requiredScope;
+  if (requiredScope === COOKIE_ONLY) {
+    throw new EthosError({
+      code: 'FORBIDDEN',
+      cause: 'This surface requires cookie authentication and is not accessible via API key.',
+      action: 'Use cookie auth (the Ethos web UI).',
+    });
+  }
+  if (!record.scopes.includes(requiredScope)) {
+    throw new EthosError({
+      code: 'FORBIDDEN',
+      cause: `API key is missing required scope "${requiredScope}".`,
+      action: `Create a key with the "${requiredScope}" scope.`,
+    });
+  }
+
+  const now = Date.now();
+  const previous = opts.lastTouchAt.get(record.id) ?? 0;
+  if (now - previous >= TOUCH_THROTTLE_MS) {
+    opts.lastTouchAt.set(record.id, now);
+    try {
+      await opts.apiKeys.touchLastUsed(record.id);
+    } catch {
+      // `last_used` is a display hint for the Settings list; failing to bump
+      // it must not refuse a request whose key already checked out.
+    }
+  }
+  return record;
+}
+
 export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
   const lastTouchAt = new Map<string, number>();
 
@@ -150,124 +264,67 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
       });
     }
 
-    if (!header.startsWith(BEARER_PREFIX)) {
-      throw new EthosError({
-        code: 'UNAUTHORIZED',
-        cause: 'Authorization header must use the Bearer scheme.',
-        action: 'Use `Authorization: Bearer sk-ethos-...`.',
-      });
-    }
+    const record = await verifyBearer({
+      header,
+      origin: c.req.header('origin'),
+      apiKeys: opts.apiKeys,
+      lastTouchAt,
+      requiredScope: () => {
+        // oRPC URL paths use `/` (e.g. `/rpc/sessions/list`), but the SCOPE_MAP
+        // and `resolveScope` are keyed on dot notation (`sessions.list`).
+        // Normalize before lookup so the scope + experimental gate fire on the
+        // namespace, not on the whole "sessions/list" string.
+        const rpcPath = c.req.path
+          .replace(/^\/rpc\//, '')
+          .replace(/^\/sse\//, '')
+          .replace(/\//g, '.')
+          .replace(/[./]+$/, '');
 
-    const secret = header.slice(BEARER_PREFIX.length).trim();
-    if (!secret.startsWith(SECRET_PREFIX)) {
-      throw new EthosError({
-        code: 'UNAUTHORIZED',
-        cause: 'API key must start with `sk-ethos-`.',
-        action: 'Create a key from the Ethos Settings page.',
-      });
-    }
+        // Defense-in-depth: apiKeys namespace is always cookie-only
+        if (rpcPath.startsWith('apiKeys')) {
+          throw new EthosError({
+            code: 'FORBIDDEN',
+            cause: 'The apiKeys namespace requires cookie authentication.',
+            action: 'Use the Ethos web UI to manage API keys.',
+          });
+        }
 
-    const record = await opts.apiKeys.findByHash(hashApiKey(secret));
-    if (!record) {
-      throw new EthosError({
-        code: 'UNAUTHORIZED',
-        cause: 'API key is invalid or has been revoked.',
-        action: 'Check the key, or mint a new one from the Settings page.',
-      });
-    }
+        // SSE session streams carry the session id as a path param, not an RPC
+        // method: `/sse/sessions/<id>` normalizes to `sessions.<id>`, which has no
+        // SCOPE_MAP entry. Treat any session stream as a read of that session so it
+        // requires `sessions:read` (and doesn't fail closed as an "unmapped method").
+        if (c.req.path.startsWith('/sse/sessions/')) return 'sessions:read';
 
-    const origin = c.req.header('origin');
-    if (record.allowedOrigins.length > 0) {
-      if (!origin) {
+        const requiredScope = opts.scopeForPath(rpcPath);
+        if (requiredScope === COOKIE_ONLY) {
+          throw new EthosError({
+            code: 'FORBIDDEN',
+            cause: `Method "${rpcPath}" requires cookie authentication and is not accessible via API key.`,
+            action: 'Use cookie auth (the Ethos web UI) for this method.',
+          });
+        }
+        if (requiredScope) return requiredScope;
+        // No scope resolved. FAIL CLOSED (WEB-001): a known namespace with an
+        // unmapped method previously fell through with NO scope enforced. Now it
+        // is rejected — mapping a new method is a conscious decision, not an
+        // accidental open door. Experimental (unmapped) namespaces keep their
+        // dedicated message.
+        const dotIdx = rpcPath.indexOf('.');
+        const ns = dotIdx > 0 ? rpcPath.slice(0, dotIdx) : rpcPath;
+        if (SCOPE_MAP[ns]) {
+          throw new EthosError({
+            code: 'FORBIDDEN',
+            cause: `Method "${rpcPath}" is not mapped to a scope and is not accessible via API key.`,
+            action: 'Use cookie auth (the Ethos web UI), or map this method to a scope.',
+          });
+        }
         throw new EthosError({
           code: 'FORBIDDEN',
-          cause: 'This API key requires an Origin header but none was provided.',
-          action:
-            'Include the Origin header in your request, or remove allowedOrigins from the key.',
+          cause: `Namespace "${ns}" is experimental and not accessible via API key.`,
+          action: 'Use cookie auth (the Ethos web UI) for experimental namespaces.',
         });
-      }
-      if (!record.allowedOrigins.includes(origin)) {
-        throw new EthosError({
-          code: 'FORBIDDEN',
-          cause: `Origin "${origin}" is not in the allowedOrigins list for this API key.`,
-          action: "Add this origin to the key's allowedOrigins, or use the correct key.",
-        });
-      }
-    }
-
-    // oRPC URL paths use `/` (e.g. `/rpc/sessions/list`), but the SCOPE_MAP
-    // and `resolveScope` are keyed on dot notation (`sessions.list`).
-    // Normalize before lookup so the scope + experimental gate fire on the
-    // namespace, not on the whole "sessions/list" string.
-    const rpcPath = c.req.path
-      .replace(/^\/rpc\//, '')
-      .replace(/^\/sse\//, '')
-      .replace(/\//g, '.')
-      .replace(/[./]+$/, '');
-
-    // Defense-in-depth: apiKeys namespace is always cookie-only
-    if (rpcPath.startsWith('apiKeys')) {
-      throw new EthosError({
-        code: 'FORBIDDEN',
-        cause: 'The apiKeys namespace requires cookie authentication.',
-        action: 'Use the Ethos web UI to manage API keys.',
-      });
-    }
-
-    // SSE session streams carry the session id as a path param, not an RPC
-    // method: `/sse/sessions/<id>` normalizes to `sessions.<id>`, which has no
-    // SCOPE_MAP entry. Treat any session stream as a read of that session so it
-    // requires `sessions:read` (and doesn't fail closed as an "unmapped method").
-    const isSseSessionStream = c.req.path.startsWith('/sse/sessions/');
-    const requiredScope = isSseSessionStream ? 'sessions:read' : opts.scopeForPath(rpcPath);
-
-    if (requiredScope === COOKIE_ONLY) {
-      throw new EthosError({
-        code: 'FORBIDDEN',
-        cause: `Method "${rpcPath}" requires cookie authentication and is not accessible via API key.`,
-        action: 'Use cookie auth (the Ethos web UI) for this method.',
-      });
-    }
-    if (requiredScope) {
-      if (!record.scopes.includes(requiredScope)) {
-        throw new EthosError({
-          code: 'FORBIDDEN',
-          cause: `API key is missing required scope "${requiredScope}".`,
-          action: `Create a key with the "${requiredScope}" scope.`,
-        });
-      }
-    } else {
-      // No scope resolved. FAIL CLOSED (WEB-001): a known namespace with an
-      // unmapped method previously fell through with NO scope enforced. Now it
-      // is rejected — mapping a new method is a conscious decision, not an
-      // accidental open door. Experimental (unmapped) namespaces keep their
-      // dedicated message.
-      const dotIdx = rpcPath.indexOf('.');
-      const ns = dotIdx > 0 ? rpcPath.slice(0, dotIdx) : rpcPath;
-      if (SCOPE_MAP[ns]) {
-        throw new EthosError({
-          code: 'FORBIDDEN',
-          cause: `Method "${rpcPath}" is not mapped to a scope and is not accessible via API key.`,
-          action: 'Use cookie auth (the Ethos web UI), or map this method to a scope.',
-        });
-      }
-      throw new EthosError({
-        code: 'FORBIDDEN',
-        cause: `Namespace "${ns}" is experimental and not accessible via API key.`,
-        action: 'Use cookie auth (the Ethos web UI) for experimental namespaces.',
-      });
-    }
-
-    const now = Date.now();
-    const previous = lastTouchAt.get(record.id) ?? 0;
-    if (now - previous >= TOUCH_THROTTLE_MS) {
-      lastTouchAt.set(record.id, now);
-      try {
-        await opts.apiKeys.touchLastUsed(record.id);
-      } catch {
-        // intentionally ignored
-      }
-    }
+      },
+    });
 
     c.set('apiKey', record);
     c.set('authMethod', 'bearer' as AuthMethod);

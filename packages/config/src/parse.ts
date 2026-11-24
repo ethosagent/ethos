@@ -12,6 +12,7 @@ import {
 } from './builders/agent';
 import { buildBrowser, buildMcpConfig, buildToolLoop } from './builders/browser';
 import { buildBackgroundConfig, buildCronConfig } from './builders/cron-background';
+import { buildWeeklyDigest } from './builders/digest';
 import { buildExecutionConfig } from './builders/execution';
 import {
   buildChannelFilter,
@@ -31,6 +32,7 @@ import {
   buildMemoryConsolidationConfig,
   buildMemoryVaultConfig,
 } from './builders/memory';
+import { buildNodes } from './builders/nodes';
 import {
   buildDiscordDefaultMode,
   buildSlackApps,
@@ -212,6 +214,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   const memoryConsolidationKv: Record<string, string> = keyUse.track('memoryConsolidation.', {});
   // Scale-to-zero idle watcher — idleWatcher.<field>: <value>.
   const idleWatcherKv: Record<string, string> = keyUse.track('idleWatcher.', {});
+  const nodesKv: Record<string, string> = keyUse.track('nodes.', {}); // laptop tool nodes (D18)
   // Resume-side clock correction — pauseClockCorrection.<field>: <value>.
   const pauseClockCorrectionKv: Record<string, string> = keyUse.track('pauseClockCorrection.', {});
   // Pause/resume lifecycle notifications — pauseLifecycle.http.<field>: <value>.
@@ -1046,6 +1049,11 @@ export function parseConfigYaml(src: string): EthosConfig {
       idleWatcherKv[iw[1]] = parseConfigScalar(iw[2]);
       continue;
     }
+    const nd = line.match(/^nodes\.(enabled):\s*(.+)$/); // nodes.enabled (default OFF)
+    if (nd) {
+      nodesKv[nd[1]] = parseConfigScalar(nd[2]);
+      continue;
+    }
     // pauseClockCorrection.<field>: <value>  (resume clock correction; default OFF).
     const pcc = line.match(/^pauseClockCorrection\.(enabled|thresholdMs):\s*(.+)$/);
     if (pcc) {
@@ -1319,6 +1327,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     : undefined;
   const memoryConsolidation = buildMemoryConsolidation(memoryConsolidationKv);
   const idleWatcher = buildIdleWatcher(idleWatcherKv);
+  const nodes = buildNodes(nodesKv);
   const pauseClockCorrection = buildPauseClockCorrection(pauseClockCorrectionKv);
   // ETHOS_ORCHESTRATOR_URL / ETHOS_ORCHESTRATOR_TOKEN win over the yaml value,
   // same precedence as ETHOS_PUBLIC_URL over webBaseUrl below.
@@ -1789,25 +1798,7 @@ export function parseConfigYaml(src: string): EthosConfig {
       if (!memoryConsolidation && !decay) return undefined;
       return { ...memoryConsolidation, ...decay };
     })(),
-    weeklyDigest:
-      kv['weeklyDigest.enabled'] !== undefined ||
-      kv['weeklyDigest.cron'] !== undefined ||
-      kv['weeklyDigest.recipients'] !== undefined
-        ? {
-            ...(kv['weeklyDigest.enabled'] !== undefined
-              ? { enabled: kv['weeklyDigest.enabled'] === 'true' }
-              : {}),
-            ...(kv['weeklyDigest.cron'] ? { cron: kv['weeklyDigest.cron'] } : {}),
-            ...(kv['weeklyDigest.recipients']
-              ? {
-                  recipients: kv['weeklyDigest.recipients']
-                    .split(/[,\s]+/)
-                    .map((r) => r.trim())
-                    .filter((r) => r.length > 0),
-                }
-              : {}),
-          }
-        : undefined,
+    weeklyDigest: buildWeeklyDigest(kv),
     channelDigest: buildChannelDigestConfig(kv),
     learningReplay: buildLearningReplayConfig(kv),
     toolLoop: buildToolLoop(toolLoopKv),
@@ -1855,6 +1846,7 @@ export function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     idleWatcher,
+    nodes,
     pauseClockCorrection,
     pauseLifecycle: pauseLifecycleHttp ? { http: pauseLifecycleHttp } : undefined,
     ...(pluginIsolationResult.value ? { pluginIsolation: pluginIsolationResult.value } : {}),
