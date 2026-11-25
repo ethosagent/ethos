@@ -4,7 +4,7 @@ description: "Ethos version history — material changes and breaking notes per 
 kind: reference
 audience: shared
 slug: changelog
-updated: 2026-09-29
+updated: 2026-11-25
 ---
 
 Version history for the `@ethosagent/cli` and its workspace packages. The current version lives in the [`VERSION`](https://github.com/ethosagent/ethos/blob/main/VERSION) file at the repo root. Entries are newest first.
@@ -26,6 +26,7 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 
 | Version | Date | Status | Commits |
 |---|---|---|---|
+| [1.0.0](#v1-0-0) | 2026-11-25 | — | 156 |
 | [0.9.0](#v0-9-0) | 2026-09-29 | — | 463 |
 | [0.8.0](#v0-8-0) | 2026-09-09 | — | 56 |
 | [0.7.3](#v0-7-3) | 2026-09-03 | — | 17 |
@@ -52,8 +53,73 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 
 ## Unreleased {#unreleased}
 
+Nothing yet.
+
+## 1.0.0 {#v1-0-0}
+
+Date · 2026-11-25
+Commits · 156 since 0.9.0 (`git log --oneline --no-merges v0.9.0..v1.0.0`)
+
+Notable changes
+
 - **Context ring shows the measured prompt.** The web Chat ring is the provider-measured size of the latest model call, refreshed after each call. The fallback token chip, shown before any breakdown exists, now adds cache tokens to fresh input on providers that report them separately.
 - **CLI uses the model's real window.** `/compact status`, `ethos sessions show` and the chat status bar read the model's resolved context window instead of a fixed 200K, and show the memory and skills split. See [Watch and compact your context](using/how-to/watch-and-compact-context.md).
+
+Features (43)
+
+- **nodes** · laptop as a tool node for a server Ethos
+- **jobs** · durable background jobs — resume after restart or crash
+- context meter and Compact now across web, CLI and TUI
+- **scripts** · ratchet baselined file sizes against growth
+- **web** · Edit & rerun on user prompts and /rewind
+- **web** · useChat.rewindTo branches before a prompt and reruns the edit
+- **tui** · /rewind and Esc Esc backtrack to edit an earlier prompt
+- **cli** · /rewind [N] prefills an earlier prompt and reruns it on a new branch
+- **web-api** · sessions.rewind with a server-side busy guard
+- **session-cards** · copySession can copy only kept tool calls
+- **surface-kit** · /rewind definition, usage, notice and parser
+- **core** · rewindSession and listRewindPoints
+- **core** · forkSession beforeMessageId cut and parentSessionId override
+- **web** · opt-in browser notification toggle in Chat & context settings
+- **web** · attention signals hook (tab title, favicon dot, notifications)
+- **web** · attention notification preference and payload
+- **web** · attention title formatter and favicon dot renderer
+- **web** · attention state reducer and SSE event mapper
+- **discord** · deny-and-redirect modal on approval cards
+- **slack** · deny-and-redirect modal on approval cards
+- **tui** · deny-and-redirect note mode and hidden-char warning
+- **web** · deny-and-redirect and hidden-char reveal in ApprovalModal
+- **web-api** · tools.deny reason is a sanitized redirect note
+- **gateway** · deny-and-redirect note reaches the blocked call's tool_result
+- **types** · optional deny note on ApprovalDecisionEvent; note sanitizer
+- **surface-kit** · reveal hidden unicode/control chars in approval args
+- **catalog** · admission, verified installs, catalog UI, Hermes importer, deprecations
+- **catalog** · catalog.list RPC and ethos catalog list|search|show (unified-catalog phase 2 backend)
+- **catalog** · @ethosagent/catalog index with MCP presets derived from it (unified-catalog phase 1)
+- **mcp** · pin local MCP presets to exact versions (unified-catalog phase 0)
+- **mcp** · device-code and paste-the-redirect sign-in for remote MCP servers
+- **onboarding** · keyless first run across CLI, TUI and web
+- **sessions** · incognito sessions across CLI, TUI, web and gateway
+- **jobs** · steer, stop and tail running background jobs
+- **sessions** · detect and repair sessions.db damage; tolerate bad rows; name busy holders
+- **cli** · --json for ops and inspection commands
+- **cli** · --json for learning and eval commands
+- **cli** · --json for personality commands
+- **cli** · --json for memory commands
+- **hardening** · hermes-0.22 hardening — isolated worktree populate, MCP OAuth issuer binding, discovery cap, dmPolicy decline
+- **skills** · /handoff writes HANDOFF.md
+- **usage** · count background model calls in usage and the daily spend cap
+- **setup** · AZURE_OUTPUT_CAP_PARAM provisions outputCapParam
+
+Other commits · 31 `refactor`, 22 `chore`, 22 `docs`, 19 `fix`, 10 `test`, 4 `ci`, 4 `wip`, 1 `style`.
+
+Breaking
+
+- fix(security)!: guard dashboard panel SQL in DashboardStore
+- chore!: delete the execution-process-backend and storage-memory-backend reference plugins
+- refactor!: remove internal @deprecated shims with no callers
+- refactor(gateway)!: remove the ETHOS_DEDUP_LEGACY rollback hatch
+- refactor(config)!: remove the cron.trigger/cron.arming deprecation shim
 
 ## 0.9.0 {#v0-9-0}
 
