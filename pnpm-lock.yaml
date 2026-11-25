@@ -43,7 +43,7 @@ importers:
         version: 19.2.16
       archcheck:
         specifier: 0.3.1
-        version: 0.3.1(@anthropic-ai/sdk@0.128.0(zod@4.4.3))(typescript@6.0.3)
+        version: 0.3.1(@anthropic-ai/sdk@1.12.0(zod@4.4.3))(typescript@6.0.3)
       tsup:
         specifier: ^9.0.0
         version: 9.0.0(@swc/core@1.16.2)(jiti@2.7.0)(postcss@8.5.15)(tsx@4.23.15)(typescript@6.0.3)(yaml@2.9.0)
@@ -58,7 +58,7 @@ importers:
         version: 6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -212,8 +212,8 @@ importers:
   apps/ethos:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.128.0
-        version: 0.128.0(zod@4.4.3)
+        specifier: ^1.12.0
+        version: 1.12.0(zod@4.4.3)
       '@aws-sdk/client-s3':
         specifier: ^3.800.0
         version: 3.1061.0
@@ -237,13 +237,13 @@ importers:
         version: 1.29.0(zod@4.4.3)
       '@orpc/contract':
         specifier: ^1.14.3
-        version: 1.14.14
+        version: 1.14.14(@opentelemetry/api@1.10.0)
       '@orpc/openapi':
         specifier: ^1.14.0
-        version: 1.14.4(ws@8.23.0)
+        version: 1.14.4(@opentelemetry/api@1.10.0)(ws@8.23.0)
       '@orpc/server':
         specifier: ^1.14.6
-        version: 1.14.14(ws@8.23.0)
+        version: 1.14.14(@opentelemetry/api@1.10.0)(ws@8.23.0)
       argon2:
         specifier: ^0.43.0
         version: 0.43.1
@@ -269,8 +269,8 @@ importers:
         specifier: ^1.8.0
         version: 1.12.0
       openai:
-        specifier: ^7.23.0
-        version: 7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.23.0)(zod@4.4.3)
+        specifier: ^7.62.0
+        version: 7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.23.0)(zod@4.4.3)
       pdf-parse:
         specifier: ^1.1.1
         version: 1.1.4
@@ -779,10 +779,10 @@ importers:
         version: 2.1.8(hono@4.12.23)
       '@orpc/openapi':
         specifier: ^1.14.0
-        version: 1.14.4(ws@8.23.0)
+        version: 1.14.4(@opentelemetry/api@1.10.0)(ws@8.23.0)
       '@orpc/server':
         specifier: ^1.14.6
-        version: 1.14.14(ws@8.23.0)
+        version: 1.14.14(@opentelemetry/api@1.10.0)(ws@8.23.0)
       argon2:
         specifier: ^0.43.0
         version: 0.43.1
@@ -864,7 +864,7 @@ importers:
         version: 4.3.0
       next:
         specifier: ^15.3.0
-        version: 15.5.19(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 15.5.19(@opentelemetry/api@1.10.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react:
         specifier: ^19.1.0
         version: 19.2.6
@@ -899,7 +899,7 @@ importers:
         version: link:../../../packages/core
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   examples/plugins/memory-logger:
     dependencies:
@@ -915,7 +915,7 @@ importers:
         version: link:../../../packages/core
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   examples/plugins/personality:
     dependencies:
@@ -931,7 +931,7 @@ importers:
         version: link:../../../packages/core
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   examples/plugins/safety-adapter:
     dependencies:
@@ -947,7 +947,7 @@ importers:
         version: link:../../../packages/core
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   examples/plugins/timestamp:
     dependencies:
@@ -963,7 +963,7 @@ importers:
         version: link:../../../packages/core
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   extensions/agent-mesh:
     dependencies:
@@ -1256,7 +1256,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   extensions/export-otlp:
     dependencies:
@@ -1269,7 +1269,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   extensions/gateway:
     dependencies:
@@ -1419,8 +1419,8 @@ importers:
   extensions/llm-anthropic:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.128.0
-        version: 0.128.0(zod@4.4.3)
+        specifier: ^1.12.0
+        version: 1.12.0(zod@4.4.3)
       '@ethosagent/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -1447,8 +1447,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       openai:
-        specifier: ^7.23.0
-        version: 7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
+        specifier: ^7.62.0
+        version: 7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
 
   extensions/llm-bedrock:
     dependencies:
@@ -1523,8 +1523,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       openai:
-        specifier: ^7.23.0
-        version: 7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
+        specifier: ^7.62.0
+        version: 7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
 
   extensions/llm-xai:
     dependencies:
@@ -1698,7 +1698,7 @@ importers:
         version: link:../../packages/storage-fs
       vitest:
         specifier: ^5.1.1
-        version: 5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
 
   extensions/openclaw-compat:
     dependencies:
@@ -2121,8 +2121,8 @@ importers:
   extensions/tools-browser:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.128.0
-        version: 0.128.0(zod@4.4.3)
+        specifier: ^1.12.0
+        version: 1.12.0(zod@4.4.3)
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -2136,8 +2136,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       openai:
-        specifier: ^7.23.0
-        version: 7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
+        specifier: ^7.62.0
+        version: 7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
       playwright:
         specifier: ^1.48.0
         version: 1.60.0
@@ -2249,8 +2249,8 @@ importers:
         version: link:../../packages/core
     optionalDependencies:
       openai:
-        specifier: ^7.23.0
-        version: 7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
+        specifier: ^7.62.0
+        version: 7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
 
   extensions/tools-interactive:
     dependencies:
@@ -2761,10 +2761,10 @@ importers:
         version: link:../web-contracts
       '@orpc/client':
         specifier: ^1.14.0
-        version: 1.14.14
+        version: 1.14.14(@opentelemetry/api@1.10.0)
       '@orpc/contract':
         specifier: ^1.14.3
-        version: 1.14.14
+        version: 1.14.14(@opentelemetry/api@1.10.0)
 
   packages/session-lane: {}
 
@@ -2842,7 +2842,7 @@ importers:
         version: link:../types
       '@orpc/contract':
         specifier: ^1.14.3
-        version: 1.14.14
+        version: 1.14.14(@opentelemetry/api@1.10.0)
       zod:
         specifier: ^4.3.6
         version: 4.4.3
@@ -3339,8 +3339,8 @@ packages:
       react: ^0.14.0 || ^15.0.1 || ^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^0.14.0 || ^15.0.1 || ^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  '@anthropic-ai/sdk@0.128.0':
-    resolution: {integrity: sha512-tl5cBFZC1jVFrTuQyvQObA4WmuNgcYVeXfriqOumgtLAHUm4gPUj18YnszBW60v0PrjDB8nBDOC6wd9CmHQFlA==}
+  '@anthropic-ai/sdk@1.12.0':
+    resolution: {integrity: sha512-0j9zwiQdkvr90LoiiBDUh7kae1lsNW2EqeE0vGceYne4BrmMDdDVoQ4KGOieUee0zWZbVJKsf/06JY8U5i63Xg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -5655,6 +5655,10 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@opentelemetry/api@1.10.0':
+    resolution: {integrity: sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ==}
+    engines: {node: '>=8.0.0'}
 
   '@orpc/client@1.14.14':
     resolution: {integrity: sha512-WVUbwZmjzX55kqv2NLWtzh7AW40VeK0sX2XowCOxedJBcANXR1ZVK4lDSNyXBiD0UNfCdTtqtypigVZj2na1RA==}
@@ -10761,13 +10765,14 @@ packages:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
     engines: {node: '>=12'}
 
-  openai@7.23.0:
-    resolution: {integrity: sha512-0ecOXnFSMNWZq6cUBcTV6Lf93y+fm8BH/+QzFvpoP1UGNOE5pnytRa6HAPGCw+3IS9SIAW7rc1M8yyzN1PiBAQ==}
+  openai@7.62.0:
+    resolution: {integrity: sha512-dehzgY2anBfU3H+FfWHCVjhb9ZRYzahzNpvmMExTmMaeU11i51NJIMJPDctgLiP4+pCh53KIsLVQ66ucKyDNMA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
       '@smithy/hash-node': '>=4.3.0 <5'
       '@smithy/signature-v4': '>=5.4.0 <6'
+      google-auth-library: '>=9.15.1 <12'
       undici: '>=5 <9'
       ws: ^8.21.0
       zod: ^3.25 || ^4.0
@@ -10777,6 +10782,8 @@ packages:
       '@smithy/hash-node':
         optional: true
       '@smithy/signature-v4':
+        optional: true
+      google-auth-library:
         optional: true
       undici:
         optional: true
@@ -11598,8 +11605,8 @@ packages:
       react: '>= 16.3.0'
       react-dom: '>= 16.3.0'
 
-  react-fast-compare@3.2.3:
-    resolution: {integrity: sha512-WY9YHI1jjYC5a2lNRfHbeaNVQqiY+mMKWBSw1mPU0FgevlxI6V7izhNYz7Vp5ieFxetuRb6RmihPQxXEzg7oWQ==}
+  react-fast-compare@3.2.4:
+    resolution: {integrity: sha512-YbkgZfjvuokdt6zR8Oki8Bt4QXAZim/9HKSUr5J23GVyX2o8sYD/JlKSFrJvEFIPjotWvkGY7DgUS+udyr8cEw==}
 
   react-grid-layout@2.2.3:
     resolution: {integrity: sha512-OAEJHBxmfuxQfVtZwRzmsokijGlBgzYIJ7MUlLk/VSa43SaGzu15w5D0P2RDrfX5EvP9POMbL6bFrai/huDzbQ==}
@@ -12210,8 +12217,8 @@ packages:
     resolution: {integrity: sha512-XlkWvfIm6RmsWtNJx+uqtKLS8eqFbxUg0ZzLXqY0caEy9l7hruX8IpiDnjsLavoBgqCCR71TqWO8MaXYheJ3RQ==}
     engines: {node: '>=10'}
 
-  standardwebhooks@1.1.1:
-    resolution: {integrity: sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==}
+  standardwebhooks@1.3.0:
+    resolution: {integrity: sha512-5W9skHjqAm2dlA9wWvglTP+oX47JX4lFXVk1aJV7+TG1snvTR4QXaVgPscEzvOw9GRreeavMwbqEeL+MGhZHCg==}
 
   stat-mode@1.0.0:
     resolution: {integrity: sha512-jH9EhtKIjuXZ2cWxmXS8ZP80XyC3iasQxMDV8jzhNJpfDb7VbQLVW4Wvsxz9QZvzV+G4YoSfBUVKDOyxLzi/sg==}
@@ -13443,10 +13450,11 @@ snapshots:
       react-dom: 19.2.6(react@19.2.6)
       throttle-debounce: 5.0.2
 
-  '@anthropic-ai/sdk@0.128.0(zod@4.4.3)':
+  '@anthropic-ai/sdk@1.12.0(zod@4.4.3)':
     dependencies:
+      '@opentelemetry/api': 1.10.0
       json-schema-to-ts: 3.1.1
-      standardwebhooks: 1.1.1
+      standardwebhooks: 1.3.0
     optionalDependencies:
       zod: 4.4.3
 
@@ -17007,37 +17015,39 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@orpc/client@1.14.14':
+  '@opentelemetry/api@1.10.0': {}
+
+  '@orpc/client@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
-      '@orpc/standard-server-fetch': 1.14.14
-      '@orpc/standard-server-peer': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-peer': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/client@1.14.4':
+  '@orpc/client@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
-      '@orpc/standard-server-fetch': 1.14.4
-      '@orpc/standard-server-peer': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-peer': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/contract@1.14.14':
+  '@orpc/contract@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/client': 1.14.14
-      '@orpc/shared': 1.14.14
+      '@orpc/client': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
       '@standard-schema/spec': 1.1.0
       openapi-types: 12.1.3
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/contract@1.14.4':
+  '@orpc/contract@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/client': 1.14.4
-      '@orpc/shared': 1.14.4
+      '@orpc/client': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
       '@standard-schema/spec': 1.1.0
       openapi-types: 12.1.3
     transitivePeerDependencies:
@@ -17047,24 +17057,24 @@ snapshots:
 
   '@orpc/interop@1.14.4': {}
 
-  '@orpc/openapi-client@1.14.4':
+  '@orpc/openapi-client@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/client': 1.14.4
-      '@orpc/contract': 1.14.4
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
+      '@orpc/client': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/contract': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/openapi@1.14.4(ws@8.23.0)':
+  '@orpc/openapi@1.14.4(@opentelemetry/api@1.10.0)(ws@8.23.0)':
     dependencies:
-      '@orpc/client': 1.14.4
-      '@orpc/contract': 1.14.4
+      '@orpc/client': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/contract': 1.14.4(@opentelemetry/api@1.10.0)
       '@orpc/interop': 1.14.4
-      '@orpc/openapi-client': 1.14.4
-      '@orpc/server': 1.14.4(ws@8.23.0)
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
+      '@orpc/openapi-client': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/server': 1.14.4(@opentelemetry/api@1.10.0)(ws@8.23.0)
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
       json-schema-typed: 8.0.2
       rou3: 0.7.12
     transitivePeerDependencies:
@@ -17073,18 +17083,18 @@ snapshots:
       - fastify
       - ws
 
-  '@orpc/server@1.14.14(ws@8.23.0)':
+  '@orpc/server@1.14.14(@opentelemetry/api@1.10.0)(ws@8.23.0)':
     dependencies:
-      '@orpc/client': 1.14.14
-      '@orpc/contract': 1.14.14
+      '@orpc/client': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/contract': 1.14.14(@opentelemetry/api@1.10.0)
       '@orpc/interop': 1.14.14
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
-      '@orpc/standard-server-aws-lambda': 1.14.14
-      '@orpc/standard-server-fastify': 1.14.14
-      '@orpc/standard-server-fetch': 1.14.14
-      '@orpc/standard-server-node': 1.14.14
-      '@orpc/standard-server-peer': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-aws-lambda': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fastify': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-node': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-peer': 1.14.14(@opentelemetry/api@1.10.0)
       cookie: 1.1.1
     optionalDependencies:
       ws: 8.23.0
@@ -17092,18 +17102,18 @@ snapshots:
       - '@opentelemetry/api'
       - fastify
 
-  '@orpc/server@1.14.4(ws@8.23.0)':
+  '@orpc/server@1.14.4(@opentelemetry/api@1.10.0)(ws@8.23.0)':
     dependencies:
-      '@orpc/client': 1.14.4
-      '@orpc/contract': 1.14.4
+      '@orpc/client': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/contract': 1.14.4(@opentelemetry/api@1.10.0)
       '@orpc/interop': 1.14.4
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
-      '@orpc/standard-server-aws-lambda': 1.14.4
-      '@orpc/standard-server-fastify': 1.14.4
-      '@orpc/standard-server-fetch': 1.14.4
-      '@orpc/standard-server-node': 1.14.4
-      '@orpc/standard-server-peer': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-aws-lambda': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fastify': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-node': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-peer': 1.14.4(@opentelemetry/api@1.10.0)
       cookie: 1.1.1
     optionalDependencies:
       ws: 8.23.0
@@ -17111,103 +17121,107 @@ snapshots:
       - '@opentelemetry/api'
       - fastify
 
-  '@orpc/shared@1.14.14':
+  '@orpc/shared@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
       radash: 12.1.1
       type-fest: 5.8.0
+    optionalDependencies:
+      '@opentelemetry/api': 1.10.0
 
-  '@orpc/shared@1.14.4':
+  '@orpc/shared@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
       radash: 12.1.1
       type-fest: 5.8.0
+    optionalDependencies:
+      '@opentelemetry/api': 1.10.0
 
-  '@orpc/standard-server-aws-lambda@1.14.14':
+  '@orpc/standard-server-aws-lambda@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
-      '@orpc/standard-server-fetch': 1.14.14
-      '@orpc/standard-server-node': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-node': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-aws-lambda@1.14.4':
+  '@orpc/standard-server-aws-lambda@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
-      '@orpc/standard-server-fetch': 1.14.4
-      '@orpc/standard-server-node': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-node': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-fastify@1.14.14':
+  '@orpc/standard-server-fastify@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
-      '@orpc/standard-server-node': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-node': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-fastify@1.14.4':
+  '@orpc/standard-server-fastify@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
-      '@orpc/standard-server-node': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-node': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-fetch@1.14.14':
+  '@orpc/standard-server-fetch@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-fetch@1.14.4':
+  '@orpc/standard-server-fetch@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-node@1.14.14':
+  '@orpc/standard-server-node@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
-      '@orpc/standard-server-fetch': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-node@1.14.4':
+  '@orpc/standard-server-node@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
-      '@orpc/standard-server-fetch': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server-fetch': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-peer@1.14.14':
+  '@orpc/standard-server-peer@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
-      '@orpc/standard-server': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server-peer@1.14.4':
+  '@orpc/standard-server-peer@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
-      '@orpc/standard-server': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
+      '@orpc/standard-server': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server@1.14.14':
+  '@orpc/standard-server@1.14.14(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.14
+      '@orpc/shared': 1.14.14(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/standard-server@1.14.4':
+  '@orpc/standard-server@1.14.4(@opentelemetry/api@1.10.0)':
     dependencies:
-      '@orpc/shared': 1.14.4
+      '@orpc/shared': 1.14.4(@opentelemetry/api@1.10.0)
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
@@ -18035,7 +18049,7 @@ snapshots:
       prop-types: 15.8.1
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
-      react-fast-compare: 3.2.3
+      react-fast-compare: 3.2.4
       shallowequal: 1.1.0
 
   '@slorber/remark-comment@1.0.0':
@@ -19101,11 +19115,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  archcheck@0.3.1(@anthropic-ai/sdk@0.128.0(zod@4.4.3))(typescript@6.0.3):
+  archcheck@0.3.1(@anthropic-ai/sdk@1.12.0(zod@4.4.3))(typescript@6.0.3):
     dependencies:
       typescript: 6.0.3
     optionalDependencies:
-      '@anthropic-ai/sdk': 0.128.0(zod@4.4.3)
+      '@anthropic-ai/sdk': 1.12.0(zod@4.4.3)
 
   arg@5.0.2: {}
 
@@ -21806,7 +21820,7 @@ snapshots:
 
   json-schema-to-ts@3.1.1:
     dependencies:
-      '@babel/runtime': 7.29.7
+      '@babel/runtime': 7.29.15
       ts-algebra: 2.0.0
 
   json-schema-traverse@0.4.1: {}
@@ -22824,7 +22838,7 @@ snapshots:
 
   neo-async@2.6.2: {}
 
-  next@15.5.19(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
+  next@15.5.19(@opentelemetry/api@1.10.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
     dependencies:
       '@next/env': 15.5.19
       '@swc/helpers': 0.5.15
@@ -22842,6 +22856,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 15.5.19
       '@next/swc-win32-arm64-msvc': 15.5.19
       '@next/swc-win32-x64-msvc': 15.5.19
+      '@opentelemetry/api': 1.10.0
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -23001,7 +23016,7 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
-  openai@7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.23.0)(zod@4.4.3):
+  openai@7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.23.0)(zod@4.4.3):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.82
       '@smithy/signature-v4': 5.7.3
@@ -23009,7 +23024,7 @@ snapshots:
       ws: 8.23.0
       zod: 4.4.3
 
-  openai@7.23.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3):
+  openai@7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.82
       '@smithy/signature-v4': 5.7.3
@@ -23909,7 +23924,7 @@ snapshots:
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
 
-  react-fast-compare@3.2.3: {}
+  react-fast-compare@3.2.4: {}
 
   react-grid-layout@2.2.3(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
     dependencies:
@@ -24787,7 +24802,7 @@ snapshots:
     dependencies:
       escape-string-regexp: 2.0.0
 
-  standardwebhooks@1.1.1:
+  standardwebhooks@1.3.0:
     dependencies:
       '@stablelib/base64': 1.0.1
       fast-sha256: 1.3.0
@@ -25470,7 +25485,7 @@ snapshots:
       tsx: 4.23.15
       yaml: 2.9.0
 
-  vitest@5.1.1(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)):
+  vitest@5.1.1(@opentelemetry/api@1.10.0)(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.1.1(vite@6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
@@ -25487,12 +25502,13 @@ snapshots:
       vite: 6.4.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)
       why-is-node-running: 3.2.1
     optionalDependencies:
+      '@opentelemetry/api': 1.10.0
       '@types/node': 22.19.19
       jsdom: 30.0.1(@noble/hashes@2.2.0)
     transitivePeerDependencies:
       - msw
 
-  vitest@5.1.1(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)):
+  vitest@5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.1.1(vite@6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
@@ -25509,6 +25525,7 @@ snapshots:
       vite: 6.4.3(@types/node@26.6.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)
       why-is-node-running: 3.2.1
     optionalDependencies:
+      '@opentelemetry/api': 1.10.0
       '@types/node': 26.6.2
       jsdom: 30.0.1(@noble/hashes@2.2.0)
     transitivePeerDependencies:

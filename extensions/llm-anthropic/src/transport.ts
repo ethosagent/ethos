@@ -17,8 +17,9 @@ export interface AnthropicStreamParams {
   output_config?: { effort: 'low' | 'medium' | 'high' };
   betas?: string[];
   /** Item 7 — server-side compaction (`compact_20260112`). Sent only with the
-   *  `compact-2026-01-12` beta; its presence routes the call to the beta
-   *  endpoint, whose stream carries `compaction` content blocks. */
+   *  `compact-2026-01-12` beta; its presence routes the call through the beta
+   *  client (`anthropic-beta` header, same `/v1/messages` path), whose stream
+   *  carries `compaction` content blocks. */
   context_management?: {
     edits: Array<{ type: 'compact_20260112'; trigger: { type: 'input_tokens'; value: number } }>;
   };
@@ -102,8 +103,9 @@ export async function* streamAnthropicMessages(
   // `encrypted_content`; this mirrors it.
   let compaction: { content: string | null; encryptedContent: string | null } | null = null;
 
-  // A beta request (server compaction) goes to the beta endpoint: only its
-  // stream types carry `compaction` blocks and `compaction_delta` deltas.
+  // A beta request (server compaction) goes through the beta client
+  // (`anthropic-beta` header, same `/v1/messages` path): only its stream
+  // types carry `compaction` blocks and `compaction_delta` deltas.
   const stream = streamParams.betas
     ? client.beta.messages.stream(streamParams, { signal: abortSignal })
     : client.messages.stream(streamParams, { signal: abortSignal });

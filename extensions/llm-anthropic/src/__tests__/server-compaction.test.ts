@@ -2,7 +2,7 @@
 // the exact wire bytes through the SDK's fetch seam (no network).
 //
 // - The edit goes out as `context_management: { edits: [{ type: 'compact_20260112',
-//   trigger }] }` with the `compact-2026-01-12` beta, on the beta endpoint.
+//   trigger }] }` with the `compact-2026-01-12` beta, carried by the `anthropic-beta` header.
 // - A streamed `compaction` block becomes a `compaction` CompletionChunk.
 // - A persisted envelope goes back as a `compaction` block param, byte-exact.
 // - A 400 on the edit retries ONCE without it and emits the rejection warning.
@@ -145,7 +145,10 @@ describe('request: the compaction edit on the wire', () => {
     });
     expect(body.betas).toBeUndefined(); // a header, not a body field
     expect(captured[0]?.beta).toContain('compact-2026-01-12');
-    expect(captured[0]?.url).toContain('beta=true');
+    // SDK 1.x signals the beta by header only: same /v1/messages path, no query.
+    const url = new URL(captured[0]?.url ?? '');
+    expect(url.pathname).toBe('/v1/messages');
+    expect(url.search).toBe('');
   });
 
   it('raises a trigger below the API minimum to 50,000', async () => {
