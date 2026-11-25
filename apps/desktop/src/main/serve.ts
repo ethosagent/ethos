@@ -22,6 +22,7 @@ import {
 } from '@ethosagent/wiring';
 import { getDefaultModel } from '@ethosagent/wiring/model-catalog';
 import { serve as honoServe } from '@hono/node-server';
+import { resolveBuiltinPersonalitiesDir } from './builtin-personalities-dir';
 import { resolveCallCaptureNativeDir, startCallCaptureDesktop } from './call-capture';
 import { getKeychainValue } from './keychain';
 import { type DesktopRuntime, shutdownDesktopRuntime } from './runtime-shutdown';
@@ -404,17 +405,14 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   // registry constructed further down for desktop-specific personality
   // listing. `import.meta.dirname` inside `loadBuiltins()` points at the
   // bundled output dir after electron-vite, not the source tree, so it can't
-  // find the real data dir unless we resolve it ourselves and pass it in.
-  const builtinPersonalitiesDir = (() => {
-    const candidates = [
-      join(__dirname, '..', '..', 'extensions', 'personalities', 'data'),
-      join(__dirname, '..', '..', '..', '..', 'extensions', 'personalities', 'data'),
-    ];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
-    }
-    return undefined;
-  })();
+  // find the real data dir unless we resolve it ourselves and pass it in
+  // (source tree in dev, `app.asar/node_modules` when packaged).
+  const builtinPersonalitiesDir = resolveBuiltinPersonalitiesDir(__dirname);
+  if (!builtinPersonalitiesDir) {
+    console.warn(
+      '[ethos-backend] built-in personalities not found; only ~/.ethos/personalities will load',
+    );
+  }
 
   // Same rationale, for call-capture's native binaries — resolved once here
   // so both `createAgentLoop()` (below, via `callCaptureNativeDir`) and

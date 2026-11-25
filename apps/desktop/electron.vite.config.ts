@@ -29,6 +29,22 @@ const ethosSourceMap = new Map(
     .map(([key, [dirPath]]) => [key, resolveWorkspaceSrc(dirPath)]),
 );
 
+const ELECTRON_SHIM_ID = '\0electron-require-shim';
+
+// Bundled CommonJS deps (electron-updater's MacUpdater reads
+// `require('electron').autoUpdater`, its ElectronHttpExecutor `.net`) reach
+// the shim through @rollup/plugin-commonjs. By default (requireReturnsDefault
+// undefined) the plugin hands them getAugmentedNamespace(shim): a copy of the
+// shim's NAMED exports only, so autoUpdater was undefined and `new
+// MacUpdater()` crashed on `.on` at boot. 'preferred' returns the shim's
+// default export instead — the real electron object — while ESM `import { app }
+// from 'electron'` keeps using the named exports. Every other id returns
+// false, the plugin's documented default (`@default false`; the source treats
+// it exactly like unset). Pinned by
+// src/main/__tests__/electron-vite-config.test.ts.
+const requireReturnsDefault = (id: string): 'preferred' | false =>
+  id === ELECTRON_SHIM_ID ? 'preferred' : false;
+
 // electron-vite v5 auto-applies externalizeDepsPlugin (enforce: 'pre') which
 // wins over any user plugin. Setting build.externalizeDeps: false disables it
 // entirely, letting us own all externalization decisions in one plugin.
@@ -77,7 +93,7 @@ const bundleWorkspacePackages = {
     if (id.startsWith('electron/')) return false;
 
     // Bare `electron` resolves to CJS — load via a createRequire shim.
-    if (id === 'electron') return '\0electron-require-shim';
+    if (id === 'electron') return ELECTRON_SHIM_ID;
 
     // Everything else (npm packages, relative/absolute paths): let Vite bundle them.
     // Workspace packages pull in transitive npm deps (gray-matter, yaml, zod, etc.)
@@ -86,7 +102,7 @@ const bundleWorkspacePackages = {
     return null;
   },
   load(id: string): string | undefined {
-    if (id === '\0electron-require-shim') {
+    if (id === ELECTRON_SHIM_ID) {
       return `import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
@@ -135,6 +151,8 @@ export default defineConfig({
     build: {
       externalizeDeps: false,
       outDir: 'dist/main',
+      // Merged into Vite's defaults (include: [/node_modules/], extensions).
+      commonjsOptions: { requireReturnsDefault },
       lib: {
         entry: 'src/main/index.ts',
       },
