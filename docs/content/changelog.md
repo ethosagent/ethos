@@ -26,6 +26,7 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 
 | Version | Date | Status | Commits |
 |---|---|---|---|
+| [1.0.1](#v1-0-1) | 2026-11-25 | — | 11 |
 | [1.0.0](#v1-0-0) | 2026-11-25 | — | 156 |
 | [0.9.0](#v0-9-0) | 2026-09-29 | — | 463 |
 | [0.8.0](#v0-8-0) | 2026-09-09 | — | 56 |
@@ -54,6 +55,23 @@ Entries from 0.4.16 onward are generated from `git log --no-merges v<previous>..
 ## Unreleased {#unreleased}
 
 Nothing yet.
+
+## 1.0.1 {#v1-0-1}
+
+Date · 2026-11-25
+Commits · 11 since 1.0.0 (`git log --oneline --no-merges v1.0.0..v1.0.1`)
+
+Notable changes
+
+- **Desktop app boots again.** The packaged macOS app now finds its built-in personalities, so it no longer stops at startup with "Tool capability validation failed". The auto-updater also no longer crashes when the app starts.
+- **Release CI.** Desktop mac builds run on `macos-15`; the Helm chart-bump PR can open itself with a `CHART_BUMP_TOKEN` secret.
+
+Fixes (2)
+
+- **desktop** · boot the packaged app — find built-in personalities, give CJS deps the real electron
+- **ci** · build mac on macos-15, macos-14 image is retired
+
+Other commits · 4 `chore`, 4 `ci`, 1 `docs`.
 
 ## 1.0.0 {#v1-0-0}
 
