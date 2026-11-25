@@ -32,7 +32,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macos-15 (arm64): GitHub retired the macos-14 image ("configuration
+          # 'macos-14-arm64-us-default' is not supported", 2026-11-25).
+          - os: macos-15
             artifact-name: desktop-mac-arm64
             eb-flags: --mac --arm64
           - os: windows-2022
