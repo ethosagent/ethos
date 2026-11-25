@@ -4,129 +4,32 @@
 // Hono's `app.request` with a stubbed cookie verifier.
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import {
   decodePairServerFrame,
-  encodeFrame,
-  NODE_HOST_SCOPE,
   NODE_PAIR_PATH,
   NODE_SOCKET_PATH,
-  NodeHub,
   type PairClientFrame,
 } from '@ethosagent/wiring/nodes';
-import { Hono } from 'hono';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { authMiddleware } from '../../middleware/auth';
-import { csrfMiddleware } from '../../middleware/csrf';
-import { errorHandler } from '../../middleware/error-envelope';
-import { nodeAdminRoutes } from '../node-admin-routes';
-import { NodePairing, type NodePairingOptions, type PairConnection } from '../node-pairing';
-import { createNodeSocket, type NodeSocket } from '../node-socket';
-
-const ROOTS = [{ path: '/proj', readOnly: false }];
-const hello = (name = 'spoofed') =>
-  encodeFrame({
-    v: 1,
-    kind: 'hello',
-    name,
-    roots: ROOTS,
-    tools: ['read_file'],
-    personalities: ['*'],
-    clock: Date.now(),
-  });
-const pairRequest = (name: string) =>
-  encodeFrame({ v: 1, kind: 'pair_request', name, roots: ROOTS });
-
-let dir: string;
-let server: Server;
-let store: SqliteApiKeyStore;
-let hub: NodeHub;
-let pairing: NodePairing;
-let sock: NodeSocket;
-let base: string;
-let nowMs: number;
-
-async function setup(
-  opts: {
-    pairing?: Partial<NodePairingOptions>;
-    helloTimeoutMs?: number;
-    trustProxy?: boolean;
-  } = {},
-): Promise<void> {
-  hub = new NodeHub();
-  pairing = new NodePairing({ apiKeys: store, now: () => nowMs, ...opts.pairing });
-  sock = createNodeSocket({
-    hub,
-    apiKeys: store,
-    pairing,
-    pingIntervalMs: 50,
-    helloTimeoutMs: opts.helloTimeoutMs ?? 5_000,
-    ...(opts.trustProxy !== undefined ? { trustProxy: opts.trustProxy } : {}),
-  });
-  server = createServer();
-  sock.attach(server);
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  base = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
-}
-
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'ethos-node-socket-'));
-  store = new SqliteApiKeyStore(join(dir, 'sessions.db'));
-  nowMs = 1_000_000;
-});
-
-afterEach(async () => {
-  await sock?.close();
-  await new Promise<void>((r) => server?.close(() => r()));
-  rmSync(dir, { recursive: true, force: true });
-});
-
-type Conn = { ws: WebSocket; status?: undefined } | { ws?: undefined; status: number };
-
-function connect(path: string, headers: Record<string, string> = {}): Promise<Conn> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(`${base}${path}`, { headers });
-    ws.on('open', () => resolve({ ws }));
-    ws.on('unexpected-response', (_req, res) => {
-      resolve({ status: res.statusCode ?? 0 });
-      ws.terminate();
-    });
-    ws.on('error', () => {
-      // Refused upgrades surface through `unexpected-response`; a reset is covered by the status.
-    });
-  });
-}
-
-async function open(path: string, headers: Record<string, string> = {}): Promise<WebSocket> {
-  const c = await connect(path, headers);
-  if (!c.ws) throw new Error(`upgrade refused: ${c.status}`);
-  return c.ws;
-}
-
-const bearer = (secret: string) => ({ authorization: `Bearer ${secret}` });
-const closed = (ws: WebSocket) =>
-  new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
-const message = (ws: WebSocket) =>
-  new Promise<string>((resolve) => ws.once('message', (d) => resolve(d.toString())));
-
-async function until(pred: () => boolean | Promise<boolean>, ms = 3_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await pred()) return;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  throw new Error('condition not reached');
-}
-
-async function nodeKey(name = 'node:laptop') {
-  return store.create({ name, scopes: [NODE_HOST_SCOPE] });
-}
+import { NodePairing, type PairConnection } from '../node-pairing';
+import {
+  advanceClock,
+  bearer,
+  closed,
+  connect,
+  hello,
+  hub,
+  message,
+  nodeKey,
+  open,
+  pairing,
+  pairRequest,
+  ROOTS,
+  setup,
+  store,
+  until,
+} from './node-socket-fixtures';
 
 describe('/node/ws upgrade policy', () => {
   beforeEach(() => setup());
@@ -259,7 +162,7 @@ describe('/node/pair', () => {
     const ws = await open(NODE_PAIR_PATH);
     const code = await pendingCode(ws, 'late');
     const refused = message(ws);
-    nowMs += 600_001;
+    advanceClock(600_001);
     expect(await pairing.approve(code)).toEqual({ ok: false, reason: 'expired' });
     expect(decodePairServerFrame(await refused)).toMatchObject({
       ok: true,
@@ -445,66 +348,3 @@ describe('/node/pair', () => {
 function hashOf(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
 }
-
-describe('/node/admin routes', () => {
-  const COOKIE = { cookie: 'ethos_auth=good' };
-  const POST_HEADERS = {
-    ...COOKIE,
-    host: '127.0.0.1:3000',
-    origin: 'http://127.0.0.1:3000',
-    'content-type': 'application/json',
-  };
-  let app: Hono;
-  let code: string;
-
-  beforeEach(async () => {
-    await setup();
-    app = new Hono();
-    app.onError(errorHandler);
-    app.use('/node/admin/*', authMiddleware({ verify: async (c) => c === 'good' }));
-    app.use('/node/admin/*', csrfMiddleware());
-    app.route('/node/admin', nodeAdminRoutes({ hub, pairing }));
-    const ws = await open(NODE_PAIR_PATH);
-    ws.send(pairRequest('adminpaired'));
-    await until(() => pairing.listPending().length === 1);
-    code = pairing.listPending()[0]?.code ?? '';
-  });
-
-  const approve = (headers: Record<string, string>, body: unknown) =>
-    app.request('/node/admin/approve', {
-      method: 'POST',
-      headers,
-      body: typeof body === 'string' ? body : JSON.stringify(body),
-    });
-
-  it('both routes are 401 without the cookie', async () => {
-    expect((await app.request('/node/admin/list')).status).toBe(401);
-    expect((await approve({ 'content-type': 'application/json' }, { code })).status).toBe(401);
-  });
-
-  it('GET /list returns nodes and pending', async () => {
-    const res = await app.request('/node/admin/list', { headers: COOKIE });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      nodes: [],
-      pending: [{ code, name: 'adminpaired', roots: ROOTS }],
-    });
-  });
-
-  it('POST /approve: 400 bad body, 200 ok, 404 unknown, 410 expired', async () => {
-    expect((await approve(POST_HEADERS, '{nope')).status).toBe(400);
-    expect((await approve(POST_HEADERS, { code: 5 })).status).toBe(400);
-    const ok = await approve(POST_HEADERS, { code });
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toMatchObject({ ok: true, name: 'adminpaired' });
-    const again = await approve(POST_HEADERS, { code });
-    expect(again.status).toBe(404);
-    expect(await again.json()).toEqual({ ok: false, reason: 'unknown_code' });
-    const ws = await open(NODE_PAIR_PATH);
-    ws.send(pairRequest('stale'));
-    await until(() => pairing.listPending().length === 1);
-    const stale = pairing.listPending()[0]?.code ?? '';
-    nowMs += 600_001;
-    expect((await approve(POST_HEADERS, { code: stale })).status).toBe(410);
-  });
-});
