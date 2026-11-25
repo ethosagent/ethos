@@ -20,10 +20,14 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
-import { getDefaultModel } from '@ethosagent/wiring/model-catalog';
 import { serve as honoServe } from '@hono/node-server';
 import { resolveBuiltinPersonalitiesDir } from './builtin-personalities-dir';
 import { resolveCallCaptureNativeDir, startCallCaptureDesktop } from './call-capture';
+import {
+  readSharedModelSettings,
+  resolveDesktopModelSettings,
+  type SharedModelSettings,
+} from './desktop-config';
 import { getKeychainValue } from './keychain';
 import { type DesktopRuntime, shutdownDesktopRuntime } from './runtime-shutdown';
 import { store } from './store';
@@ -93,10 +97,10 @@ export function sharedEthosDir(): string {
  * `apps/ethos/src/wiring.ts` relies on for the CLI's own `auxiliary.asr` /
  * `auxiliary.tts` wiring.
  *
- * Only these three fields are pulled from the shared file — every other
- * desktop-specific field (provider, model, personality, memory, …) stays
- * sourced from the Electron store, since those make sense to differ per
- * surface while STT/TTS credentials and the call-capture binding do not.
+ * Only these three fields are pulled by this reader; provider, model,
+ * personality and apiKey come from `<dataDir>/config.yaml` through
+ * `readSharedModelSettings` (./desktop-config), and the rest (memory, …)
+ * stays sourced from the Electron store.
  *
  * Returns `{}` when `~/.ethos/config.yaml` doesn't exist or carries none of
  * `auxiliary.asr` / `auxiliary.tts` / `callCapture.personalityId` — matching
@@ -274,14 +278,6 @@ export async function startServer(port: number): Promise<number> {
 async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   const dataDir = getDataDir();
 
-  const provider = (store.get('provider') as string) ?? 'anthropic';
-  const model =
-    (store.get('model') as string) ?? getDefaultModel('anthropic')?.modelId ?? 'claude-opus-5-5';
-  const baseUrl = store.get('baseUrl') as string | undefined;
-
-  // Prefer keychain; fall back to secrets file (written by the onboarding handler)
-  const apiKey = (await getKeychainValue('api-key')) ?? '';
-
   // Same store the codex device-auth IPC handler writes to (see ipc.ts).
   // Without it the provider factories get the wiring package's null-object
   // fallback, so credentials that only live in the secret store — codex
@@ -290,6 +286,29 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     dir: join(dataDir, 'secrets'),
     storage: new FsStorage(),
   });
+
+  // config.yaml owns provider/model/personality/apiKey (the SPA's onboarding
+  // writes it, the web header reads it); the store and defaults fill gaps —
+  // `resolveDesktopModelSettings` (./desktop-config). An unreadable file keeps
+  // the store/default path.
+  let sharedModel: SharedModelSettings = {};
+  try {
+    sharedModel = await readSharedModelSettings(new FsStorage(), secretsResolver, dataDir);
+  } catch (err) {
+    console.warn(
+      `[ethos-backend] failed to read the model settings from ${join(dataDir, 'config.yaml')}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const { provider, model, personality, apiKey, baseUrl } = resolveDesktopModelSettings(
+    sharedModel,
+    {
+      provider: store.get('provider'),
+      model: store.get('model'),
+      personality: store.get('personalityId'),
+      baseUrl: store.get('baseUrl'),
+    },
+    await getKeychainValue('api-key'),
+  );
 
   // Shared STT/TTS infra and call-capture binding from the CLI's own
   // `~/.ethos/config.yaml` — see `readSharedVoiceAndCallCaptureConfig` above.
@@ -384,7 +403,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     provider,
     model,
     apiKey,
-    personality: (store.get('personalityId') as string | undefined) ?? 'operator',
+    personality,
     memory: store.get('memory') ?? 'markdown',
     ...(baseUrl ? { baseUrl } : {}),
     ...(callCapturePersonalityId

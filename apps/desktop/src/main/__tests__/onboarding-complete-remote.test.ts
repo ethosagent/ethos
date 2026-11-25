@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -132,5 +132,25 @@ describe('onboarding:complete in remote mode', () => {
     expect(existsSync(join(dataDir, 'config.yaml'))).toBe(true);
     expect(backing.get('onboardingComplete')).toBe(true);
     expect(appEmit).toHaveBeenCalledWith('ethos:onboarding-complete');
+  });
+
+  it('merges into an existing config.yaml instead of overwriting it', async () => {
+    backing.set('connectionMode', 'local');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(
+      join(dataDir, 'config.yaml'),
+      ['provider: openai', 'model: gpt-5.5', 'personality: coach', 'nodes.enabled: true', ''].join(
+        '\n',
+      ),
+    );
+
+    const result = await completeOnboarding();
+
+    expect(result).toEqual({ success: true });
+    const src = readFileSync(join(dataDir, 'config.yaml'), 'utf8');
+    expect(src).toContain('provider: anthropic');
+    expect(src).toContain('model: claude-sonnet-4-20250514');
+    expect(src).toContain('personality: engineer');
+    expect(src).toContain('nodes.enabled: true');
   });
 });

@@ -15,6 +15,7 @@ import {
   resolveBackendBaseUrl,
   testConnection,
 } from './connection';
+import { mergeOnboardingIntoConfig } from './desktop-config';
 import { getGatewayLogPath, getGatewayStatus, startGateway, stopGateway } from './gateway-control';
 import { getKeychainValue, setKeychainValue } from './keychain';
 import { getLoginItem, setLoginItem } from './login-item';
@@ -384,17 +385,16 @@ export function registerIpcHandlers(): void {
         writeFileSync(join(secretsDir, 'api-key'), `${req.apiKey}\n`, { mode: 0o600 });
       }
 
-      const lines = [
-        'schemaVersion: 1',
-        `provider: ${req.provider}`,
-        `model: ${req.model}`,
-        `personality: ${req.personalityId}`,
-      ];
-      if (req.apiKey) {
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal YAML secrets ref, not a JS template
-        lines.push('apiKey: ${secrets:api-key}');
-      }
-      writeFileSync(join(ethosDir, 'config.yaml'), `${lines.join('\n')}\n`);
+      // Merged, not overwritten: every key the wizard does not set survives.
+      await mergeOnboardingIntoConfig(
+        { storage: new FsStorage(), dataDir: ethosDir },
+        {
+          provider: req.provider,
+          model: req.model,
+          personality: req.personalityId,
+          apiKeyRef: Boolean(req.apiKey),
+        },
+      );
 
       store.set('provider', req.provider as 'anthropic' | 'openai' | 'openrouter' | 'azure');
       store.set('model', req.model);
