@@ -24,3 +24,13 @@ export const callKeys = {
   active: () => [...callKeys.all(), 'active'] as const,
   detail: (id: string) => [...callKeys.all(), 'detail', id] as const,
 };
+
+/** Per-room policy (Communications > Rooms). The preview input is part of the
+ *  key, so each draft the operator types is its own cache entry and a slow
+ *  answer for an older draft can never overwrite the newer one's. */
+export const roomKeys = {
+  all: () => ['rooms'] as const,
+  list: (platform: string) => [...roomKeys.all(), 'list', platform] as const,
+  recent: (platform: string) => [...roomKeys.all(), 'recent', platform] as const,
+  preview: (input: unknown) => [...roomKeys.all(), 'preview', JSON.stringify(input)] as const,
+};

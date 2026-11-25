@@ -1,12 +1,26 @@
 import { helpEmbed } from '../blocks/help';
 import { DEFAULT_CHANNEL_MODE } from '../config';
-import type { CommandContext, CommandPayload, CommandResponse } from './index';
+import { resolveChannelMode } from '../routing/triage';
+import {
+  type CommandContext,
+  type CommandPayload,
+  type CommandResponse,
+  commandRoom,
+} from './index';
 
 export function handleHelp(payload: CommandPayload, ctx: CommandContext): CommandResponse {
-  const channelMode =
-    ctx.channelOverrides?.get(payload.channelId)?.mode ??
-    ctx.defaultChannelMode ??
-    DEFAULT_CHANNEL_MODE;
+  const room = commandRoom(payload);
+  const channelMode = resolveChannelMode(
+    room.chatId,
+    {
+      botKey: '',
+      defaultChannelMode: ctx.defaultChannelMode ?? DEFAULT_CHANNEL_MODE,
+      defaultChannelModeConfigured: ctx.defaultChannelModeConfigured,
+      roomModeDefault: ctx.roomModeDefault,
+      channelOverrides: ctx.channelOverrides,
+    },
+    { isDm: !payload.guildId, ...(room.threadId ? { threadId: room.threadId } : {}) },
+  );
   return {
     embeds: [helpEmbed({ binding: ctx.binding, channelId: payload.channelId, channelMode })],
     ephemeral: true,

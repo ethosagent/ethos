@@ -4,7 +4,7 @@ description: "The Ethos desktop app (Electron): native Mac, Windows, and Linux i
 kind: reference
 audience: shared
 slug: platform-desktop
-updated: 2026-08-14
+updated: 2026-11-25
 ---
 
 The Ethos desktop app is an Electron shell that provides a native Mac, Windows, and Linux interface with the same [agent](../getting-started/glossary.md#agent) capabilities as the CLI and web dashboard. It runs in local mode (embedded server) or remote mode (connected to an external Ethos instance).
@@ -23,6 +23,7 @@ The desktop app wraps the Ethos web UI in a native window. It provides:
 
 - Full agent chat with streaming responses and [tool](../getting-started/glossary.md#tool) events
 - Settings panel for [personality](../getting-started/glossary.md#personality), MCP server, and connection management
+- Communications tab with per-room prompts and reply rules for Slack, Discord, Telegram and WhatsApp ([how-to](../using/how-to/give-each-room-its-own-prompt.md#from-the-web-ui))
 - Local mode with an embedded `web-api` process (no separate server required)
 - Remote mode connecting to any running Ethos server instance
 - Status bar indicator showing connection state

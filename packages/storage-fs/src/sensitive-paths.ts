@@ -337,6 +337,9 @@ const sqliteFiles = (name: string): string[] => [name, `${name}-wal`, `${name}-s
  *   `skills_pending_*`, the nightly pass, `ethos learning`, the web Learning
  *   page — holds compose-time Storage (`LearningContext` in
  *   packages/wiring/src/learning-pipeline.ts), never a turn's.
+ * - `channels` — the per-room prompt files (`channels/<platform>/<room>.md`,
+ *   plan channel-prompts D15) the gateway loads into the static system block;
+ *   a turn that could write there could plant standing instructions for a room.
  */
 const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   'keys.json',
@@ -356,6 +359,7 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   ...sqliteFiles('observability.db'),
   ...sqliteFiles('memory.db'),
   'learning',
+  'channels',
 ];
 
 /**

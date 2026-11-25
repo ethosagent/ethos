@@ -62,18 +62,24 @@ describe('ethos boot — §3b construction order', () => {
   });
 
   it('constructs the CallCaptureOwnershipManager exactly once, gateway-role (§11 OQ11)', async () => {
-    const src = await read('apps/ethos/src/commands/boot.ts');
+    // The construction lives in boot-callcapture.ts (split out of boot.ts); boot.ts
+    // calls `startBootCallCapture` exactly once.
+    const boot = await read('apps/ethos/src/commands/boot.ts');
+    expect(boot.match(/startBootCallCapture\(\{/g) ?? []).toHaveLength(1);
+    expect(boot).toMatch(/startBootCallCapture\(\{[\s\S]*?runCallCapture: shared\.runCallCapture,/);
+    expect(boot).toMatch(/startBootCallCapture\(\{[\s\S]*?\n\s+watcherWake,/);
+    const src = await read('apps/ethos/src/commands/boot-callcapture.ts');
     const constructions = src.match(/new CallCaptureOwnershipManager\(\{/g) ?? [];
     expect(constructions).toHaveLength(1);
     expect(src).toMatch(
-      /process\.platform === 'darwin' && cfg\.callCapture\?\.personalityId && runCallCaptureFromLoop/,
+      /process\.platform === 'darwin' && cfg\.callCapture\?\.personalityId && captureRunner/,
     );
     expect(src).toMatch(/lockPath: callCaptureLockPath\(dir\),/);
     expect(src).toMatch(/retryIntervalMs: CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,/);
-    expect(src).toMatch(/callCaptureOwnershipManager\.start\(\);/);
+    expect(src).toMatch(/manager\.start\(\);/);
     // Gateway-role, not serve-role: the wake it drives must reach a real
     // routing table via `gateway.handleMessage`.
-    expect(src).toMatch(/await gateway\.handleMessage\(msg, adapter\);/);
+    expect(boot).toMatch(/await gateway\.handleMessage\(msg, adapter\);/);
   });
 
   it('runs reconciliation after the adapters start and before any server binds', async () => {
@@ -134,7 +140,7 @@ describe('ethos boot — §3b construction order', () => {
       "await guard('approval-flow',", // gateway role
       'created.forceSettleApprovals();', // serve role
       'healthServer.close();',
-      'await callCaptureOwnershipManager?.stop();',
+      'await callCapture.manager?.stop();',
       'await gateway.shutdown({',
       'deliveryLedger.close();',
       'await mesh.unregister(agentId)',

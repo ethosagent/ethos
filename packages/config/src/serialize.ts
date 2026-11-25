@@ -1,4 +1,5 @@
 import { SECRET_NAME_RE } from '@ethosagent/types';
+import { channelsToLines } from './builders/channels';
 import { backgroundToLines } from './builders/cron-background';
 import type { BotBudgetConfig } from './builders/platforms';
 import { retentionToLines } from './builders/retention';
@@ -843,6 +844,7 @@ export function serializeConfigLines(config: EthosConfig): string[] {
   for (const [platform, ids] of Object.entries(config.gateway?.privateChats ?? {})) {
     if (ids.length > 0) lines.push(`gateway.private_chats.${platform}: ${ids.join(',')}`);
   }
+  if (config.channels) lines.push(...channelsToLines(config.channels));
   if (config.decisions) lines.push(...serializeDecisionsLines(config.decisions));
   if (config.teamSupervisor?.restartLoopGuard) {
     const rg = config.teamSupervisor.restartLoopGuard;

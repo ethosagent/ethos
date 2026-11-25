@@ -22,17 +22,10 @@
 // interactive (D10).
 
 import type { ReactNode } from 'react';
-import { appliesForFormName, type SettingApplies } from '../lib/applies';
+import { APPLIES_BADGE, appliesForFormName, type SettingApplies } from '../lib/applies';
 import { isDerivedFormName, keyForFormName, statusForFormName } from '../lib/settings-index';
 import { AdvancedBlock } from './advanced';
 import { StatusCallout } from './status-callout';
-
-/** Glyph + word per applies value (§6.5) — never colour alone. */
-const APPLIES_BADGE: Record<SettingApplies, { glyph: string; word: string }> = {
-  live: { glyph: '·', word: 'live' },
-  'next-turn': { glyph: '⏳', word: 'next turn' },
-  'gateway-restart': { glyph: '⚠', word: 'gateway restart' },
-};
 
 export function SettingRow({
   label,

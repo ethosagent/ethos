@@ -47,6 +47,25 @@ export interface InboundMessage {
   audienceHint?: 'shared';
   isGroupMention: boolean;
   /**
+   * Room name/topic/purpose, UNTRUSTED (any room member can edit them). Stamped
+   * only by adapters whose platform `fetch_metadata` is on; the gateway attaches
+   * it to the turn only when the resolved room entry also opts in (plan
+   * channel-prompts D14). Optional and additive.
+   */
+  roomMetadata?: { topic?: string; purpose?: string; name?: string };
+  /**
+   * The effective channel mode the adapter's triage computed for this message.
+   * Diagnostic only: nothing routes on it. Stamped alongside `roomMetadata`.
+   */
+  channelMode?: string;
+  /**
+   * Which layer supplied `channelMode`: a runtime `ChannelOverrideStore`
+   * override, the room config's `mode`, the platform's `defaultChannelMode`, or
+   * the adapter's built-in default (plan channel-prompts L12). Diagnostic only;
+   * stamped with `channelMode`.
+   */
+  channelModeSource?: 'runtime' | 'room' | 'platform' | 'default';
+  /**
    * Platform-native message ID. When set, Gateway dedupes duplicate inbounds
    * sharing the same `(platform, chatId, messageId)` triple — protecting
    * against polling reconnects, double-delivery, and webhook retries.
@@ -135,6 +154,19 @@ export interface InboundMessage {
 }
 
 /** One attributed line of `InboundMessage.priorContext`. */
+/**
+ * The room config's default reply mode for a room (plan channel-prompts L12).
+ * Injected by the host (`buildAdapters`), because adapters must not import the
+ * gateway. Absent, or returning undefined: the adapter behaves as before.
+ * Additive; defined once here and re-exported by each platform adapter's config.
+ */
+export type RoomModeDefault = (input: {
+  chatId: string;
+  threadId?: string;
+  isDm: boolean;
+  roomName?: string;
+}) => string | undefined;
+
 export interface PriorContextEntry {
   /**
    * Platform sender id for this line, in the same id space as
@@ -220,6 +252,20 @@ export interface PlatformAdapter {
   onMessage(handler: (message: InboundMessage) => void): void;
   health(): Promise<{ ok: boolean; latencyMs?: number }>;
   registerCommands?(cmds: { name: string; description: string }[]): Promise<void>;
+  /**
+   * The bot's own identity on this platform, from the platform's auth (Slack
+   * `auth.test`, Telegram `getMe`, Discord `client.user`, WhatsApp `botJid`).
+   * `undefined` until known. Static per bot. Rendered into the room prompt's
+   * identity line (plan channel-prompts §3.8, D10). Optional and additive.
+   */
+  selfIdentity?(): { handle: string; platformUserId?: string } | undefined;
+  /**
+   * The turn ended without this adapter sending anything (a silent room's
+   * NO_REPLY). Lets an adapter clear a per-turn presence artifact, such as
+   * Discord's "Thinking..." placeholder, that only `send`/`editMessage` would
+   * otherwise remove. Best-effort; optional and additive.
+   */
+  endTurn?(chatId: string, opts?: { threadId?: string }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

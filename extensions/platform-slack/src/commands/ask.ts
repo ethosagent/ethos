@@ -1,6 +1,7 @@
 import { plaintextFallback, section } from '../blocks/shared';
-import { canSpeakInChannel, isSlackDm, resolveChannelMode } from '../routing/triage';
+import { canSpeakInChannel, isSlackDm } from '../routing/triage';
 import type { SlashCommandPayload, SlashContext, SlashResponse } from './index';
+import { slashChannelMode } from './mode';
 
 export async function handleAsk(
   payload: SlashCommandPayload,
@@ -32,11 +33,7 @@ export async function handleAsk(
   // `/ethos ask`, with a refusal telling the user to ask in a DM. There is no
   // room of third parties in a one-to-one conversation for a mode to protect,
   // which is why `evaluateChannelMode` ranks `isDm` above the mode.
-  const channelMode = resolveChannelMode(payload.channel_id, {
-    botKey: '',
-    defaultChannelMode: ctx.defaultChannelMode,
-    channelOverrides: ctx.channelOverrides,
-  });
+  const { mode: channelMode } = slashChannelMode(payload.channel_id, ctx, payload.channel_name);
   const isDm = isSlackDm(payload.channel_id, payload.channel_name);
   if (!canSpeakInChannel(channelMode, isDm)) {
     // Naming the mode verbatim makes this one of the ungated surfaces an

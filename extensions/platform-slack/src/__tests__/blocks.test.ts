@@ -110,10 +110,10 @@ describe('blocks/personality', () => {
 
 describe('blocks/channel-mode', () => {
   it('show identifies override vs default source', () => {
-    const blocks = channelModeShowBlocks({ channel: 'C1', mode: 'all', isOverride: true });
+    const blocks = channelModeShowBlocks({ channel: 'C1', mode: 'all', source: 'runtime' });
     expect(plaintextFallback(blocks)).toContain('per-channel override');
 
-    const blocks2 = channelModeShowBlocks({ channel: 'C1', mode: 'all', isOverride: false });
+    const blocks2 = channelModeShowBlocks({ channel: 'C1', mode: 'all', source: 'default' });
     expect(plaintextFallback(blocks2)).toContain('app default');
   });
 

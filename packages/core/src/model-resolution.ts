@@ -326,10 +326,18 @@ function toResolved(
  *
  * The rung-specific half of the sentence; `describeDeviation` owns the frame.
  */
-function outrankedReason(rung: DeclaringRung, personalityId: string): string {
+function outrankedReason(
+  rung: DeclaringRung,
+  personalityId: string,
+  runOverrideLabel?: string,
+): string {
   switch (rung.source) {
     case 'run-override':
-      return `You pinned "${rung.value}" for this run.`;
+      // A room's policy (`RunOptions.modelOverrideSource: 'room'`) is not the
+      // person's `/model` pin; the label names who actually set it.
+      return runOverrideLabel
+        ? `${runOverrideLabel} sets "${rung.value}" for this run.`
+        : `You pinned "${rung.value}" for this run.`;
     case 'team-coordinator':
       return `The team manifest's coordinator model "${rung.value}" wins.`;
     case 'team-personality':
@@ -344,6 +352,7 @@ function outrankedDeviation(
   personality: Pick<PersonalityConfig, 'id' | 'model'>,
   role: ModelRoleName,
   effectiveAlias: string,
+  runOverrideLabel?: string,
 ): ModelDeviation | undefined {
   // D17 row 8 fires for rungs 0–2 only: the trigger is "a HIGHER rung outranks
   // the personality's own declaration".
@@ -366,11 +375,12 @@ function outrankedDeviation(
     kind: 'outranked',
     declared: own,
     effective: effectiveAlias,
-    reason: outrankedReason(winner, personality.id),
+    reason: outrankedReason(winner, personality.id, runOverrideLabel),
     // `once` is a property of the row (D17): a config fact is true until someone
     // edits a file, but a `/model` pin is something the person typed this turn
-    // and the confirmation is the point.
-    once: winner.source !== 'run-override',
+    // and the confirmation is the point. A labelled override (a room's policy)
+    // is a config fact, so it is `once` too.
+    once: winner.source !== 'run-override' || runOverrideLabel !== undefined,
   };
 }
 
@@ -402,6 +412,8 @@ export function resolveModel(input: {
   role: ModelRoleName;
   ctx: ModelResolutionContext;
   runOverride?: string;
+  /** Subject of the rung-0 deviation sentence ("This room's policy"); absent reads "You pinned". */
+  runOverrideLabel?: string;
   isCoordinator?: boolean;
 }): ResolvedModel | ModelResolutionFailure {
   const registry = input.ctx.registry;
@@ -454,7 +466,14 @@ export function resolveModel(input: {
           entry,
           winner.source,
           true,
-          legacyDeviation ?? outrankedDeviation(winner, input.personality, input.role, entry.alias),
+          legacyDeviation ??
+            outrankedDeviation(
+              winner,
+              input.personality,
+              input.role,
+              entry.alias,
+              input.runOverrideLabel,
+            ),
         );
       }
       return unresolved({

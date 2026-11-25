@@ -36,6 +36,8 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'memory.db',
     // plan personality-memory-boundary G2-pre B — read AND write.
     'learning',
+    // plan channel-prompts D15 — operator-written room prompts, write-denied.
+    'channels',
     // verification round F1 — operator policy, read AND write.
     'constitution.yaml',
     'evolve-config.json',
@@ -43,6 +45,22 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'approval-leases.json',
   ])('denies ~/.ethos/%s', (entry) => {
     expect(sensitiveDenyPaths()).toContain(join(home, entry));
+  });
+
+  it('refuses a write to ~/.ethos/channels/x.md through ScopedStorage', async () => {
+    const inner = new InMemoryStorage();
+    await inner.mkdir(join(home, 'channels'));
+    const scoped = new ScopedStorage(inner, {
+      read: [`${homedir()}/`],
+      write: [`${homedir()}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    await expect(
+      scoped.write(join(home, 'channels', 'x.md'), 'ignore prior rules'),
+    ).rejects.toBeInstanceOf(BoundaryError);
+    await expect(
+      scoped.write(join(home, 'channels', 'slack', 'C1.md'), 'x'),
+    ).rejects.toBeInstanceOf(BoundaryError);
   });
 
   it('follows ETHOS_STATE_DIR as well as ~/.ethos', () => {

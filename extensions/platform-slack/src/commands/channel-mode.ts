@@ -5,8 +5,8 @@ import {
 } from '../blocks/channel-mode';
 import { plaintextFallback, section } from '../blocks/shared';
 import { ChannelModeSchema } from '../config';
-import { resolveChannelMode } from '../routing/triage';
 import type { SlashContext, SlashResponse } from './index';
+import { slashChannelMode } from './mode';
 
 export async function handleChannelMode(
   channel: string,
@@ -16,13 +16,8 @@ export async function handleChannelMode(
   const arg = rest.trim().toLowerCase();
 
   if (!arg || arg === 'show') {
-    const mode = resolveChannelMode(channel, {
-      botKey: '',
-      defaultChannelMode: ctx.defaultChannelMode,
-      channelOverrides: ctx.channelOverrides,
-    });
-    const isOverride = ctx.channelOverrides?.get(channel) !== undefined;
-    const blocks = channelModeShowBlocks({ channel, mode, isOverride });
+    const { mode, source } = slashChannelMode(channel, ctx);
+    const blocks = channelModeShowBlocks({ channel, mode, source });
     return { blocks, text: plaintextFallback(blocks), responseType: 'ephemeral' };
   }
 

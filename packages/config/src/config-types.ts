@@ -8,6 +8,7 @@ import type {
   SttProviderEntry,
   TtsProviderEntry,
 } from '@ethosagent/types';
+import type { ChannelsPlatformConfig } from './builders/channels';
 import type { BackgroundConfig, CronTopLevelConfig } from './builders/cron-background';
 import type {
   MemoryApprovalConfig,
@@ -731,6 +732,8 @@ export interface EthosConfig {
    * mention gating, and context-visibility stripping per platform.
    */
   channelFilter?: ChannelFilterConfig;
+  /** Per-room entries by platform; see `ChannelsPlatformConfig` (restart-required on change). */
+  channels?: Record<string, ChannelsPlatformConfig>;
   /**
    * FW-29 — skill evolver cron registration.
    *   `evolverCronEnabled` — when true, registers an in-process cron job that

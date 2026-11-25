@@ -1,6 +1,7 @@
 import type { DeliveryResult, OutboundMessage } from '@ethosagent/types';
 import type { DedupScope, MessageDedupCache } from './dedup';
 import { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
+import { couldBecomeSilentMarker } from './silent-reply';
 
 // ---------------------------------------------------------------------------
 // Streaming draft edits (W3.1)
@@ -123,6 +124,18 @@ export interface DraftStreamerOptions {
    * ledger row and its dedup record match the draft. Absent = bodies as-is.
    */
   prefixBody?: (body: string) => string;
+  /**
+   * Per-room silence (plan channel-prompts L11). While this returns true and
+   * no draft exists yet, nothing is posted as long as the accumulated text
+   * could still become a silence marker (`couldBecomeSilentMarker`: empty, or
+   * a prefix of `NO_REPLY` / `[SILENT]`). That holds back a pre-text progress
+   * line too: `PlatformAdapter` has no delete, so a draft that turned out to
+   * be a marker could not be retracted. Once the text diverges the held text
+   * flushes as the first message. A function, not a boolean, because the
+   * gateway resolves the room after it builds the streamer. Absent = no hold.
+   * Pinned by `__tests__/room-silence.test.ts`.
+   */
+  silentHold?: () => boolean;
   /** Minimum ms between successive edits (the first send is never throttled). */
   minEditIntervalMs?: number;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -155,6 +168,7 @@ export class DraftStreamer {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onFloodDisable: (() => void) | undefined;
   private readonly prefixBody: ((body: string) => string) | undefined;
+  private readonly silentHold: (() => boolean) | undefined;
 
   private messageId: string | undefined;
   private latestText = '';
@@ -178,6 +192,7 @@ export class DraftStreamer {
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.onFloodDisable = opts.onFloodDisable;
     this.prefixBody = opts.prefixBody;
+    this.silentHold = opts.silentHold;
   }
 
   /** True once at least one draft message has been delivered. */
@@ -296,6 +311,14 @@ export class DraftStreamer {
 
   private async maybeFlush(): Promise<void> {
     if (this.degraded) return;
+    // Silent lane, no draft yet: hold while the text could still be a marker.
+    if (
+      this.messageId === undefined &&
+      this.silentHold?.() === true &&
+      couldBecomeSilentMarker(this.latestText)
+    ) {
+      return;
+    }
     const body = this.composeBody();
     if (!body || body === this.lastRenderedBody) return;
     // The first message is never throttled — a fast first paint is the point.

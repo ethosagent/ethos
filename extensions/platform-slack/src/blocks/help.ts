@@ -24,6 +24,7 @@ export function helpBlocks(input: {
         '`/ethos memory add <text>` — append a memory entry',
         '`/ethos kanban list` — open kanban tickets (team bots only)',
         '`/ethos channel-mode show|all|thread_follow|mention_only|observe` — per-channel reply mode',
+        '`/ethos channel [show]` — this room’s prompt policy (`show`: owner, DM only)',
         '`/ethos help` — this message',
       ].join('\n'),
     ),

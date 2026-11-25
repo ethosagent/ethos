@@ -4,7 +4,7 @@ description: "Route Telegram chats, replies and group mentions to sessions; grou
 kind: how-to
 audience: shared
 time: "5 min"
-updated: 2026-11-03
+updated: 2026-11-25
 ---
 
 ## Task
@@ -101,6 +101,12 @@ DMs are answered under every mode. `regex_match` matches a per-chat stored patte
 A bot left on `observe` while privacy mode is still on records nothing, and says so at boot: `Telegram privacy mode is ON for @<username> — chats set to observe will record nothing.` Fix it with the BotFather sequence above, re-add included.
 
 **There is no per-chat command on Telegram.** Slack's `/ethos channel-mode` has no Telegram equivalent, so this key is the only way to set a mode today and it cannot be narrowed to one group. Field details are in [`telegram.bots.*`](../../using/reference/config-yaml.md#telegram-bots).
+
+### 3c. Per-room prompts
+
+A Telegram room's id is the chat id: groups and supergroups are negative (`-100…`), private chats are positive. A topic id is the last number in the topic link (`t.me/c/…/<topic>`). In a forum group, a topic's id is the `message_thread_id`, and its entry nests under the group: `channels.telegram.-1001234567890.topics.99.prompt`. The topic's prompt is added after the group's. The General topic (id `1`) uses the group's own entry. A private chat matches `channels.telegram.*dm`.
+
+In a group the model gets a line naming the bot (`@<username>`, from Telegram's `getMe`). Turn it off with `identity: false`. Telegram room metadata is not fetched. Send `/channel` in the chat to see which entry matched. Full recipe: [Give each room its own prompt](../../using/how-to/give-each-room-its-own-prompt.md).
 
 ## Verify
 

@@ -5,14 +5,27 @@
 import type { ChannelOverrideStore } from '@ethosagent/core';
 import { evaluateChannelMode } from '@ethosagent/core';
 import type { InboundMessage } from '@ethosagent/types';
-import { CHANNEL_MODES, type ChannelMode, DEFAULT_CHANNEL_MODE } from '../config';
+import {
+  CHANNEL_MODES,
+  type ChannelMode,
+  DEFAULT_CHANNEL_MODE,
+  type RoomModeDefault,
+} from '../config';
 import type { ThreadStateStore } from '../store/thread-state';
 
 /** What the adapter knows about itself + its persistent state. */
 export interface TriageContext {
   botKey: string;
   defaultChannelMode: ChannelMode;
+  /** `defaultChannelMode` came from the platform config (not the adapter's built-in). */
+  defaultChannelModeConfigured?: boolean;
   channelOverrides?: ChannelOverrideStore<ChannelMode>;
+  /**
+   * Room config's default reply mode (plan channel-prompts L12), injected by the
+   * host so this package never imports the gateway. Sits BELOW a runtime
+   * override and ABOVE the platform default. Absent: today's behaviour.
+   */
+  roomModeDefault?: RoomModeDefault;
   threadState?: ThreadStateStore;
 }
 
@@ -42,6 +55,12 @@ export interface RawDiscordMessage {
   raw: unknown;
 }
 
+/** What the room-config default needs beyond the chat id. */
+export interface ModeScope {
+  threadId?: string;
+  isDm?: boolean;
+}
+
 export interface TriageResult {
   /** Built envelope; only present when the message reaches the agent. */
   envelope?: InboundMessage;
@@ -57,6 +76,8 @@ export interface TriageResult {
    * about a bad override — the same value reaches `/ethos help`.
    */
   effectiveMode: string;
+  /** Which layer supplied `effectiveMode` (diagnostic; stamped as `channelModeSource`). */
+  modeSource: NonNullable<InboundMessage['channelModeSource']>;
   /**
    * `true` when the message reaches the agent ONLY because it names the bound
    * personality: without the name it would not be answered. No receipt
@@ -71,10 +92,13 @@ export async function triageMessage(
   ctx: TriageContext,
 ): Promise<TriageResult> {
   const chatId = msg.isThread ? (msg.parentChannelId ?? msg.channelId) : msg.channelId;
-  const channelMode = resolveChannelMode(chatId, ctx);
+  const { mode: channelMode, source: modeSource } = resolveChannelModeSource(chatId, ctx, {
+    isDm: msg.isDm,
+    ...(msg.isThread && msg.threadId ? { threadId: msg.threadId } : {}),
+  });
 
   const text = msg.isMention ? stripMentions(msg.text).trim() : msg.text.trim();
-  if (!text) return { drop: 'no_text', effectiveMode: channelMode };
+  if (!text) return { drop: 'no_text', effectiveMode: channelMode, modeSource };
 
   const threadId = msg.isThread ? msg.threadId : undefined;
   const hasBotPosted =
@@ -92,7 +116,8 @@ export async function triageMessage(
   });
 
   // Only a message that is neither answered nor recorded is dropped here.
-  if (!decision.shouldRecord) return { drop: 'channel_mode', effectiveMode: channelMode };
+  if (!decision.shouldRecord)
+    return { drop: 'channel_mode', effectiveMode: channelMode, modeSource };
 
   const nameOnly =
     msg.mentionIsNameOnly === true &&
@@ -127,6 +152,7 @@ export async function triageMessage(
       raw: msg.raw,
     }),
     effectiveMode: channelMode,
+    modeSource,
   };
 }
 
@@ -170,11 +196,38 @@ export function canSpeakInChannel(channelMode: string, isDm: boolean): boolean {
   }).shouldReply;
 }
 
-export function resolveChannelMode(channel: string, ctx: TriageContext): string {
+export function resolveChannelMode(
+  channel: string,
+  ctx: TriageContext,
+  scope: ModeScope = {},
+): string {
   // `.mode` — the shared store indexes `{ mode, regexPattern? }`, where
   // Discord's own copy indexed a bare mode.
+  return resolveChannelModeSource(channel, ctx, scope).mode;
+}
+
+/**
+ * `resolveChannelMode` plus which layer supplied the mode. Precedence (plan
+ * channel-prompts L12): runtime `ChannelOverrideStore` override (the store stays
+ * the only writer) > room config `mode` > platform `defaultChannelMode` >
+ * the adapter's built-in default. A room mode outside this build's enum is
+ * returned as-is and fails closed in `evaluateChannelMode`.
+ */
+export function resolveChannelModeSource(
+  channel: string,
+  ctx: TriageContext,
+  scope: ModeScope = {},
+): { mode: string; source: NonNullable<InboundMessage['channelModeSource']> } {
   const override = ctx.channelOverrides?.get(channel);
-  return override?.mode ?? ctx.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+  if (override) return { mode: override.mode, source: 'runtime' };
+  const room = ctx.roomModeDefault?.({
+    chatId: channel,
+    ...(scope.threadId ? { threadId: scope.threadId } : {}),
+    isDm: scope.isDm ?? false,
+  });
+  if (room !== undefined) return { mode: room, source: 'room' };
+  if (ctx.defaultChannelModeConfigured) return { mode: ctx.defaultChannelMode, source: 'platform' };
+  return { mode: ctx.defaultChannelMode ?? DEFAULT_CHANNEL_MODE, source: 'default' };
 }
 
 interface EnvelopeInputs {

@@ -54,7 +54,7 @@ import {
   type SlashCommandPayload,
 } from './commands';
 import type { Binding, ChannelMode } from './config';
-import { ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
+import { ChannelModeSchema, DEFAULT_CHANNEL_MODE, type RoomModeDefault } from './config';
 import {
   type KanbanUnfurlReader,
   type PersonalityUnfurlReader,
@@ -65,6 +65,7 @@ import { registerMemberEvents } from './events/members';
 import { type EnvelopeMeta, registerMessageEvents } from './events/messages';
 import { toNativeMarkdown } from './format';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
+import { extractSlackFiles } from './inbound-files';
 import {
   type ApprovalActionPayload,
   handleApprovalAction,
@@ -78,7 +79,9 @@ import {
   handleClarifyAction,
   handleClarifyModalSubmission,
 } from './interactions/clarify';
-import { type RawSlackFile, resolveChannelMode } from './routing/triage';
+import { createKeyedChain, createSlackRoomMetadata } from './room-metadata';
+import { deliverStamped, roomModeFields, stampRoomMetadata } from './room-mode';
+import { isSlackDm, type RawSlackFile, resolveChannelMode } from './routing/triage';
 import { createUsernameResolver, type UsernameResolver } from './routing/usernames';
 import { bolt } from './sdk';
 import { BackfillStateStore } from './store/backfill-state';
@@ -115,43 +118,7 @@ function normalizeWebUiBaseUrl(raw: string | undefined): string | undefined {
  *  `gateway.maxInboundMediaBytes` → `SlackAdapterConfig.maxInboundMediaBytes`. */
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
-/**
- * CHS-006 — hosts a token-bearing file download may target.
- *
- * `url_private_download` comes off an event payload, and the download sends
- * the workspace bot token in an `Authorization` header. Confining the host is
- * what stops a forged or tampered event from pointing that header at an
- * attacker's server; the caller pairs this with `redirect: 'error'`, because a
- * 302 off an allowed host would otherwise carry the token anywhere.
- *
- * Suffix match on a leading dot (plus the bare apex) so `slack.com` and
- * `files.slack.com` pass while `slack.com.evil.test` and `notslack.com` do not.
- */
-export function isSlackDownloadUrl(rawUrl: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== 'https:') return false;
-  const host = parsed.hostname.toLowerCase();
-  return host === 'slack.com' || host.endsWith('.slack.com');
-}
-
-const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'svg', 'tiff']);
-/**
- * Audio uploads are now ADMITTED rather than skipped, and classified as
- * `type: 'audio'`, because channel STT consumes them. Skipping them meant a
- * Slack voice memo never reached transcription at all.
- */
-const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a']);
-/**
- * Video stays skipped — nothing downstream consumes it. `webm` is ambiguous
- * (it carries either audio or video) and is overwhelmingly video on Slack, so
- * it stays on the skip list rather than being classified as audio.
- */
-const SKIP_EXTS = new Set(['mp4', 'mov', 'webm', 'avi', 'mkv']);
+export { isSlackDownloadUrl } from './inbound-files';
 
 /**
  * CHS-005 — minimal structural view of the observability sink.
@@ -199,6 +166,12 @@ export interface SlackAdapterConfig {
   binding?: Binding;
   /** Default channel mode for unmapped channels. Defaults to `mention_only`. */
   defaultChannelMode?: ChannelMode;
+  /**
+   * Room config's default reply mode (plan channel-prompts L12), injected by
+   * `buildAdapters` from the room-policy table. Precedence: runtime override >
+   * this > `defaultChannelMode` > built-in. Absent: today's behaviour.
+   */
+  roomModeDefault?: RoomModeDefault;
   /**
    * Slack `bot_id`s whose messages reach the agent. Absent or empty drops
    * every bot/workflow message — the gate is default-closed. An allowlisted
@@ -279,6 +252,13 @@ export interface SlackAdapterConfig {
   mentionByName?: boolean;
   /** Logger for startup diagnostics. Defaults to a silent NoopLogger. */
   logger?: Logger;
+  /**
+   * `channels.slack.fetch_metadata` (plan channel-prompts L7): stamp the
+   * channel's topic, purpose and name (`conversations.info`, 1 h cache) and the
+   * effective channel mode on room messages. Default `false`. Needs the
+   * `channels:read` / `groups:read` scopes; without them it logs and skips.
+   */
+  fetchMetadata?: boolean;
   /**
    * Inbound transport selection. Absent (or absent sub-keys) reproduces
    * today's behaviour exactly: Socket Mode on, HTTP Events off.
@@ -511,6 +491,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   readonly botKey: string;
   readonly binding: Binding | undefined;
   readonly defaultChannelMode: ChannelMode;
+  /** `defaultChannelModeConfigured` + `roomModeDefault`, spread into triage/slash contexts. */
+  private readonly roomModeCtx: ReturnType<typeof roomModeFields>;
 
   private readonly allowedBotIds: string[] | undefined;
   /** Slash-command / App Home allowlist. Undefined denies every user. */
@@ -568,6 +550,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   private readonly chunkMapMaxEntries = 1024;
 
   private readonly logger: Logger;
+  /** Set when `fetchMetadata` is on: cached `conversations.info` lookup. */
+  private readonly roomMetadata?: ReturnType<typeof createSlackRoomMetadata>;
+  /** Tail of each channel's metadata-then-deliver chain, so delivery stays in arrival order. */
+  private readonly metadataDelivery = createKeyedChain();
 
   /** Whether the Slack workspace supports the unofficial typing indicator API. */
   private typingAvailable = false;
@@ -667,6 +653,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     this.id = `slack:${this.botKey}`;
     this.binding = config.binding;
     this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+    this.roomModeCtx = roomModeFields({
+      defaultChannelModeConfigured: config.defaultChannelMode !== undefined,
+      roomModeDefault: config.roomModeDefault,
+    });
     this.allowedBotIds = config.allowedBotIds;
     this.allowedUsers = config.allowedUsers;
     this.observability = config.observability;
@@ -686,6 +676,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     this.longReplyThresholdChars =
       config.longReplyThresholdChars ?? LONG_REPLY_CHUNK_MULTIPLE * this.maxMessageLength;
     this.logger = (config.logger ?? noopLogger).child({ component: 'slack' });
+    if (config.fetchMetadata) {
+      this.roomMetadata = createSlackRoomMetadata(this.client, this.logger);
+    }
 
     if (config.storage) {
       const slackDir = config.slackDir ?? join(homeEthosDir(), 'slack');
@@ -776,10 +769,12 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       {
         botKey: this.botKey,
         defaultChannelMode: this.defaultChannelMode,
+        ...this.roomModeCtx,
         channelOverrides: this.channelOverrides,
         threadState: this.threadState,
         backfillState: this.backfillState,
         users: this.users,
+        ...(this.roomMetadata ? { fetchMetadata: true } : {}),
         ...(this.allowedBotIds ? { allowedBotIds: this.allowedBotIds } : {}),
         mentionsByName: (channel, threadTs, text) => this.mentionsByName(channel, threadTs, text),
       },
@@ -792,13 +787,26 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
 
           const raw = msg.raw as Record<string, unknown> | undefined;
           const files = raw?.files as RawSlackFile[] | undefined;
-          if (files && files.length > 0 && this.cache) {
-            void this.extractFileAttachments(msg, files).then((enriched) => {
-              this.messageHandler?.(enriched);
-            });
-          } else {
-            this.messageHandler?.(msg);
-          }
+          const deliver = (m: InboundMessage): void => {
+            if (files && files.length > 0 && this.cache) {
+              void this.extractFileAttachments(m, files).then((enriched) => {
+                this.messageHandler?.(enriched);
+              });
+            } else {
+              this.messageHandler?.(m);
+            }
+          };
+          deliverStamped(
+            msg,
+            meta,
+            {
+              ...(this.roomMetadata
+                ? { stamp: (m: InboundMessage, e?: EnvelopeMeta) => this.stampRoomMetadata(m, e) }
+                : {}),
+              chain: this.metadataDelivery,
+            },
+            deliver,
+          );
         },
       },
     );
@@ -808,11 +816,16 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     // `canSpeakInChannel`; the slash commands build their own from the same
     // `SlashContext` fields.
     const resolveMode = (channel: string): string =>
-      resolveChannelMode(channel, {
-        botKey: this.botKey,
-        defaultChannelMode: this.defaultChannelMode,
-        channelOverrides: this.channelOverrides,
-      });
+      resolveChannelMode(
+        channel,
+        {
+          botKey: this.botKey,
+          defaultChannelMode: this.defaultChannelMode,
+          ...this.roomModeCtx,
+          channelOverrides: this.channelOverrides,
+        },
+        { isDm: isSlackDm(channel) },
+      );
 
     // `selfUserId` and `selfDisplayName` are read at CALL time through getters
     // (V3-6): these handlers are registered once, on the first `start()`, and
@@ -849,6 +862,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       const response = await dispatchSlash(payload, {
         binding: this.binding ?? { type: 'personality', name: 'unbound' },
         defaultChannelMode: this.defaultChannelMode,
+        ...this.roomModeCtx,
         channelOverrides: this.channelOverrides,
         memory: this.memory,
         kanban: this.kanban,
@@ -1461,6 +1475,18 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
     return name ? mentionsPersonalityName(text, name) : false;
   }
 
+  /** `selfIdentity` (plan channel-prompts §3.8): the `auth.test` name and user id. */
+  selfIdentity(): { handle: string; platformUserId?: string } | undefined {
+    const handle = this.selfDisplayName ?? this.selfUserId;
+    if (!handle) return undefined;
+    return { handle, ...(this.selfUserId ? { platformUserId: this.selfUserId } : {}) };
+  }
+
+  /** Stamp untrusted room metadata + the effective mode; never throws. */
+  private stampRoomMetadata(msg: InboundMessage, meta?: EnvelopeMeta): Promise<InboundMessage> {
+    return stampRoomMetadata(msg, meta, this.roomMetadata);
+  }
+
   private addReceiptReaction(msg: InboundMessage, meta?: EnvelopeMeta): void {
     // An observed channel is one the operator told the agent to be silent in,
     // and a 👀 landing on every message in it is the bot answering — visibly,
@@ -1726,83 +1752,17 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   // File attachment extraction
   // ---------------------------------------------------------------------------
 
-  /**
-   * Enrich an inbound envelope with file attachments downloaded from Slack.
-   * Best-effort: files that fail to download or exceed the size cap are
-   * silently skipped. Video files are skipped; audio is admitted as
-   * `type: 'audio'` so channel STT can transcribe it.
-   */
-  private async extractFileAttachments(
+  /** Enrich an inbound envelope with Slack file attachments (see `inbound-files.ts`). */
+  private extractFileAttachments(
     envelope: InboundMessage,
     files: RawSlackFile[],
   ): Promise<InboundMessage> {
-    // `recordOnly` returns before the first fetch: the gateway's transcript
-    // row is TEXT, so the bytes would be downloaded and cached only to be
-    // thrown away — and a third party's file would sit in the attachment cache
-    // under a lifetime the transcript's retention never touches. The guard is
-    // HERE rather than at the `start()` call site because this is the method a
-    // test can reach; `envelope.text` already carries the caption.
-    if (!this.cache || files.length === 0 || envelope.recordOnly) return envelope;
-
-    const attachments: Attachment[] = [];
-    const sessionKey = `slack:${this.botKey}:${envelope.chatId}`;
-    const messageId = envelope.messageId ?? String(Date.now());
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const ext = (file.filetype ?? '').toLowerCase();
-      if (SKIP_EXTS.has(ext)) continue;
-      if ((file.size ?? 0) > this.maxInboundMediaBytes) continue;
-      if (!file.url_private_download) continue;
-      // CHS-006 — the URL arrives on an event payload, and the request carries
-      // the bot token. Confine it to Slack's own hosts and refuse redirects:
-      // otherwise an attacker-controlled `url_private_download` (or a redirect
-      // off one) exfiltrates the workspace token in an Authorization header.
-      if (!isSlackDownloadUrl(file.url_private_download)) continue;
-
-      const type = IMAGE_EXTS.has(ext)
-        ? ('image' as const)
-        : AUDIO_EXTS.has(ext)
-          ? ('audio' as const)
-          : ('file' as const);
-
-      try {
-        const res = await fetch(file.url_private_download, {
-          headers: { Authorization: `Bearer ${this.botToken}` },
-          redirect: 'error',
-        });
-        if (!res.ok) continue;
-        const contentLength = Number(res.headers.get('content-length') ?? 0);
-        if (contentLength > this.maxInboundMediaBytes) continue;
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        if (bytes.length > this.maxInboundMediaBytes) continue;
-        const filename = file.name ?? `att-${i}`;
-        const mime = file.mimetype ?? 'application/octet-stream';
-        const url = await this.cache.write(bytes, {
-          sessionKey,
-          messageId,
-          filename,
-          mime,
-        });
-        attachments.push({
-          type,
-          ref: `att-${i}`,
-          url,
-          mimeType: mime,
-          filename: file.name,
-          sizeBytes: file.size,
-        });
-      } catch {
-        // Download failed — skip this file silently
-      }
-    }
-
-    if (attachments.length === 0) return envelope;
-
-    return {
-      ...envelope,
-      attachments,
-    };
+    return extractSlackFiles(envelope, files, {
+      cache: this.cache,
+      botKey: this.botKey,
+      botToken: this.botToken,
+      maxBytes: this.maxInboundMediaBytes,
+    });
   }
 
   async health(): Promise<{

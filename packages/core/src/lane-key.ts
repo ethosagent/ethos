@@ -53,6 +53,31 @@ export function laneKeyBotKey(laneKey: string): string | undefined {
 }
 
 /**
+ * The chat id a channel lane key names, or `undefined` when it names none.
+ *
+ * A channel lane key is `buildLaneKey(platform, botKey, chatId[, threadId])`
+ * (extensions/gateway/src/gateway-pure.ts:laneKeyOf), so segment 2 is the
+ * encoded chat id. Segment 3 is NOT decoded: it is a thread id or, after
+ * `/new` / `/personality` re-key the lane as `${laneKey}:${Date.now()}`, a
+ * timestamp, and the two cannot be told apart from the key. Rooms only
+ * (plan channel-prompts-ui D19).
+ *
+ * Returns `undefined` for a key with fewer than three segments (`cli:<cwd>`,
+ * `web:<id>`), an empty segment, or a malformed percent-escape: the key did not
+ * come from `buildLaneKey`. A caller must pre-filter by platform prefix, since
+ * a non-channel key with three or more segments still has a "segment 2".
+ */
+export function laneKeyChatId(laneKey: string): string | undefined {
+  const segment = laneKey.split(':')[2];
+  if (!segment) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * How a voice conversation reached the agent.
  *
  * This is the segment that makes cross-surface collision STRUCTURAL rather

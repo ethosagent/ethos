@@ -40,6 +40,7 @@ import type {
 } from './gateway-types';
 import type { McpLoginPort } from './mcp-login-port';
 import type { GatewayQuietHours } from './quiet-hours';
+import type { RoomPolicyTable } from './room-policy';
 import type { Transcoder } from './transcode';
 import type { VoiceArtifactStore } from './voice-artifacts';
 
@@ -261,6 +262,16 @@ export interface GatewayConfig {
    * unaffected.
    */
   channelToolsets?: Record<string, string[]>;
+  /**
+   * Per-room prompt and policy (plan channel-prompts), built once by the
+   * composition root from `EthosConfig.channels`. Resolved in `runTurn` on
+   * every turn (pure over this static table, not memoised: see
+   * `RoomTurnPolicies.forTurn` in room-turn.ts), the same coordinates for a
+   * message, a wake review and a spool replay, and passed as `RunOptions.roomPrompt` / `roomSkills` /
+   * `modelOverride` / `tierOverride`. Static per process (D9): a change needs a
+   * restart. A platform absent from the table gets no room options at all.
+   */
+  roomPolicies?: RoomPolicyTable;
   /**
    * SQLite database used to store pairing codes when `dmPolicy: 'pairing'` is
    * configured. Must be initialised with `initPairingDb(db)` before passing.

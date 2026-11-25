@@ -19,10 +19,35 @@ import type { UsernameResolver } from '../routing/usernames';
 export interface EnvelopeMeta {
   /** Reached the agent only by naming the personality (`TriageResult.nameOnly`). */
   nameOnly?: boolean;
+  /** The effective channel mode triage computed (diagnostic; stamped as `channelMode`). */
+  effectiveMode?: string;
+  /** Which layer supplied `effectiveMode` (stamped as `channelModeSource`). */
+  modeSource?: InboundMessage['channelModeSource'];
 }
 
 export interface MessageEventHandlers {
   onEnvelope(message: InboundMessage, meta?: EnvelopeMeta): void;
+}
+
+/**
+ * `effectiveMode` rides along only when `fetch_metadata` is on (plan
+ * channel-prompts L7) or room policies configure this platform (L12).
+ */
+function envelopeMeta(
+  result: {
+    nameOnly?: true;
+    effectiveMode: string;
+    modeSource: NonNullable<InboundMessage['channelModeSource']>;
+  },
+  triage: TriageContext,
+): EnvelopeMeta | undefined {
+  const meta: EnvelopeMeta = {
+    ...(result.nameOnly ? { nameOnly: true } : {}),
+    ...(triage.fetchMetadata || triage.roomModeDefault
+      ? { effectiveMode: result.effectiveMode, modeSource: result.modeSource }
+      : {}),
+  };
+  return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
 const BACKFILL_FETCH_LIMIT = 50;
@@ -216,7 +241,7 @@ export function registerMessageEvents(
             if (result.envelope) {
               handlers.onEnvelope(
                 { ...result.envelope, isEdit: true },
-                result.nameOnly ? { nameOnly: true } : undefined,
+                envelopeMeta(result, triage),
               );
             }
           })
@@ -230,7 +255,7 @@ export function registerMessageEvents(
     }
 
     const result = await triageMessage(raw as unknown as RawSlackMessage, triage);
-    const meta = result.nameOnly ? { nameOnly: true } : undefined;
+    const meta = envelopeMeta(result, triage);
     if (result.envelope && triage.backfillState) {
       const channelId = result.envelope.chatId;
       const threadTs = result.envelope.threadId;
@@ -275,6 +300,6 @@ export function registerMessageEvents(
         }
       }
     }
-    if (result.envelope) handlers.onEnvelope(result.envelope);
+    if (result.envelope) handlers.onEnvelope(result.envelope, envelopeMeta(result, triage));
   });
 }

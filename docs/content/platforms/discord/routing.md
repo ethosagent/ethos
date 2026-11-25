@@ -4,7 +4,7 @@ description: "Route Discord guild channels and DMs to sessions and set the chann
 kind: how-to
 audience: shared
 time: "5 min"
-updated: 2026-11-03
+updated: 2026-11-25
 ---
 
 ## Task
@@ -33,6 +33,12 @@ Route Discord guild channels and DMs to per-channel sessions and set the default
 | DM | DM channel id | `true` | `false` | `discord:<channel-id>` |
 
 The adapter strips the `<@botId>` prefix before passing text to the agent, so `@Ethos summarise the channel` arrives as `summarise the channel`.
+
+### 4b. Per-room prompts
+
+A Discord room's id is its channel id (Settings, Advanced, turn on Developer Mode, then right-click the channel and choose Copy Channel ID; for a thread, right-click the thread and choose Copy Thread ID). In a thread, `chatId` is the parent channel and the thread's own channel id is the `threadId`. Because a thread is itself a channel, both forms work, and the most specific wins: `channels.discord.<threadId>.prompt`, then `channels.discord.<parentId>.topics.<threadId>.prompt`, then `channels.discord.<parentId>.prompt`. Prompts from the parent and the thread are concatenated, parent first. A DM, including a group DM, matches `channels.discord.*dm`.
+
+In a server channel the model gets a line naming the bot, from the logged-in client's own user, because Discord's `<@id>` mention tokens stay in the text. Turn it off with `identity: false`. A channel's `topic` reaches the model only with both `channels.discord.fetch_metadata: true` and `channels.discord.<id>.metadata: true`, as untrusted text on the user message. Send `/channel` in the room to see which entry matched. Full recipe: [Give each room its own prompt](../../using/how-to/give-each-room-its-own-prompt.md).
 
 ### 4a. Set the default channel mode
 

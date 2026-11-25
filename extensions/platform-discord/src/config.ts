@@ -1,3 +1,4 @@
+import type { RoomModeDefault } from '@ethosagent/types';
 import { z } from 'zod';
 
 // `observe` records the room's messages and never replies in it — not even to
@@ -19,3 +20,6 @@ export const BindingSchema = z.object({
   name: z.string(),
 });
 export type Binding = z.infer<typeof BindingSchema>;
+
+/** The room config's default reply mode hook (plan channel-prompts L12); defined once in `@ethosagent/types`. */
+export type { RoomModeDefault };

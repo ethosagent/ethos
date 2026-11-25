@@ -79,6 +79,9 @@ export async function* assembleContext(
     /** Set when this turn's text is a transcript of speech. Rendered as a
      *  message-level annotation on the persisted user message. */
     voiceOrigin?: import('@ethosagent/types').VoiceTurnOrigin;
+    /** `RunOptions.roomPrompt` / `roomSkills`, verbatim (see there). */
+    roomPrompt?: string;
+    roomSkills?: readonly string[];
   },
 ): AsyncGenerator<AgentEvent, AssembledContext> {
   const {
@@ -417,6 +420,7 @@ export async function* assembleContext(
     ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
     ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
     ...(opts.dryRun ? { dryRun: true } : {}),
+    ...(opts.roomSkills !== undefined ? { roomSkills: opts.roomSkills } : {}),
     // Phase 4 — small-window mode forces skills into index form. Derived from
     // static inputs (resolved once at wiring), constant across turns.
     ...(deps.promptBudget?.skillsIndexMode ? { skillsIndexMode: true } : {}),
@@ -453,6 +457,13 @@ export async function* assembleContext(
       systemParts.push(assembledIdentity);
     }
   }
+
+  // Room block (`RunOptions.roomPrompt`): operator text the gateway rendered,
+  // static per lane. Its own part right after SOUL.md, before any injector, so
+  // the static prefix stays byte-stable and identity frames the room. Blank is
+  // absent. Order pinned by `__tests__/prompt-prefix-stability.test.ts`.
+  const roomText = opts.roomPrompt?.trim();
+  if (roomText) systemParts.push(`## This room\n\n${roomText}`);
 
   // Context injectors sorted by priority (already sorted in constructor).
   // Also captures the two injectors the model-visible ⟺ logged write path

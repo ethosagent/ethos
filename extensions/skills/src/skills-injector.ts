@@ -62,6 +62,9 @@ export type ResolvedSkill =
   | { id: string; source: 'personality'; filePath: string }
   | { id: string; source: 'global'; skill: Skill };
 
+/** Max room-pinned skills rendered per turn; extras are skipped via `onSkip`. */
+export const MAX_ROOM_SKILLS = 8;
+
 export class SkillsInjector implements ContextInjector {
   readonly id = 'skills';
   readonly priority = 100;
@@ -256,9 +259,44 @@ export class SkillsInjector implements ContextInjector {
     // `loadSkillBody()`.
     const personalityIndex = forceIndex || personality.skills?.injection_mode === 'index';
 
+    // 0. Room-pinned skills (`ctx.roomSkills`) — full body in roomSkills order,
+    // regardless of injection mode. Intersected with `resolved`, so a room can
+    // never grant a skill the personality cannot see. Pinned ids are then
+    // excluded from the normal passes below (no index row, no duplicate).
+    const roomPinned = new Set<string>();
+    const eligibleById = new Map(resolved.map((r) => [r.id, r]));
+    for (const id of new Set(ctx.roomSkills ?? [])) {
+      const r = eligibleById.get(id);
+      if (!r) {
+        this.onSkip?.(id, 'room skill not eligible for personality');
+        continue;
+      }
+      if (roomPinned.size >= MAX_ROOM_SKILLS) {
+        this.onSkip?.(id, `room skill cap exceeded (max ${MAX_ROOM_SKILLS})`);
+        continue;
+      }
+      let body: string;
+      let dir: string;
+      if (r.source === 'global') {
+        body = r.skill.body;
+        dir = dirname(r.skill.filePath);
+      } else {
+        const raw = await this.readCached(r.filePath);
+        if (!raw) continue;
+        const parsed = parseSkillFrontmatter(raw);
+        body = parsed ? parsed.body : raw;
+        dir = dirname(r.filePath);
+      }
+      const content = sanitize(applySubstitutions(body, dir, ctx.sessionId).trim());
+      // Pin only if the body actually fit; otherwise leave it to the normal
+      // passes so it keeps its index row (reachable via `get_skill`).
+      if (addSection(content, id)) roomPinned.add(id);
+      else this.onSkip?.(id, 'injection budget exceeded');
+    }
+
     // 1. Per-personality skills — hand-curated library.
     for (const r of resolved) {
-      if (r.source !== 'personality') continue;
+      if (r.source !== 'personality' || roomPinned.has(r.id)) continue;
       const raw = await this.readCached(r.filePath);
       if (!raw) continue;
       const parsed = parseSkillFrontmatter(raw);
@@ -273,7 +311,9 @@ export class SkillsInjector implements ContextInjector {
     }
 
     // 2. Global pool from universal scanner — filtered per personality (resolved above)
-    const eligibleGlobal = resolved.flatMap((r) => (r.source === 'global' ? [r.skill] : []));
+    const eligibleGlobal = resolved.flatMap((r) =>
+      r.source === 'global' && !roomPinned.has(r.id) ? [r.skill] : [],
+    );
 
     if (injectionMode === 'index') {
       // Phase 1: compact index table — the LLM calls get_skill() for full bodies

@@ -122,6 +122,7 @@ export interface ServiceContainer {
   plugins: import('../services/plugins.service').PluginsService;
   mcp: import('../services/mcp.service').McpService;
   platforms: import('../services/platforms.service').PlatformsService;
+  roomPolicies: import('../services/room-policy.service').RoomPolicyService;
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
   teams: import('../services/teams.service').TeamsService;

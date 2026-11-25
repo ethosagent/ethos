@@ -4,7 +4,7 @@ description: "Every /command available inside ethos chat — session, personalit
 kind: reference
 audience: user
 slug: slash-commands
-updated: 2026-11-05
+updated: 2026-11-25
 ---
 
 Slash commands run synchronously inside `ethos chat` and do not count as a turn. They start with `/` as the first character; anything else is sent to the agent.
@@ -158,6 +158,21 @@ Synopsis: `/allow <code>`
 Revoke an approved channel sender. Recognised platforms: `telegram`, `discord`, `slack`, `whatsapp`, `email`. Readline CLI only.
 
 Synopsis: `/deny <platform> <senderId>`
+
+## /channel {#slash-channel}
+
+Show which room policy applies to the current room: the matched keys, the prompt's layers, size and digest, pinned skills, model or tier, identity, metadata, silence, and the reply mode with its source. Gateway only. The summary never contains prompt text, so any member of the room can run it. In Slack, send `/ethos channel`. Synopsis: `/channel [show]`
+
+`/channel show` appends the full rendered prompt. It runs only for the owner, and only in a private direct message. In a group or a shared DM (a Discord group DM, a WhatsApp broadcast or newsletter) it refuses and points to `ethos channels resolve <platform> <chatId>` on the host. Formatting and access rules: [`extensions/gateway/src/channel-command.ts`](../../../../extensions/gateway/src/channel-command.ts) (`formatChannelSummary`, `channelShowAccess`). Setup: [Give each room its own prompt](../how-to/give-each-room-its-own-prompt.md).
+
+The sizes and digests below are illustrative. The live block includes the identity line when identity is on, so its size and digest differ from the `ethos channels resolve` output for the same room, which omits that line.
+```
+> /channel
+Room: slack · C0DEPLOY
+Matched: C0DEPLOY (direct) · wildcard not used
+Prompt: 1 layer · 83 chars · sha 3f9a1c2e
+Skills: deploy-runbook, change-freeze · Model: model sonnet-fast · Identity: on (@atlas_bot) · Metadata: off · Silent: off · Mode: mention_only (room config: C0DEPLOY)
+```
 
 ## /mcp {#slash-mcp}
 

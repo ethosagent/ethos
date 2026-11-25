@@ -8,8 +8,9 @@ import type { ChannelOverrideStore } from '@ethosagent/core';
 import type { Storage } from '@ethosagent/types';
 import { isUserAuthorized, SLASH_DENIED_TEXT } from '../authz';
 import { type SlackBlock, section } from '../blocks/shared';
-import type { Binding, ChannelMode } from '../config';
+import type { Binding, ChannelMode, RoomModeDefault } from '../config';
 import { handleAsk } from './ask';
+import { handleChannel } from './channel';
 import { handleChannelMode } from './channel-mode';
 import { handleHelp } from './help';
 import { handleKanban, type KanbanReader } from './kanban';
@@ -40,6 +41,10 @@ export interface SlashCommandPayload {
 export interface SlashContext {
   binding: Binding;
   defaultChannelMode: ChannelMode;
+  /** `defaultChannelMode` came from the platform config (diagnostic source `platform`). */
+  defaultChannelModeConfigured?: boolean;
+  /** Room config's default reply mode; the same function triage consults. */
+  roomModeDefault?: RoomModeDefault;
   channelOverrides?: ChannelOverrideStore<ChannelMode>;
   memory?: MemoryReader;
   kanban?: KanbanReader;
@@ -82,7 +87,15 @@ export interface SlashResponse {
   responseType: 'ephemeral' | 'in_channel';
 }
 
-const SUBCOMMANDS = ['ask', 'personality', 'memory', 'kanban', 'channel-mode', 'help'] as const;
+const SUBCOMMANDS = [
+  'ask',
+  'personality',
+  'memory',
+  'kanban',
+  'channel-mode',
+  'channel',
+  'help',
+] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 export function parseSubcommand(text: string): { name: Subcommand | 'unknown'; rest: string } {
@@ -127,6 +140,8 @@ export async function dispatch(
       return handleKanban(ctx);
     case 'channel-mode':
       return handleChannelMode(payload.channel_id, rest, ctx);
+    case 'channel':
+      return handleChannel(payload, rest, ctx);
     case 'help':
       return handleHelp(payload.channel_id, ctx);
     case 'unknown': {

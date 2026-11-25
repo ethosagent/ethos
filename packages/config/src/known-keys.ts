@@ -100,6 +100,7 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'channelDigest.',
   'channel_filter.',
   'channel_toolsets.',
+  'channels.',
   'compaction.',
   'cron.',
   'decisions.',

@@ -314,10 +314,16 @@
     "platforms.botsRemoveTelegram",
     "platforms.botsRemoveWhatsApp",
     "platforms.clear",
+    "platforms.deleteRoomPolicy",
     "platforms.getChannelFilter",
     "platforms.list",
+    "platforms.listRecentRooms",
+    "platforms.listRoomPolicies",
+    "platforms.previewRoomPolicy",
     "platforms.set",
     "platforms.setChannelFilter",
+    "platforms.setRoomPlatformSettings",
+    "platforms.setRoomPolicy",
     "platforms.validate"
   ],
   "plugins": [

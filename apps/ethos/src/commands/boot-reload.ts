@@ -55,6 +55,7 @@ export function startConfigReload(ctx: BootReloadContext): {
     watcherManager,
     outbox,
     attachmentCache,
+    roomPolicies,
     gateway,
     gatewayRef,
     botWiring,
@@ -201,7 +202,7 @@ export function startConfigReload(ctx: BootReloadContext): {
       outbox.wiring,
     );
     try {
-      const newAdapters = await buildGatewayAdapters(slice, attachmentCache);
+      const newAdapters = await buildGatewayAdapters(slice, attachmentCache, roomPolicies);
       const bot = built.bots[0];
       const adapter = newAdapters[0];
       if (!bot || !adapter || built.bots.length !== 1 || newAdapters.length !== 1) {

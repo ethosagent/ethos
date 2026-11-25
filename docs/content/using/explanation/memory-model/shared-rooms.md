@@ -3,7 +3,7 @@ title: "Why does private memory stay out of shared rooms?"
 description: "Which rooms are shared, what a shared turn loses, and the known limits."
 kind: explanation
 audience: user
-updated: 2026-11-03
+updated: 2026-11-25
 ---
 
 ## Context
@@ -59,6 +59,12 @@ A session that has run one shared turn stays shared for good, whichever surface 
 
 After the turn, nothing said in a shared session feeds private learning. Memory capture, the skill-improvement fork, the nightly Judge and Expression evidence, learning cases, `ethos evolve run` and the web Expression draft all skip it, and `get_session_events` refuses it to any other session. The same goes for a direct message from someone other than the owner. Group sessions from before the upgrade, which carry no stamp, are recognised by their session key and skipped too. A listed trusted room, and a Discord or email direct message the gateway judged private, are not skipped.
 
+#### A room prompt is not the audience
+
+A [room prompt](../../how-to/give-each-room-its-own-prompt.md) (`channels.<platform>.<id>.prompt`) tells the agent how to behave in a room. It does not decide what the agent may remember there. The audience, shared or private, comes only from the gateway's own judgment and from `gateway.private_chats`. A room entry has no field for it, so a prompt cannot trust a room, and trusting a room does not add a prompt.
+
+A shared room still gets its room prompt: the prompt is operator text from `config.yaml` or `~/.ethos/channels/`, not memory, so a shared turn keeps it. Setting `channels.slack.C0DEPLOY.prompt` neither makes `C0DEPLOY` private nor withholds anything from it.
+
 #### Known limits of shared rooms
 
 These paths do not withhold memory today:
@@ -77,3 +83,4 @@ See [Trade-offs](../memory-model.md#trade-offs) on [Why MEMORY.md and USER.md, n
 ## See also
 
 - [Why MEMORY.md and USER.md, not a vector store?](../memory-model.md) — the parent page.
+- [Give each room its own prompt](../../how-to/give-each-room-its-own-prompt.md) — per-room prompts, which leave the audience alone.

@@ -10,7 +10,7 @@ import type {
   PriorContextEntry,
 } from '@ethosagent/types';
 import type { ChannelType, Client, Message } from 'discord.js';
-import type { ChannelMode } from '../config';
+import type { ChannelMode, RoomModeDefault } from '../config';
 import type { TriageContext } from '../routing/triage';
 import { triageMessage } from '../routing/triage';
 import type { BackfillStateStore } from '../store/backfill-state';
@@ -58,6 +58,9 @@ interface MessageContext {
   client: Client;
   botKey: string;
   defaultChannelMode: ChannelMode;
+  defaultChannelModeConfigured?: boolean;
+  /** Room config's default reply mode (plan channel-prompts L12). */
+  roomModeDefault?: RoomModeDefault;
   /** The reaction when no personality emoji applies (`''` = no reaction). */
   receiptReaction: string;
   /** The operator configured `receiptReaction` explicitly: it then wins over
@@ -83,6 +86,10 @@ interface MessageContext {
   presence?: ChannelPresenceResolver;
   /** Count a guild message naming the bound personality as a mention. */
   mentionByName?: boolean;
+  /** `channels.discord.fetch_metadata` (plan channel-prompts L7): stamp the
+   *  channel topic/name (from the cached channel object, no API call) and the
+   *  effective mode on guild messages. */
+  fetchMetadata?: boolean;
   onMessage: (msg: InboundMessage) => void;
   /** A receipt reaction was attempted on `messageId`. `reactions` lists every
    *  emoji that may have landed (the chosen one, then its fallback), so the
@@ -259,6 +266,8 @@ async function buildMessageEnvelope(
   const triageCtx: TriageContext = {
     botKey: ctx.botKey,
     defaultChannelMode: ctx.defaultChannelMode,
+    defaultChannelModeConfigured: ctx.defaultChannelModeConfigured,
+    roomModeDefault: ctx.roomModeDefault,
     channelOverrides: ctx.channelOverrides,
     threadState: ctx.threadState,
   };
@@ -305,7 +314,36 @@ async function buildMessageEnvelope(
     envelope.replyToUserId = message.mentions.repliedUser.id;
   }
 
+  // The mode and its source ride along when `fetch_metadata` is on (L7) or
+  // room policies configure this platform (L12); the metadata only for L7.
+  if ((ctx.fetchMetadata || ctx.roomModeDefault) && !isDm) {
+    envelope.channelMode = result.effectiveMode;
+    envelope.channelModeSource = result.modeSource;
+  }
+  if (ctx.fetchMetadata && !isDm) {
+    const metadata = discordRoomMetadata(message);
+    if (metadata) envelope.roomMetadata = metadata;
+  }
+
   return { envelope, nameOnly: result.nameOnly === true };
+}
+
+/**
+ * Untrusted room metadata from the message's own channel object. A thread has
+ * no topic, so its parent's is used. No API call: discord.js already caches it.
+ */
+export function discordRoomMetadata(
+  message: Pick<Message, 'channel'>,
+): { topic?: string; name?: string } | undefined {
+  const ch = message.channel as {
+    name?: string | null;
+    topic?: string | null;
+    parent?: { topic?: string | null } | null;
+  };
+  const topic = (ch.topic ?? ch.parent?.topic ?? '').trim();
+  const name = (ch.name ?? '').trim();
+  if (!topic && !name) return undefined;
+  return { ...(topic ? { topic } : {}), ...(name ? { name } : {}) };
 }
 
 /** Exported for testing — the classification the STT gate depends on. */

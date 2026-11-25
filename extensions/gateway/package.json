@@ -7,6 +7,10 @@
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts"
+    },
+    "./room-policy": {
+      "import": "./src/room-policy-entry.ts",
+      "types": "./src/room-policy-entry.ts"
     }
   },
   "scripts": {
@@ -28,6 +32,7 @@
     "@ethosagent/voice-text": "workspace:*"
   },
   "devDependencies": {
+    "@ethosagent/config": "workspace:*",
     "@ethosagent/memory-approval": "workspace:*",
     "@ethosagent/tools-memory": "workspace:*"
   }

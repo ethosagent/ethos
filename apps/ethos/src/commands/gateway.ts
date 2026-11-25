@@ -51,7 +51,9 @@ import {
   DreamExecutor,
   Gateway,
   type GatewayBotConfig,
+  type RoomPolicyTable,
   relayToTargets,
+  roomModeDefault,
   summarizeChannelDigest,
 } from '@ethosagent/gateway';
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
@@ -223,12 +225,14 @@ import {
   slackSessionStores,
   slackSlashAllowlist,
 } from './gateway-platform-readers';
+import { bindRoomPolicyLoader, roomAdapterExtras, warnRoomPolicies } from './gateway-room-policy';
 import {
   buildBotSpeakers,
   buildChannelSpeakers,
   deriveChannelVoiceOut,
   resolveTelephonyMedia,
 } from './gateway-voice';
+import { whatsAppLinkHandlers } from './gateway-whatsapp-link';
 import {
   type BuildGatewayOptions,
   type GatewayTurnOrigin,
@@ -267,6 +271,7 @@ export type { GatewayHeartbeat } from './gateway-health';
 export { gatewayHealthStatus, gatewaySqliteStorePaths } from './gateway-health';
 export type { AdapterModuleLoader } from './gateway-platform-readers';
 export { createSlackMemoryReader } from './gateway-platform-readers';
+export { warnRoomPolicies } from './gateway-room-policy';
 export type { BotSpeakers, TelephonyMediaOutcome } from './gateway-voice';
 export {
   buildBotSpeakers,
@@ -1156,7 +1161,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // surface's `getSessionRouting` closes over a mutable holder filled in
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
-  const adapters = await buildGatewayAdapters(config, attachmentCache);
+  const { table: roomPolicies, warnings: roomWarnings } = await loadRoomPolicies(storage, config);
+  warnRoomPolicies(roomWarnings);
+  const adapters = await buildGatewayAdapters(config, attachmentCache, roomPolicies);
   warnEmailSenderAuthUnconfigured(config);
 
   // O-T8 — outbox approval cards. Keyed by the botKey each adapter speaks as
@@ -1309,6 +1316,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 
   const gateway: Gateway = buildGateway({
     config,
+    roomPolicies,
     bots,
     systemLoop,
     idleBotJobs: {
@@ -3292,11 +3300,8 @@ export async function createTelegramGreetingProvider() {
  * exercise the multi-bot adapter loop with a mocked module loader
  * (avoiding a real grammy / @slack/bolt construction in unit tests).
  *
- * Applies `applyPlatformShim` defensively so callers that pass a
- * legacy single-bot config (`telegramToken` / `slackBotToken` etc.)
- * still construct adapters correctly. The shim is idempotent — when
- * the boot path already normalized via `loadConfigStrict`, the
- * second pass is a no-op.
+ * Applies `applyPlatformShim` defensively so legacy single-bot configs
+ * (`telegramToken` / `slackBotToken` etc.) still work; it is idempotent.
  */
 export async function buildAdapters(
   config: EthosConfig,
@@ -3305,10 +3310,13 @@ export async function buildAdapters(
   opts?: {
     onWhatsAppQr?: (botId: string, qr: string | null) => void;
     onWhatsAppPairingCode?: (botId: string, code: string | null) => void;
+    roomPolicies?: RoomPolicyTable;
   },
 ): Promise<PlatformAdapter[]> {
   config = applyPlatformShim(config).config;
   const adapters: PlatformAdapter[] = [];
+  const roomExtras = (p: string) =>
+    roomAdapterExtras(config, opts?.roomPolicies, p, roomModeDefault);
   // Adapter diagnostics. Telegram, Slack and WhatsApp take an optional
   // `logger` and go silent without one — Slack's "authenticated as @…" line
   // and Telegram's observe-mode privacy-mode warning are only reachable
@@ -3386,6 +3394,7 @@ export async function buildAdapters(
             storage,
             telegramDir: join(ethosDir(), 'telegram'),
             ...(botCfg.defaultChannelMode ? { defaultChannelMode: botCfg.defaultChannelMode } : {}),
+            ...roomExtras('telegram'),
             // Reaches `warnIfPrivacyModeHidesObserved`, which is the only
             // thing that tells an operator their observe-mode bot is watching
             // rooms BotFather's privacy setting stops it from hearing.
@@ -3480,6 +3489,7 @@ export async function buildAdapters(
               ? { kanban: kanbanReaders.kanban, kanbanUnfurl: kanbanReaders.kanbanUnfurl }
               : {}),
             ...(appCfg.defaultChannelMode ? { defaultChannelMode: appCfg.defaultChannelMode } : {}),
+            ...roomExtras('slack'),
             ...(appCfg.receiptReaction ? { receiptReaction: appCfg.receiptReaction } : {}),
             ...(appCfg.mentionByName !== undefined ? { mentionByName: appCfg.mentionByName } : {}),
             ...(appCfg.allowedBotIds?.length ? { allowedBotIds: appCfg.allowedBotIds } : {}),
@@ -3528,6 +3538,7 @@ export async function buildAdapters(
           // Telegram, Slack and WhatsApp sites pass.
           storage: getStorage(),
           discordDir: join(ethosDir(), 'discord'),
+          ...roomExtras('discord'),
           ...(config.discord?.defaultChannelMode
             ? { defaultChannelMode: config.discord.defaultChannelMode }
             : {}),
@@ -3625,6 +3636,8 @@ export async function buildAdapters(
             botKey: whatsAppBotKey(waCfg),
             sessionDir: waCfg.session_dir ?? join(ethosDir(), 'whatsapp'),
             defaultMode: waCfg.default_mode ?? 'mention_only',
+            defaultModeConfigured: waCfg.default_mode !== undefined,
+            ...roomExtras('whatsapp'),
             // Backs the `channelModes: true` the adapter advertises: without a
             // Storage there is no per-chat override store, and every chat is
             // stuck on `defaultMode`.
@@ -3979,35 +3992,15 @@ export async function createGatewayAttachmentCache(
   return { attachmentCache, pruneTimer };
 }
 
-/**
- * Construct every configured channel adapter for the gateway role (plan §3b
- * step 5, "channel adapters *constructed* but not started").
- *
- * `buildAdapters` was already a named export; what was still inline in
- * `runGatewayStart` — and is now here — is the WhatsApp QR / pairing-code
- * reporting the gateway role wires around it: the code is printed to the
- * console AND pushed to the web API's pairing surface, so an operator can
- * link a device from either place.
- */
+/** Construct every configured channel adapter (plan §3b step 5) with the WhatsApp QR / pairing-code reporting wired in. */
 export async function buildGatewayAdapters(
   config: EthosConfig,
   attachmentCache: import('@ethosagent/types').AttachmentCache,
+  roomPolicies?: RoomPolicyTable,
 ): Promise<PlatformAdapter[]> {
   return buildAdapters(config, loadAdapterModule, attachmentCache, {
-    onWhatsAppQr: (botId, qr) => {
-      import('@ethosagent/web-api').then((m) => m.setWhatsAppQr(botId, qr)).catch(() => {});
-    },
-    onWhatsAppPairingCode: (botId, code) => {
-      if (code !== null) {
-        console.log(
-          `\n  ${c.bold}WhatsApp pairing code for "${botId}": ${c.cyan}${code}${c.reset}\n` +
-            `  ${c.dim}On that phone: WhatsApp \u2192 Linked Devices \u2192 Link with phone number instead \u2192 enter the code.${c.reset}\n`,
-        );
-      }
-      import('@ethosagent/web-api')
-        .then((m) => m.setWhatsAppPairingCode(botId, code))
-        .catch(() => {});
-    },
+    ...(roomPolicies ? { roomPolicies } : {}),
+    ...whatsAppLinkHandlers(),
   });
 }
 
@@ -4225,9 +4218,13 @@ export function teamPrivateChatsWarning(
   );
 }
 
+/** Both hosts' per-room policy table (pinned by `room-policy-host-wiring.test.ts`). */
+export const loadRoomPolicies = bindRoomPolicyLoader(loadAdapterModule);
+
 export function buildGateway(opts: BuildGatewayOptions): Gateway {
   const {
     config,
+    roomPolicies,
     bots,
     systemLoop,
     idleBotJobs,
@@ -4334,6 +4331,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(config.channelToolsets ? { channelToolsets: config.channelToolsets } : {}),
         ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
         ...(privateChats ? { privateChats } : {}),
+        ...(roomPolicies ? { roomPolicies } : {}),
         ...(pairingDb ? { pairingDb } : {}),
         channelTranscript,
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
@@ -4414,6 +4412,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
         ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
         ...(privateChats ? { privateChats } : {}),
+        ...(roomPolicies ? { roomPolicies } : {}),
         ...(pairingDb ? { pairingDb } : {}),
         channelTranscript,
         ...(channelDigestFeed ? { channelDigestFeed } : {}),

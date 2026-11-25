@@ -120,3 +120,35 @@ describe('Discord /ethos ask — a room promised silence', () => {
     expect(outcome.submitted).toEqual([]);
   });
 });
+
+describe('Discord /ethos ask — in a thread the room is the parent channel', () => {
+  it('asks the room hook for the parent id plus the thread id, and honours its `observe`', async () => {
+    const seen: unknown[] = [];
+    const submitted: string[] = [];
+    const response = await handleAsk(
+      {
+        commandName: 'ask',
+        options: { prompt: 'hello' },
+        channelId: 'thr1',
+        threadId: 'thr1',
+        parentChannelId: GUILD_CHANNEL,
+        userId: 'u1',
+        guildId: 'g1',
+      },
+      {
+        binding: { type: 'personality', name: 'sitewatcher' },
+        defaultChannelMode: 'mention_only',
+        roomModeDefault: (i) => {
+          seen.push(i);
+          return i.chatId === GUILD_CHANNEL ? 'observe' : undefined;
+        },
+        submitAgentTurn: async (input) => {
+          submitted.push(input.text);
+        },
+      },
+    );
+    expect(seen).toEqual([{ chatId: GUILD_CHANNEL, threadId: 'thr1', isDm: false }]);
+    expect(submitted).toEqual([]);
+    expect(response.embeds[0]?.description).toContain('observe');
+  });
+});

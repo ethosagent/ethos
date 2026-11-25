@@ -337,16 +337,14 @@ export interface RunOptions extends MemoryPrefetchGate {
    */
   tierOverride?: import('@ethosagent/types').ModelTierName;
   /**
-   * Route THIS run to a named model: rung 0 (`run-override`) of
-   * `resolveTurnModel` (`./agent-loop/turn-model`), above `modelRouting[<id>]`,
-   * the personality's declaration (`tierOverride` picks its role) and the default.
-   *
-   * Generic on purpose — core never learns WHY a surface pinned the model. The
-   * voice stack sets it so a spoken lane answers on a fast model instead of the
-   * agentic default (latency decision L5), but the field says nothing about
-   * voice and any surface needing one turn on a specific model may use it.
+   * Route THIS run to a named model: rung 0 (`run-override`) of `resolveTurnModel`
+   * (`./agent-loop/turn-model`), above `modelRouting[<id>]`, the personality's
+   * declaration (`tierOverride` picks its role) and the default. Generic: core never
+   * learns WHY a surface pinned it (voice does, for latency decision L5).
    */
   modelOverride?: string;
+  /** `'room'` relabels the `modelOverride` deviation text ("This room's policy"); routing unchanged. */
+  modelOverrideSource?: 'room';
   /** Opaque user id (from IdentityMap). When present, USER.md is read from `user:<userId>` scope. */
   userId?: string;
   dryRun?: boolean;
@@ -374,13 +372,14 @@ export interface RunOptions extends MemoryPrefetchGate {
   maxIdenticalToolCalls?: number;
   /** When true, bypass safety-watcher halts for this run (opt-in, dangerous; caps still apply). */
   allowDangerousToolCalls?: boolean;
-  /** Set when this turn's text is a transcript of speech (voice V1a, D16).
-   *  Effects are message-level only — the system prompt is untouched, so
-   *  `prompt-prefix-stability` holds for a session mixing typed and spoken
-   *  turns. See `./voice-origin` (the annotation, rendered alongside the
-   *  `<attachments>` audio marker) and `withSpokenConfirmation` in
-   *  `@ethosagent/wiring` (the gate it reaches via `before_tool_call`). */
+  /** Set when this turn's text is a transcript of speech (voice V1a, D16). Message-level
+   *  only, so `prompt-prefix-stability` holds. See `./voice-origin` (annotation renders
+   *  beside the `<attachments>` audio marker), `withSpokenConfirmation` in `@ethosagent/wiring`. */
   voiceOrigin?: VoiceTurnOrigin;
+  /** Operator room text, static per lane; rendered as `## This room` after SOUL.md. Pinned by `prompt-prefix-stability.test.ts`. */
+  roomPrompt?: string;
+  /** Room-pinned skill names (`PromptContext.roomSkills`), static per lane. Pinned by `context-assembly-room.test.ts`. */
+  roomSkills?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,14 @@
 
 export type SettingApplies = 'live' | 'next-turn' | 'gateway-restart';
 
+/** Glyph + word per applies value (§6.5) — never colour alone. The one owner:
+ *  Settings rows and Communications > Rooms draw the same badge. */
+export const APPLIES_BADGE: Record<SettingApplies, { glyph: string; word: string }> = {
+  live: { glyph: '·', word: 'live' },
+  'next-turn': { glyph: '⏳', word: 'next turn' },
+  'gateway-restart': { glyph: '⚠', word: 'gateway restart' },
+};
+
 export const SETTING_APPLIES: Readonly<Record<string, SettingApplies>> = {
   // live — gates per RPC call (`requireAdmin`, apps/web-api/src/services/admin.service.ts) and the nav row reads `config.get`
   adminEnabled: 'live',

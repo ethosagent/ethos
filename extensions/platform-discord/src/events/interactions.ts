@@ -156,6 +156,15 @@ function handleSlashCommand(interaction: Interaction, ctx: InteractionContext): 
     channelId: interaction.channelId ?? '',
     userId: interaction.user.id,
     guildId: interaction.guildId ?? undefined,
+    // In a thread `channelId` is the thread's own id; the room is its parent.
+    ...(interaction.channel?.isThread?.()
+      ? {
+          threadId: interaction.channelId ?? '',
+          ...(interaction.channel.parentId
+            ? { parentChannelId: interaction.channel.parentId }
+            : {}),
+        }
+      : {}),
   };
 
   ctx.onCommand?.(payload, interaction);

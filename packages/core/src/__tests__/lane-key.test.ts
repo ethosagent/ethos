@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLaneKey, satelliteLaneKey, voiceLaneKey } from '../lane-key';
+import { buildLaneKey, laneKeyChatId, satelliteLaneKey, voiceLaneKey } from '../lane-key';
 
 describe('buildLaneKey', () => {
   it('URL-encodes every segment so a separator cannot alias two keys', () => {
@@ -96,5 +96,33 @@ describe('satelliteLaneKey', () => {
     expect(satelliteLaneKey('bot-a', 'kitchen', 'engineer')).not.toBe(
       satelliteLaneKey('bot-b', 'kitchen', 'engineer'),
     );
+  });
+});
+
+describe('laneKeyChatId', () => {
+  it('decodes segment 2 of a channel lane key', () => {
+    expect(laneKeyChatId(buildLaneKey('slack', 'bot1', 'C0DEPLOY'))).toBe('C0DEPLOY');
+    expect(laneKeyChatId(buildLaneKey('telegram', 'bot1', '-1001234'))).toBe('-1001234');
+  });
+
+  it('ignores a thread segment and a /new timestamp suffix (rooms only, D19)', () => {
+    const lane = buildLaneKey('slack', 'bot1', 'C0DEPLOY', '1700000000.000100');
+    expect(laneKeyChatId(lane)).toBe('C0DEPLOY');
+    expect(laneKeyChatId(`${buildLaneKey('slack', 'bot1', 'C0DEPLOY')}:1700000000000`)).toBe(
+      'C0DEPLOY',
+    );
+  });
+
+  it('decodes encoded separators and @', () => {
+    const id = '120363@g.us';
+    expect(laneKeyChatId(buildLaneKey('whatsapp', 'b', id))).toBe(id);
+    expect(laneKeyChatId(buildLaneKey('slack', 'b', 'a:b'))).toBe('a:b');
+  });
+
+  it('returns undefined for keys that are not channel lane keys or are malformed', () => {
+    expect(laneKeyChatId('cli:/home/me/project')).toBeUndefined();
+    expect(laneKeyChatId('web:abc')).toBeUndefined();
+    expect(laneKeyChatId('slack:bot:')).toBeUndefined();
+    expect(laneKeyChatId('slack:bot:%E0%A4%A')).toBeUndefined();
   });
 });

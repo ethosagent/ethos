@@ -1,6 +1,6 @@
 import type { ChannelOverrideStore } from '@ethosagent/core';
 import type { DiscordEmbed } from '../blocks/shared';
-import type { Binding, ChannelMode } from '../config';
+import type { Binding, ChannelMode, RoomModeDefault } from '../config';
 import { handleAsk } from './ask';
 import { handleHelp } from './help';
 import { handleKanban } from './kanban';
@@ -16,11 +16,26 @@ export interface CommandPayload {
   channelId: string;
   userId: string;
   guildId?: string;
+  /** Set when the command ran inside a thread: the thread id (`channelId` is then the thread's). */
+  threadId?: string;
+  /** Set with `threadId`: the thread's parent channel, which is the room (as `triageMessage` uses). */
+  parentChannelId?: string;
+}
+
+/** The room a command ran in: the parent channel for a thread, plus the thread id. */
+export function commandRoom(payload: CommandPayload): { chatId: string; threadId?: string } {
+  return payload.threadId
+    ? { chatId: payload.parentChannelId ?? payload.channelId, threadId: payload.threadId }
+    : { chatId: payload.channelId };
 }
 
 export interface CommandContext {
   binding: Binding;
   defaultChannelMode: ChannelMode;
+  /** `defaultChannelMode` was set in config (diagnostic source `platform`). */
+  defaultChannelModeConfigured?: boolean;
+  /** Room config's default reply mode (plan channel-prompts L12). */
+  roomModeDefault?: RoomModeDefault;
   channelOverrides?: ChannelOverrideStore<ChannelMode>;
   memory?: MemoryReader;
   kanban?: KanbanReader;

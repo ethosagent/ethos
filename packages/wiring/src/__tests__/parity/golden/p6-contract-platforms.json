@@ -658,6 +658,90 @@
     },
     "route": {}
   },
+  "platforms.deleteRoomPolicy": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "expectedVersion": {
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        },
+        "selector": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "selector",
+        "expectedVersion"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "removed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "removed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cause": {
+              "type": "string"
+            },
+            "configRemoved": {
+              "type": "boolean"
+            },
+            "fileRemoved": {
+              "type": "boolean"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "partial",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "reason",
+            "fileRemoved",
+            "configRemoved",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
   "platforms.getChannelFilter": {
     "input": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -753,6 +837,608 @@
       },
       "required": [
         "platforms"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.listRecentRooms": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "limit": {
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "omittedCount": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rooms": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "chatId": {
+                "type": "string"
+              },
+              "hasEntry": {
+                "type": "boolean"
+              },
+              "isDm": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastActiveAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "chatId",
+              "isDm",
+              "lastActiveAt",
+              "hasEntry"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rooms",
+        "omittedCount"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.listRoomPolicies": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allowNameMatching": {
+          "type": "boolean"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "fields": {
+                "additionalProperties": false,
+                "properties": {
+                  "identity": {
+                    "type": "boolean"
+                  },
+                  "inherit": {
+                    "type": "boolean"
+                  },
+                  "metadata": {
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "pattern": "^[a-z_]+$",
+                    "type": "string"
+                  },
+                  "model": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "silent": {
+                    "type": "boolean"
+                  },
+                  "skills": {
+                    "items": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "tier": {
+                    "enum": [
+                      "trivial",
+                      "default",
+                      "deep",
+                      "dreaming"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "kind": {
+                "enum": [
+                  "rooms",
+                  "dms",
+                  "room",
+                  "topic",
+                  "name"
+                ],
+                "type": "string"
+              },
+              "prompt": {
+                "additionalProperties": false,
+                "properties": {
+                  "chars": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "file",
+                          "config"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "chars",
+                  "source",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "selector": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "config",
+                  "file",
+                  "both"
+                ],
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "selector",
+              "kind",
+              "fields",
+              "prompt",
+              "source",
+              "version",
+              "warnings"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "fetchMetadata": {
+          "type": "boolean"
+        },
+        "modes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "platform",
+        "allowNameMatching",
+        "fetchMetadata",
+        "modes",
+        "entries",
+        "warnings"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.previewRoomPolicy": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "chatId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "draft": {
+          "properties": {
+            "entry": {
+              "properties": {
+                "identity": {
+                  "type": "boolean"
+                },
+                "inherit": {
+                  "type": "boolean"
+                },
+                "metadata": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "pattern": "^[a-z_]+$",
+                  "type": "string"
+                },
+                "model": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "prompt": {
+                  "maxLength": 16384,
+                  "type": "string"
+                },
+                "silent": {
+                  "type": "boolean"
+                },
+                "skills": {
+                  "items": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "maxItems": 8,
+                  "type": "array"
+                },
+                "tier": {
+                  "enum": [
+                    "trivial",
+                    "default",
+                    "deep",
+                    "dreaming"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "selector": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "selector",
+            "entry"
+          ],
+          "type": "object"
+        },
+        "isDm": {
+          "type": "boolean"
+        },
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        },
+        "roomName": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "threadId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "chatId",
+        "isDm"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "chatId": {
+          "type": "string"
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fields": {
+          "additionalProperties": false,
+          "properties": {
+            "identity": {
+              "type": "boolean"
+            },
+            "metadata": {
+              "type": "boolean"
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "modeKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "silent": {
+              "type": "boolean"
+            },
+            "skills": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tier": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "skills",
+            "model",
+            "tier",
+            "identity",
+            "metadata",
+            "silent",
+            "mode",
+            "modeKey"
+          ],
+          "type": "object"
+        },
+        "identityLineOmitted": {
+          "type": "boolean"
+        },
+        "isDm": {
+          "type": "boolean"
+        },
+        "match": {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "layers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "source": {
+              "enum": [
+                "topic",
+                "direct",
+                "parent",
+                "name",
+                "wildcard",
+                "none"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "key",
+            "source",
+            "layers"
+          ],
+          "type": "object"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "promptLayers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "chars": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "chars"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "roomName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ok",
+        "platform",
+        "chatId",
+        "threadId",
+        "isDm",
+        "roomName",
+        "match",
+        "fields",
+        "promptLayers",
+        "digest",
+        "block",
+        "identityLineOmitted",
+        "warnings"
       ],
       "type": "object"
     },
@@ -903,6 +1589,361 @@
         "filter"
       ],
       "type": "object"
+    },
+    "route": {}
+  },
+  "platforms.setRoomPlatformSettings": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "fetchMetadata": {
+          "type": "boolean"
+        },
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "fetchMetadata"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fetchMetadata": {
+              "type": "boolean"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok",
+            "fetchMetadata"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cause": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "reason": {
+              "enum": [
+                "partial",
+                "unsupported"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "reason",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "platforms.setRoomPolicy": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "entry": {
+          "properties": {
+            "identity": {
+              "type": "boolean"
+            },
+            "inherit": {
+              "type": "boolean"
+            },
+            "metadata": {
+              "type": "boolean"
+            },
+            "mode": {
+              "pattern": "^[a-z_]+$",
+              "type": "string"
+            },
+            "model": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "prompt": {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "silent": {
+              "type": "boolean"
+            },
+            "skills": {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "tier": {
+              "enum": [
+                "trivial",
+                "default",
+                "deep",
+                "dreaming"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "expectedVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "platform": {
+          "enum": [
+            "slack",
+            "discord",
+            "telegram",
+            "whatsapp"
+          ],
+          "type": "string"
+        },
+        "selector": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "selector",
+        "entry",
+        "expectedVersion"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "entry": {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "identity": {
+                      "type": "boolean"
+                    },
+                    "inherit": {
+                      "type": "boolean"
+                    },
+                    "metadata": {
+                      "type": "boolean"
+                    },
+                    "mode": {
+                      "pattern": "^[a-z_]+$",
+                      "type": "string"
+                    },
+                    "model": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "silent": {
+                      "type": "boolean"
+                    },
+                    "skills": {
+                      "items": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    },
+                    "tier": {
+                      "enum": [
+                        "trivial",
+                        "default",
+                        "deep",
+                        "dreaming"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "kind": {
+                  "enum": [
+                    "rooms",
+                    "dms",
+                    "room",
+                    "topic",
+                    "name"
+                  ],
+                  "type": "string"
+                },
+                "prompt": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "chars": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "file",
+                            "config"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "chars",
+                    "source",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "selector": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "config",
+                    "file",
+                    "both"
+                  ],
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "warnings": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "selector",
+                "kind",
+                "fields",
+                "prompt",
+                "source",
+                "version",
+                "warnings"
+              ],
+              "type": "object"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ok",
+            "entry",
+            "warnings"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cause": {
+              "type": "string"
+            },
+            "configWritten": {
+              "type": "boolean"
+            },
+            "fileRemoved": {
+              "type": "boolean"
+            },
+            "fileWritten": {
+              "type": "boolean"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "partial",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "reason",
+            "fileWritten",
+            "fileRemoved",
+            "configWritten",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "route": {}
   },

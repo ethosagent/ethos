@@ -21,6 +21,12 @@ import { serializeConfigLines } from './serialize';
 export { applyPlatformShim, bindResolvesToPersonality } from './bots';
 export { normalizeAuxTimeoutSeconds } from './builders/agent';
 export {
+  type ChannelsLine,
+  type ChannelsPlatformConfig,
+  parseChannelsLine,
+  type RawRoomEntry,
+} from './builders/channels';
+export {
   type BackgroundConfig,
   backgroundDefaults,
   type CronTopLevelConfig,

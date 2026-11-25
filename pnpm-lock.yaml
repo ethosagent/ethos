@@ -1313,6 +1313,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/voice-text
     devDependencies:
+      '@ethosagent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@ethosagent/memory-approval':
         specifier: workspace:*
         version: link:../memory-approval
@@ -2900,6 +2903,9 @@ importers:
       '@ethosagent/export-otlp':
         specifier: workspace:*
         version: link:../../extensions/export-otlp
+      '@ethosagent/gateway':
+        specifier: workspace:*
+        version: link:../../extensions/gateway
       '@ethosagent/goal-runner':
         specifier: workspace:*
         version: link:../../extensions/goal-runner

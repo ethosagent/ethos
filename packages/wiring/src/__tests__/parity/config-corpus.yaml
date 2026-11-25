@@ -56,6 +56,15 @@ browser.commandTimeoutMs: 5000
 browser.proxy.server: http://proxy.example.com:3128
 browser.headed: auto
 callCapture.personalityId: assistant
+channels.slack.allow_name_matching: false
+channels.slack.C0PARITY.prompt: "Parity room. Keep answers short."
+channels.slack.C0PARITY.skills: runbook, change-freeze
+channels.slack.C0PARITY.model: sonnet
+channels.slack.C0PARITY.mode: observe
+channels.slack.C0PARITY.silent: true
+channels.slack.*dm.prompt: "Private DM."
+channels.telegram.-1001234567890.topics.99.prompt: "Topic prompt."
+channels.telegram.*.identity: true
 channelDigest.enabled: true
 channelDigest.cron: 0 8 * * *
 channelDigest.maxMessagesPerLane: 500

@@ -48,6 +48,7 @@
   "normalizeAuxTimeoutSeconds",
   "normalizeWebSearchRecency",
   "observeModePlatforms",
+  "parseChannelsLine",
   "parseConfigScalar",
   "parseConfigYaml",
   "parseModelDeclaration",

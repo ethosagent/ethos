@@ -116,7 +116,7 @@ import {
 } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { pruneExpiredSessions } from '../lib/session-retention';
-import { callCaptureWake, watcherWakeMessage } from '../lib/watcher-wake';
+import { watcherWakeMessage } from '../lib/watcher-wake';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
@@ -139,9 +139,9 @@ import {
   getSecretsResolver,
   getStorage,
 } from '../wiring';
+import { startBootCallCapture } from './boot-callcapture';
 import {
   ACP_PORT_DEFAULT,
-  CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
   c,
   gatewayHealthPath,
   HEARTBEAT_INTERVAL_MS,
@@ -175,11 +175,13 @@ import {
   gatewaySqliteStorePaths,
   gatewayTurnOrigin,
   idleGatewayBotLoopOpts,
+  loadRoomPolicies,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   startAdaptersIsolated,
   validateBindings,
   warnEmailSenderAuthUnconfigured,
+  warnRoomPolicies,
   wireApprovalFlow,
 } from './gateway';
 import {
@@ -787,7 +789,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // §3b step 5 — gateway-role stack (constructed; adapters NOT started)
   // -------------------------------------------------------------------------
   const { attachmentCache, pruneTimer } = await createGatewayAttachmentCache(storage);
-  const adapters = await buildGatewayAdapters(cfg, attachmentCache);
+  // Loaded BEFORE the adapters: each gets its `roomModeDefault` from it (plan channel-prompts L12).
+  const { table: roomPolicies, warnings: roomWarnings } = await loadRoomPolicies(storage, cfg);
+  warnRoomPolicies(roomWarnings);
+  const adapters = await buildGatewayAdapters(cfg, attachmentCache, roomPolicies);
   warnEmailSenderAuthUnconfigured(cfg);
 
   let gatewayRef: ReturnType<typeof buildGateway> | null = null;
@@ -907,6 +912,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
 
   const gateway = buildGateway({
     config: cfg,
+    roomPolicies,
     bots,
     systemLoop,
     idleBotJobs: {
@@ -1178,97 +1184,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // router in a deployment that has one.
   allNotificationRouters.push(shared.notificationRouter);
 
-  // §3c / §11 OQ11 — the SINGLE `CallCaptureOwnershipManager`, gateway-role,
-  // unconditionally. Both `gateway.ts` and `serve.ts` construct one against the
-  // IDENTICAL lock path; in one merged process the second construction reads a
-  // lock naming its OWN pid, `process.kill(pid, 0)` on your own pid always
-  // succeeds, so it would report `{claimed:false, ownerPid:<mypid>}` forever
-  // and permanently disable call capture on that path. Hence exactly one, here.
-  //
-  // Gateway-role is not a config knob: the gateway's `wake` reaches a real
-  // routing table (see `watcherWakeFn` above) while serve's drains the stream
-  // with nothing consuming it. Fallback note for the record — with zero channel
-  // bots configured the two degrade to the same drain, so serve-role would be
-  // an acceptable substitute; never a better one, which is why it is fixed.
-  let callCaptureOwnershipManager:
-    | import('@ethosagent/platform-callcapture').CallCaptureOwnershipManager
-    | undefined;
-  let callCaptureState: { kind: string } = { kind: 'idle' };
-  const runCallCaptureFromLoop = shared.runCallCapture;
-  if (process.platform === 'darwin' && cfg.callCapture?.personalityId && runCallCaptureFromLoop) {
-    const {
-      CallCaptureDaemon,
-      CallCaptureOwnershipManager,
-      CaptureIndicator,
-      callCaptureHealthPath,
-      callCaptureLockPath,
-      checkCallCaptureDependencies,
-      MicActivityDetector,
-      NotificationGate,
-    } = await import('@ethosagent/platform-callcapture');
-    const boundPersonalityId = cfg.callCapture.personalityId;
-    const captureRunner = runCallCaptureFromLoop;
-    callCaptureOwnershipManager = new CallCaptureOwnershipManager({
-      lockPath: callCaptureLockPath(dir),
-      retryIntervalMs: CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
-      logger,
-      onOwnershipClaimed: () => {
-        const daemon = new CallCaptureDaemon({
-          detector: new MicActivityDetector(),
-          notificationGate: new NotificationGate(),
-          checkDependencies: checkCallCaptureDependencies,
-          personalityId: boundPersonalityId,
-          // Private by design: the owner's own call audit trail (`callCaptureWake`).
-          wake: callCaptureWake(watcherWake),
-          indicator: new CaptureIndicator({
-            onError: (msg) => logger.warn(`call-capture: ${msg}`),
-          }),
-          onStateChange: (state) => {
-            callCaptureState = state;
-          },
-          runCapture: async (abortSignal, source, onEntry, onAudioLevel) => {
-            const result = await captureRunner(boundPersonalityId, {
-              abortSignal,
-              source,
-              onEntry,
-              onAudioLevel,
-            });
-            if (!result.ok) {
-              logger.error(`call-capture: capture failed: ${result.error}`);
-              return;
-            }
-            if (result.warning) logger.warn(`call-capture: ${result.warning}`);
-            logger.info(`call-capture: saved transcript to ${result.artifactKey}`);
-          },
-          logger,
-        });
-        daemon.start();
-        const writeCallCaptureHeartbeat = async () => {
-          try {
-            await storage.writeAtomic(
-              callCaptureHealthPath(dir),
-              JSON.stringify({ pid: process.pid, updatedAt: new Date().toISOString() }),
-            );
-          } catch {
-            // Best-effort — a missed tick is harmless.
-          }
-        };
-        void writeCallCaptureHeartbeat();
-        const timer = setInterval(
-          () => void writeCallCaptureHeartbeat(),
-          CALL_CAPTURE_HEARTBEAT_INTERVAL_MS,
-        );
-        timer.unref?.();
-        return async () => {
-          daemon.stop();
-          callCaptureState = { kind: 'idle' };
-          clearInterval(timer);
-          await storage.remove(callCaptureHealthPath(dir)).catch(() => {});
-        };
-      },
-    });
-    callCaptureOwnershipManager.start();
-  }
+  // §3c / §11 OQ11 — the SINGLE ownership manager, gateway-role (./boot-callcapture).
+  const callCapture = await startBootCallCapture({
+    cfg,
+    dir,
+    storage,
+    logger,
+    runCallCapture: shared.runCallCapture,
+    watcherWake,
+    loadModule: () => import('@ethosagent/platform-callcapture'),
+  });
 
   // -------------------------------------------------------------------------
   // §3b step 7 — cron start (its `LocalIntervalTrigger.start()` fires
@@ -1782,6 +1707,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     },
   };
   const { configReloadRunner, configReloadTimer } = startConfigReload({
+    roomPolicies,
     args,
     cfg,
     dir,
@@ -1931,7 +1857,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         pauseLifecycle.stop?.();
       });
       await step('call-capture-ownership', async () => {
-        await callCaptureOwnershipManager?.stop();
+        await callCapture.manager?.stop();
       });
       await step('mesh-unregister', async () => {
         await mesh.unregister(agentId);
@@ -2117,9 +2043,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           // resolves to `<teamsDir()>/<name>.pid`, so this is the dir the PID
           // files it writes actually land in.
           teamsPidDir: teamsDir(),
-          callCaptureActive: callCaptureOwnershipManager
-            ? () => callCaptureState.kind !== 'idle'
-            : undefined,
+          callCaptureActive: callCapture.manager ? callCapture.isActive : undefined,
           outboxPending: outbox.pendingPublications,
         }),
         ...buildServeBusySources({
@@ -2132,9 +2056,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           cronScheduler: scheduler,
           teamsPidDir: teamsDir(),
           acpServer,
-          callCaptureActive: callCaptureOwnershipManager
-            ? () => callCaptureState.kind !== 'idle'
-            : undefined,
+          callCaptureActive: callCapture.manager ? callCapture.isActive : undefined,
         }),
       ]),
       // The same instance boot reconciliation read the pause offset from. Its

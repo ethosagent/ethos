@@ -3,7 +3,7 @@ title: "CLI: gateway, listen, cron, serve and status commands"
 description: "ethos gateway, listen, cron, acp, serve and status commands."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-25
 ---
 
 ## Synopsis {#synopsis}
@@ -65,6 +65,20 @@ ethos gateway spool discard 6f1c2a3e-0b7d-4c55-9a51-1f0e8d2b7c44
 ```
 Discarded 6f1c2a3e-0b7d-4c55-9a51-1f0e8d2b7c44.
 ```
+
+## ethos channels {#ethos-channels}
+
+Preview per-room prompts and policy offline. It builds the same table the gateway builds at start (config plus `~/.ethos/channels/`), so the answer is what a live turn would receive. Read-only. Synopsis: `ethos channels resolve <platform> <chatId> [threadId] [--dm] [--name <roomName>] [--json]` · `ethos channels list [--json]`
+
+| Argument | Meaning |
+|---|---|
+| `<platform>` | An adapter id such as `slack`. Errors when the platform has no entries. |
+| `<chatId>` | The room id. A Telegram id such as `-1001234567890` is a positional, not a flag. |
+| `[threadId]` | Thread or topic id, to resolve a sub-room. |
+| `--dm` | Resolve as a direct message (`*dm` wildcard). |
+| `--name <roomName>` | Supply a room name for `name:<slug>` matching. Applies only when `allow_name_matching` is on. |
+
+`resolve` prints the match key and source, the layer chain, skills, model, tier, identity, metadata, silent, mode, the prompt layers with sizes, the digest and the rendered block. The block omits the identity line, because the bot's handle is known only to a live adapter. For a room with identity on, the size and digest therefore differ from the live `/channel` output. `list` prints each selector, the fields it sets, and whether they come from `config` or a prompt file. Both print boot warnings, and `--json` makes either machine-readable. Source: [`apps/ethos/src/commands/channels.ts`](../../../../../apps/ethos/src/commands/channels.ts).
 
 ## ethos listen {#ethos-listen}
 
@@ -182,4 +196,5 @@ Synopsis: `ethos node connect <url> [--root <path>[:ro]]... [--name <n>] [--pers
 
 ## See also {#see-also}
 
+- [Give each room its own prompt](../../how-to/give-each-room-its-own-prompt.md): `ethos channels` in practice
 - [CLI reference](../cli.md): the index of every section and its page.

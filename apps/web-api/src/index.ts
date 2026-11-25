@@ -64,6 +64,7 @@ import { SessionsRepository } from './features/sessions/repository';
 import { SessionsService } from './features/sessions/service';
 import { lateDelegate, lateFn } from './lib/late-slot';
 import { createPendingLoop } from './lib/pending-loop';
+import { buildPlatformServices } from './lib/platform-services';
 import { AUTH_COOKIE } from './middleware/auth';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
 import { createCookieVerifier } from './middleware/cookie-verifier';
@@ -80,7 +81,6 @@ import {
 } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
 import { LeaseRepository } from './repositories/lease.repository';
-import { PlatformsRepository } from './repositories/platforms.repository';
 import { WebAdminRepository } from './repositories/web-admin.repository';
 import { WebSessionStore } from './repositories/web-session.store';
 import { resolveWebTokenEnv, WebTokenRepository } from './repositories/web-token.repository';
@@ -121,7 +121,6 @@ import { ObservedChatsService } from './services/observed-chats.service';
 import { OnboardingService } from './services/onboarding.service';
 import { OutboxService } from './services/outbox.service';
 import { PersonalitiesService } from './services/personalities.service';
-import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
 import { createLiveChannelSetupWorld } from './services/recipe-channel-setup';
 import { RecipesService } from './services/recipes.service';
@@ -947,16 +946,15 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   // The mesh registry lives at ~/.ethos/meshes/default/registry.json —
   // the same path `ethos serve` writes to via meshRegistryPath('default').
   const mesh = new AgentMesh(defaultRegistryPath(), { storage });
-  const platformsRepo = new PlatformsRepository({
-    config: configRepo,
-    secrets,
-    dataDir: opts.dataDir,
-    storage,
-  });
-
   // Constructed here rather than alongside the other services below because
   // `CronService`'s delivery-target resolver reads through it.
-  const platformsService = new PlatformsService({ repo: platformsRepo });
+  const { platformsService, roomPoliciesService } = buildPlatformServices({
+    configRepo,
+    secrets,
+    storage,
+    dataDir: opts.dataDir,
+    sessions: opts.sessionStore,
+  });
 
   const systemBus = new SystemEventBus();
 
@@ -2146,6 +2144,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       plugins: pluginsService,
       mcp: mcpService,
       platforms: platformsService,
+      roomPolicies: roomPoliciesService,
       lab: labService,
       kanban: kanbanService,
       teams: teamsService,

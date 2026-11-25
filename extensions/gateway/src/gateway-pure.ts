@@ -743,6 +743,7 @@ export const PLATFORM_COMMANDS: Readonly<
     | 'incognito'
     | 'usage'
     | 'status'
+    | 'channel'
     | 'budget'
     | 'stop'
     | 'help'
@@ -771,6 +772,7 @@ export const PLATFORM_COMMANDS: Readonly<
   '/stop': 'stop',
   '/usage': 'usage',
   '/status': 'status',
+  '/channel': 'channel',
   '/budget': 'budget',
   '/help': 'help',
   '/personality': 'personality',

@@ -130,6 +130,11 @@ export const COMMAND_TABLE: readonly CommandTableEntry[] = [
     group: 'Channels',
     description: 'Approve or reject queued outbound publications',
   },
+  {
+    name: 'channels',
+    group: 'Channels',
+    description: 'Show the per-room prompt and policy a room resolves to',
+  },
   // Automate
   { name: 'cron', group: 'Automate', description: 'Schedule and manage recurring jobs' },
   { name: 'batch', group: 'Automate', description: 'Run a batch of prompts non-interactively' },

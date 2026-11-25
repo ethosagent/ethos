@@ -30,6 +30,8 @@ export const GATEWAY_SOURCE_FILES = [
   'gateway-approval.ts',
   'gateway-platform-readers.ts',
   'gateway-adapters.ts',
+  'gateway-room-policy.ts',
+  'gateway-whatsapp-link.ts',
   'gateway-wiring.ts',
   '_shared.ts',
 ] as const;

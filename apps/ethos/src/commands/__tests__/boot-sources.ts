@@ -24,6 +24,7 @@ export const BOOT_SOURCE_FILES = [
   'boot-reload.ts',
   'boot-context.ts',
   'boot-constants.ts',
+  'boot-callcapture.ts',
   'boot-digest.ts',
   '_shared.ts',
 ] as const;

@@ -4,6 +4,12 @@ import {
   BotBindingSchema,
   ChannelPlatformFilterSchema,
   CredentialKeyInfoSchema,
+  DeleteRoomPolicyInputSchema,
+  DeleteRoomPolicyOutputSchema,
+  ListRecentRoomsInputSchema,
+  ListRecentRoomsOutputSchema,
+  ListRoomPoliciesInputSchema,
+  ListRoomPoliciesOutputSchema,
   McpAddServerInputSchema,
   McpAddServerOutputSchema,
   McpAttachInputSchema,
@@ -43,6 +49,12 @@ import {
   PlatformIdSchema,
   PlatformStatusSchema,
   PluginInfoSchema,
+  PreviewRoomPolicyInputSchema,
+  PreviewRoomPolicyOutputSchema,
+  SetRoomPlatformSettingsInputSchema,
+  SetRoomPlatformSettingsOutputSchema,
+  SetRoomPolicyInputSchema,
+  SetRoomPolicyOutputSchema,
   SlackAppEntrySchema,
   TelegramBotEntrySchema,
   WhatsAppChannelModeSchema,
@@ -150,6 +162,18 @@ export const platforms = {
   setChannelFilter: oc
     .input(z.object({ platform: z.string(), filter: ChannelPlatformFilterSchema }))
     .output(z.object({ filter: ChannelPlatformFilterSchema })),
+
+  // Per-room policy (prompt, skills, model/tier, mode, ...). Cookie-only
+  // (experimental namespace); errors: 400 INVALID_INPUT, 409 CONFIG_CONFLICT,
+  // 413 PAYLOAD_TOO_LARGE. A half-applied save returns `{ ok: false, reason: 'partial' }`.
+  listRoomPolicies: oc.input(ListRoomPoliciesInputSchema).output(ListRoomPoliciesOutputSchema),
+  setRoomPolicy: oc.input(SetRoomPolicyInputSchema).output(SetRoomPolicyOutputSchema),
+  deleteRoomPolicy: oc.input(DeleteRoomPolicyInputSchema).output(DeleteRoomPolicyOutputSchema),
+  previewRoomPolicy: oc.input(PreviewRoomPolicyInputSchema).output(PreviewRoomPolicyOutputSchema),
+  listRecentRooms: oc.input(ListRecentRoomsInputSchema).output(ListRecentRoomsOutputSchema),
+  setRoomPlatformSettings: oc
+    .input(SetRoomPlatformSettingsInputSchema)
+    .output(SetRoomPlatformSettingsOutputSchema),
 };
 
 // ---------------------------------------------------------------------------

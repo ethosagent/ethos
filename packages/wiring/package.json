@@ -33,6 +33,10 @@
       "import": "./src/nodes.ts",
       "types": "./src/nodes.ts"
     },
+    "./room-policy": {
+      "import": "./src/room-policy.ts",
+      "types": "./src/room-policy.ts"
+    },
     "./types": {
       "import": "./src/types.ts",
       "types": "./src/types.ts"
@@ -63,6 +67,7 @@
     "@ethosagent/execution-node": "workspace:*",
     "@ethosagent/execution-ssh": "workspace:*",
     "@ethosagent/export-otlp": "workspace:*",
+    "@ethosagent/gateway": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/job-runner": "workspace:*",

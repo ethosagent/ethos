@@ -82,7 +82,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | node | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | channels | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | node | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -771,44 +771,44 @@ try {
       break;
     }
 
-    case 'batch': {
-      const config = await loadRequiredConfig();
-      await runBatch(args.slice(1), config);
+    case 'batch':
+      await runBatch(args.slice(1), await loadRequiredConfig());
       break;
-    }
 
     case 'bench': {
       await runBench(args.slice(1));
       break;
     }
 
-    case 'eval': {
-      const config = await loadRequiredConfig();
-      await runEval(args.slice(1), config);
+    case 'eval':
+      await runEval(args.slice(1), await loadRequiredConfig());
       break;
-    }
 
-    case 'evolve': {
-      const config = await loadRequiredConfig();
-      await runEvolve(args.slice(1), config);
+    case 'evolve':
+      await runEvolve(args.slice(1), await loadRequiredConfig());
       break;
-    }
 
     case 'learn': {
       await runLearn(args.slice(1));
       break;
     }
 
-    case 'learning': {
-      const config = await loadRequiredConfig();
-      await runLearning(args.slice(1), config);
+    case 'learning':
+      await runLearning(args.slice(1), await loadRequiredConfig());
       break;
-    }
 
     case 'outbox': {
       await runOutbox(args.slice(1));
       break;
     }
+
+    case 'channels': // lazy: pulls in the gateway (daemon-free-smoke.test.ts)
+      await (await import('./commands/channels')).runChannels(
+        args.slice(1),
+        await loadRequiredConfig(),
+        getStorage(),
+      );
+      break;
 
     case 'plugin': {
       await runPlugin(args.slice(1));
@@ -860,11 +860,9 @@ try {
       break;
     }
 
-    case 'dashboard': {
-      const config = await loadRequiredConfig();
-      await runDashboard(args.slice(1), config);
+    case 'dashboard':
+      await runDashboard(args.slice(1), await loadRequiredConfig());
       break;
-    }
 
     case 'fallback': {
       await runFallback(args.slice(1));

@@ -4,7 +4,7 @@ description: What Ethos defends against, what's out of scope, and the single-ope
 kind: explanation
 audience: shared
 slug: threat-model
-updated: 2026-09-25
+updated: 2026-11-25
 ---
 
 A security model is only as useful as the threat model it's grounded in. This page is explicit about both halves: what Ethos defends against, and what Ethos does *not* claim to defend.
@@ -39,6 +39,7 @@ A threat being *in scope* means three things at once: (1) the threat is realisti
 | Credential leakage via tool errors / logs / transcripts | All tools, audit log, [session](../getting-started/glossary.md#session) transcript files | Tool returns `auth failed: token sk-ant-… invalid`; the key lands in the LLM context, audit log, and any user-shared diagnostic bundle |
 | Plugin data source injection | Plugin data sources, dashboard queries | Plugin registers a data source; dashboard user crafts a query with `DROP TABLE` or exfiltrates data via SQL injection |
 | Admin panel unauthorized access | Admin panel (Mission Control) | Attacker discovers the admin panel URL and issues API calls without a valid token, reading sessions or modifying config |
+| Room prompt tampering and room-metadata injection | Per-room prompts, channel adapters | A room member edits a channel topic to read "ignore your instructions"; or an agent with file access rewrites a prompt file under `~/.ethos/channels/` |
 
 Each threat in this column has at least one corresponding control documented in [Security controls](./controls.md). Most have two or three — the model is defense in depth, not defense by single-layer.
 
@@ -84,6 +85,21 @@ If you're running Ethos in a context where multiple humans need separate trust b
 
 The same assumption rules out "agent acts on behalf of arbitrary internet users" as a deployment shape. If anyone who knows the bot's handle can DM it and have the agent take action with the operator's credentials, the operator-trust assumption is broken — the operator did not authorize the third party. The pairing flow ([Security controls — pairing](./controls.md#one-time-dm-pairing-codes)) is what keeps that property: an unknown sender receives a one-time code, and is only added to the allowlist after the owner redeems it.
 
+### Room prompts: who can write them
+
+Per-room prompts split on trust. Operator text is trusted and goes in the system prompt. Anything a room member can edit is not, and it never goes there.
+
+| Input | Who controls it | Trust | Where it goes |
+|---|---|---|---|
+| `channels.*` in `config.yaml` | The operator. The agent cannot write the file. | Trusted | System prompt, as the `## This room` block |
+| `~/.ethos/channels/**/*.md` | The operator. The agent cannot write this directory: `channels` is a write-deny entry in `STATE_DIR_DENY_ENTRIES` ([`packages/storage-fs/src/sensitive-paths.ts`](https://github.com/ethosagent/ethos/blob/main/packages/storage-fs/src/sensitive-paths.ts)). | Trusted | System prompt, as the `## This room` block |
+| The bot's own handle | The platform's own auth (`auth.test`, `getMe`, the logged-in client) | Trusted, clamped to 64 characters and `[\w.\- ]` | System prompt, in a fixed sentence |
+| Slack topic and purpose, Discord topic, room name | Any room member who can edit it | Untrusted | The user message only, fenced as `channel_metadata`, capped at 400 or 800 characters per field and scanned with `shortPatternCheck`; a hit drops the whole block and records `gateway.room_metadata_blocked` |
+
+The web editor (Communications → Rooms) writes both inputs above. Its procedures accept a signed-in cookie session only (an API key gets 403), refuse path-unsafe selectors before any file is written, and reject a stale edit with a 409.
+
+Metadata is off by default. It needs `channels.<platform>.fetch_metadata: true` and `metadata: true` on the entry. Room-name matching (`name:<slug>`) is also off by default (`allow_name_matching`), because anyone who can rename a room could move it onto another entry. The gateway drops an over-long prompt layer instead of truncating it, so a cut cannot leave half an instruction. The room prompt cannot weaken the injection-defense prelude, which is first and unconditional. It cannot change the audience either: see [Why does private memory stay out of shared rooms?](../using/explanation/memory-model/shared-rooms.md).
+
 ### Where threats meet controls
 
 | Threat | Primary controls |
@@ -97,6 +113,7 @@ The same assumption rules out "agent acts on behalf of arbitrary internet users"
 | Network exfiltration / SSRF | Network policy, scheme allowlist, cloud-metadata blocklist, redirect revalidation |
 | Credential leakage | Pattern-based redaction at the observability store layer; per-personality redaction modes |
 | Plugin data source injection | Read-only SQLite connections, SELECT-only panel-SQL guard, param allowlist on interpolated values |
+| Room prompt tampering and room-metadata injection | `channels` write-deny in `STATE_DIR_DENY_ENTRIES`; metadata off by default, user-message only, `wrapUntrusted` plus `shortPatternCheck`; room prompt in the system prompt only from operator config and files |
 | Admin panel unauthorized access | Admin panel token authentication (`dualAuth`, `requireAdmin`); credentialed CORS only for origins listed in `allowedOrigins`, default none (`resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`, pinned by `apps/web-api/src/__tests__/routes/cors-origin.test.ts`) — a browser-side control, not a check on non-browser clients |
 
 Each control is documented in [Security controls](./controls.md) with the file path where it lives in the codebase. The cross-reference is intentional: customers evaluating Ethos can read the source, not just the marketing.
@@ -163,4 +180,5 @@ All three cases produce a release-notes entry and an update to this page; custom
 - [Security controls](./controls.md) — the catalogue, with file paths for verification.
 - [Pre-launch hardening pass](./security-fixes.md) — the sixteen issues a pre-launch review surfaced.
 - [Responsible disclosure](./responsible-disclosure.md) — how to report a control bypass.
+- [Give each room its own prompt](../using/how-to/give-each-room-its-own-prompt.md) — the operator side of room prompts.
 - [Why personality is the unit](../using/explanation/what-is-a-personality.md) — why scoping risk per personality matters.

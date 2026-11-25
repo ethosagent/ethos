@@ -11,6 +11,7 @@ import {
   parseVerbosity,
 } from './builders/agent';
 import { buildBrowser, buildMcpConfig, buildToolLoop } from './builders/browser';
+import { buildChannels, createChannelsCollector } from './builders/channels';
 import { buildBackgroundConfig, buildCronConfig } from './builders/cron-background';
 import { buildWeeklyDigest } from './builders/digest';
 import { buildExecutionConfig } from './builders/execution';
@@ -192,6 +193,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   const gatewayKv: Record<string, string> = keyUse.track('gateway.', {});
   // gateway.private_chats.<platform>: <chatId,...> — trusted rooms (D9).
   const privateChatsKv: Record<string, string> = keyUse.track('gateway.private_chats.', {});
+  const channels = createChannelsCollector();
   // decisions.<field>: <value> — the decision provider, stored under the
   // dotted sub-path (`sites.injection`, `thresholds.approver.deny`).
   const decisionsKv: Record<string, string> = keyUse.track('decisions.', {});
@@ -1114,6 +1116,10 @@ export function parseConfigYaml(src: string): EthosConfig {
       browserKv[brw[1]] = parseConfigScalar(brw[2]);
       continue;
     }
+    if (line.startsWith('channels.')) {
+      channels.add(line, lineIdx + 1);
+      continue;
+    }
     // gateway.private_chats.<platform>: <chatId,...>  (trusted rooms, D9).
     const gpc = line.match(/^gateway\.private_chats\.([^.\s:]+):\s*(.+)$/);
     if (gpc) {
@@ -1807,6 +1813,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     grounding: groundingResult.grounding,
     browser: browserResult.browser,
     gateway: buildGateway(gatewayKv, privateChatsKv, gatewayWarnings),
+    channels: buildChannels(channels.lines, channels.warnings),
     decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
@@ -1873,6 +1880,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...storageEncryptionRemovedNotice(kv),
     ...notificationWarnings,
     ...gatewayWarnings,
+    ...channels.warnings,
     ...pluginIsolationResult.warnings,
     ...keyUse.notices(),
   ]);

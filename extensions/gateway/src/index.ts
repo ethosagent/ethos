@@ -73,6 +73,7 @@ import {
   type VoiceMode,
 } from '@ethosagent/voice-text';
 import { GatewayAudience } from './audience';
+import { handleBudgetCommand } from './budget-command';
 import {
   CHANNEL_DIGEST_LOCK_FILE,
   CHANNEL_DIGEST_WATERMARK_FILE,
@@ -152,14 +153,12 @@ import { activeLaneJobSummary, parseJobCommand, runJobCommand, stopJobByRef } fr
 import { LaneManager } from './lane-manager';
 import { LaneSessionFiles } from './lane-sessions';
 import type { McpLoginPort } from './mcp-login-port';
+import { handleMuteCommand } from './mute-command';
 import { OutboundSend } from './outbound-send';
-import {
-  type GatewayQuietHours,
-  inQuietHours,
-  parseMuteDuration,
-  quietWindowFor,
-} from './quiet-hours';
+import { type GatewayQuietHours, inQuietHours, quietWindowFor } from './quiet-hours';
 import { applyReplyPrefix } from './reply-prefix';
+import { RoomGateway } from './room-gateway';
+import { answerWithCapNotice, shouldSuppressSilentReply } from './silent-reply';
 import { SpoolReplay } from './spool-replay';
 import { SpoolTurns } from './spool-turns';
 import { createSteerSink, type GatewaySteerSink } from './steer-sink';
@@ -234,6 +233,7 @@ export {
   type QuietHoursWindow,
   quietWindowFor,
 } from './quiet-hours';
+export * from './room-exports';
 export {
   closeUnbalancedMarkup,
   DraftStreamer,
@@ -494,6 +494,8 @@ export class Gateway {
   private readonly privateChats: PrivateChatSet | undefined;
   /** Static per-channel toolset narrowing (platform → allowed tool names). */
   private readonly channelToolsets: Record<string, string[]> | undefined;
+  /** Per-room prompt/policy collaborator (room-gateway.ts); owns the policy table and lane notes. */
+  private readonly rooms: RoomGateway;
   /** SQLite DB for pairing codes. */
   private readonly pairingDb: Database.Database | undefined;
   /** Observability adapter for audit events. */
@@ -818,6 +820,12 @@ export class Gateway {
     // closure over `gw`, evaluated only when a collaborator method runs, so a
     // field assigned later in this constructor is still seen.
     const gw = this;
+    this.rooms = new RoomGateway(config.roomPolicies, {
+      observability: () => gw.observability,
+      sessionStoreFor: () => gw.sessionStoreFor,
+      privateChats: () => gw.privateChats,
+      isOwner: (message) => gw.isOwner(message),
+    });
     this.audience = new GatewayAudience({
       get privateChats() {
         return gw.privateChats;
@@ -2482,6 +2490,7 @@ export class Gateway {
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
         `/status — usage plus personality · model · session\n` +
+        `/channel [show] — this room's prompt policy (show: owner, in a DM)\n` +
         `/budget [reset] — session spend against its cap\n` +
         `/compact [focus] — compress older context now\n` +
         `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
@@ -2692,8 +2701,25 @@ export class Gateway {
       return;
     }
 
+    if (cmdType === 'channel') {
+      await this.rooms.handleChannelCommand(text, message, adapter, threadId);
+      return;
+    }
+
     if (cmdType === 'budget') {
-      await this.handleBudgetCommand(text, laneKey, bot, message, adapter, threadId);
+      const ownerUserId = this.channelFilter?.[message.platform]?.ownerUserId;
+      const personalityId =
+        bot.binding.type === 'team'
+          ? undefined
+          : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+      const deps = {
+        sessionKey: this.sessionKeys.get(laneKey) ?? laneKey,
+        ownerUserId,
+        isOwner: this.isOwner(message),
+        personalityId,
+        spentToday: () => this.spentToday(bot, message.platform),
+      };
+      await handleBudgetCommand(deps, text, bot, message, adapter, threadId);
       return;
     }
 
@@ -2978,7 +3004,15 @@ export class Gateway {
     }
 
     if (cmdType === 'mute') {
-      await this.handleMuteCommand(text, laneKey, message, adapter, threadId);
+      const ownerUserId = this.channelFilter?.[message.platform]?.ownerUserId;
+      const persist = () => this.persistLaneSessions(laneKey);
+      const deps = {
+        laneMutes: this.laneMutes,
+        ownerUserId,
+        isOwner: this.isOwner(message),
+        persist,
+      };
+      await handleMuteCommand(deps, text, laneKey, message, adapter, threadId);
       return;
     }
 
@@ -3277,7 +3311,7 @@ export class Gateway {
           if (!this.linkAbsorbed(spoolId, absorbing)) absorbing.absorbed.push(spoolId);
           handOff();
         }
-        if (!ctx.replay) {
+        if (!ctx.replay && !this.rooms.isSilent(message, threadId)) {
           await adapter
             .send(message.chatId, { text: ABSORBED_STEER_ACK, threadId })
             .catch(() => {});
@@ -3300,7 +3334,7 @@ export class Gateway {
         spoolId,
       );
       handOff();
-      if (!ctx.replay) {
+      if (!ctx.replay && !this.rooms.isSilent(message, threadId)) {
         await adapter
           .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
           .catch(() => {});
@@ -3348,7 +3382,7 @@ export class Gateway {
       spoolId,
     );
     handOff();
-    if (laneBusy && !ctx.replay) {
+    if (laneBusy && !ctx.replay && !this.rooms.isSilent(message, threadId)) {
       await adapter
         .send(message.chatId, { text: queuedTurnAck(lane.length), threadId })
         .catch(() => {});
@@ -3821,7 +3855,7 @@ export class Gateway {
       // the child's result ALREADY wrapped as untrusted (and injection-scanned
       // there), so it goes in as-is behind a trusted instruction — re-wrapping
       // it as a `channel_message` would mark our own envelope untrusted.
-      const loopText = review
+      let loopText = review
         ? `${REVIEW_TURN_PREAMBLE}\n\n${text}`
         : contextPrefix
           ? `${contextPrefix}${wrapped.content}`
@@ -3852,6 +3886,9 @@ export class Gateway {
       // The ledger binding rides along so the streamer's TERMINAL edit gets the
       // same durable obligation the non-streaming paths get.
       const streamDelivery = this.deliveryBinding(bot.botKey, message.platform, inboundRef);
+      // Per-room silence (plan channel-prompts L11, D20): set once the room resolves. While true
+      // the lane posts nothing it could not retract (`silentHold`, no H1 notice): no adapter delete.
+      let roomSilent = false;
       // Not for a review turn: whether its answer or the plain wake notice goes
       // out is decided only at the terminal event (see `deliverAnswer`).
       const streamer =
@@ -3866,6 +3903,7 @@ export class Gateway {
               ...(streamDelivery ? { delivery: streamDelivery } : {}),
               ...(bot.replyPrefix ? { prefixBody: prefixReply } : {}),
               minEditIntervalMs: this.streamingEditIntervalMs,
+              silentHold: () => roomSilent,
               onFloodDisable: () => {
                 this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);
                 this.observability?.recordSafetyBlock({
@@ -3911,7 +3949,7 @@ export class Gateway {
                   ? {}
                   : {
                       sendNotice: (notice: string) => {
-                        if (!signal.aborted)
+                        if (!signal.aborted && !roomSilent)
                           void adapter
                             .send(message.chatId, { text: notice, threadId })
                             .catch(() => {});
@@ -3924,6 +3962,12 @@ export class Gateway {
       // Resolved from static config only — never computed per turn — so the
       // tool list stays byte-stable across turns on this lane (plan R1).
       const toolsetNarrow = this.channelToolsets?.[message.platform];
+
+      // Per-room prompt and policy (plan channel-prompts D1, D14): see `RoomGateway.resolveTurn`.
+      const resolveIn = { message, adapter, threadId, review, sessionKey, laneSessionKey };
+      const { room, metaText } = await this.rooms.resolveTurn(resolveIn);
+      if (metaText) loopText = `${metaText}\n\n---\n\n${loopText}`;
+      roomSilent = room?.silent === true;
 
       const translator = createEventTranslator();
 
@@ -3955,16 +3999,18 @@ export class Gateway {
         // V-CP-2 / UBP-033 — a reply the output cap cut off ends with core's
         // `MAX_TOKENS_REPLY_NOTICE` (packages/core/src/agent-loop/output-cap.ts), on
         // the streamed final and the plain send alike (`cutOffAtCap` below).
-        const answerText =
-          cutOffAtCap && fullAnswer.trim().length > 0
-            ? `${fullAnswer}\n\n${MAX_TOKENS_REPLY_NOTICE}`
-            : fullAnswer;
         // S4/U1 — a budget halt reaches the lane folded into the reply, so the
         // answer and the reason it stopped are ONE message (`haltNotice` in
         // @ethosagent/core owns the wording and the reset command). Not for a
         // review turn: its empty answer must still fall back to the wake
         // notice below. Pinned by `__tests__/budget-halt.test.ts`.
         const halted = !review && translator.halt ? haltNotice(translator.halt) : null;
+        const answerText = answerWithCapNotice(
+          roomSilent,
+          fullAnswer,
+          cutOffAtCap,
+          halted !== null,
+        );
         const responseText = halted
           ? answerText.trim().length > 0
             ? `${answerText}\n\n${halted}`
@@ -4064,6 +4110,14 @@ export class Gateway {
             // path.
             markAnswered();
           }
+        } else if (!streamed && shouldSuppressSilentReply(roomSilent, responseText)) {
+          // Per-room silence (plan channel-prompts L11, D20): the room opted in and the whole
+          // reply is a marker, so nothing is sent and nothing is owed (no ledger row, dedup not
+          // armed); `markAnswered` completes the turn for `shutdown()` and `finishSpoolTurn`. A
+          // halt/cap notice is part of `responseText`, so those still go out. Pinned by
+          // `__tests__/room-silence.test.ts`.
+          await this.rooms.endSilentTurn(adapter, message, bot, threadId, review?.jobId);
+          markAnswered();
         } else if (responseText) {
           const sanitized = stripAnsiEscapes(responseText);
           // What the chat receives. The voice note below speaks `sanitized`:
@@ -4193,6 +4247,8 @@ export class Gateway {
           ...(this.incognitoLanes.has(laneKey) ? { incognito: true } : {}),
           ...(voiceOrigin ? { voiceOrigin } : {}),
           ...(toolsetNarrow ? { toolsetNarrow } : {}),
+          ...(room?.prompt ? { roomPrompt: room.prompt } : {}),
+          ...this.rooms.loopOptions(room),
           // Unconditional, not config-driven: UI-card tools have no rendering on
           // any channel adapter, so they never reach a channel turn's tool list.
           toolsetExclude: [...CHANNEL_EXCLUDED_TOOLS],
@@ -4302,6 +4358,7 @@ export class Gateway {
       // An iterator that ends without `done` or `error` — AgentLoop always
       // yields one, test fakes need not: deliver what accumulated.
       else await deliverAnswer();
+      if (!review) await this.rooms.notePolicyDigest(sessionKey, message, room);
       completed = true;
     } finally {
       clearInterval(typingTimer);
@@ -5024,50 +5081,6 @@ export class Gateway {
   /** @see WakeReviews.releaseParkedReviews in ./wake-review.ts */
   private releaseParkedReviews(): Promise<number> {
     return this.wake.releaseParkedReviews();
-  }
-
-  /**
-   * `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it.
-   *
-   * Both change the lane for everyone in it, so they take `/personality`'s
-   * group rule (plan openclaw-advisory-fixes D20/D21), as `/budget reset` does:
-   * in a group only `channel_filter.<platform>.ownerUserId` may change the
-   * mute, and a group on a platform with no owner refuses outright. DMs and the
-   * read-only `/mute` stay open. Pinned by `__tests__/mute-owner.test.ts`.
-   */
-  private async handleMuteCommand(
-    text: string,
-    laneKey: string,
-    message: InboundMessage,
-    adapter: PlatformAdapter,
-    threadId: string | undefined,
-  ): Promise<void> {
-    const arg = text.split(/\s+/).slice(1).join(' ');
-    const parsed = parseMuteDuration(arg);
-    let reply: string;
-    if (parsed !== null && !message.isDm && !this.isOwner(message)) {
-      reply =
-        this.channelFilter?.[message.platform]?.ownerUserId === undefined
-          ? `Muting notices in a group needs an owner. ` +
-            `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
-          : 'Only the bot owner can mute notices in a group.';
-    } else if (parsed === null) {
-      const until = this.laneMutes.get(laneKey);
-      reply =
-        until !== undefined && until > Date.now()
-          ? `Notices muted in this chat until ${new Date(until).toISOString()}.\nUsage: /mute <30m|2h|1d|off>`
-          : 'Usage: /mute <30m|2h|1d|off> — hold background notices in this chat.';
-    } else if (parsed === 'off') {
-      this.laneMutes.delete(laneKey);
-      await this.persistLaneSessions(laneKey);
-      reply = '✓ Unmuted. Held notices arrive within a minute.';
-    } else {
-      const until = Date.now() + parsed;
-      this.laneMutes.set(laneKey, until);
-      await this.persistLaneSessions(laneKey);
-      reply = `✓ Notices muted in this chat until ${new Date(until).toISOString()}. Replies to your messages still arrive.`;
-    }
-    await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
   }
 
   /**
@@ -5821,65 +5834,6 @@ export class Gateway {
 
   backgroundGate(request: UsageGateRequest): Promise<UsageGateVerdict> {
     return this.spend.backgroundGate(request);
-  }
-
-  /**
-   * `/budget` and `/budget reset` (plan openclaw-2026.9.6-gaps S4/U1) — the
-   * channel half of the CLI command, over the same `AgentLoop` session-cost
-   * counter `budgetCapUsd` is checked against (`getSessionCost` /
-   * `resetSessionCost`), keyed by the lane's CURRENT session key.
-   *
-   * The reset is lane-wide state, so it takes `/personality`'s group rule
-   * (plan openclaw-advisory-fixes D20/D21): in a group only the configured
-   * `channel_filter.<platform>.ownerUserId` may reset, and a group on a
-   * platform with no owner refuses outright. The read-only form stays open.
-   * Pinned by `__tests__/budget-halt.test.ts`.
-   */
-  private async handleBudgetCommand(
-    text: string,
-    laneKey: string,
-    bot: GatewayBotConfig,
-    message: InboundMessage,
-    adapter: PlatformAdapter,
-    threadId: string | undefined,
-  ): Promise<void> {
-    const reply = (body: string) =>
-      adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
-    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
-    const arg = text.split(/\s+/)[1]?.toLowerCase() ?? '';
-
-    if (arg === 'reset') {
-      if (!message.isDm && !this.isOwner(message)) {
-        await reply(
-          this.channelFilter?.[message.platform]?.ownerUserId === undefined
-            ? `Resetting the budget in a group needs an owner. ` +
-                `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
-            : 'Only the bot owner can reset the budget in a group.',
-        );
-        return;
-      }
-      bot.loop.resetSessionCost(sessionKey);
-      await reply('✓ Budget counter reset for this session.');
-      return;
-    }
-
-    const personalityId =
-      bot.binding.type === 'team'
-        ? undefined
-        : (this.personalityIds.get(laneKey) ?? bot.binding.name);
-    const spent = bot.loop.getSessionCost(sessionKey);
-    const cap = bot.loop.getPersonalityBudgetCap(personalityId);
-    const today = await this.spentToday(bot, message.platform);
-    await reply(
-      `Session spend: $${spent.toFixed(4)}` +
-        (cap != null ? ` of a $${cap.toFixed(2)} cap` : ' (no session cap set)') +
-        (today !== null && bot.budget
-          ? `\nBot spend today (UTC): $${(today.repliesUsd + today.backgroundUsd).toFixed(4)} ` +
-            `of a $${bot.budget.dailyUsd.toFixed(2)} daily cap ` +
-            `($${today.repliesUsd.toFixed(4)} replies, $${today.backgroundUsd.toFixed(4)} background)`
-          : '') +
-        `\nUse /budget reset to start a new budget window.`,
-    );
   }
 
   /**

@@ -30,9 +30,11 @@ export { chunkText, reflowChunks } from './chunking';
 export type { KanbanReader, MemoryReader } from './commands';
 export {
   type Binding,
+  CHANNEL_MODES,
   type ChannelMode,
   ChannelModeSchema,
   DEFAULT_CHANNEL_MODE,
+  type RoomModeDefault,
 } from './config';
 export type {
   KanbanUnfurlReader,

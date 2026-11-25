@@ -857,13 +857,13 @@ export {
   incognitoSessionMetadata,
   isIncognitoSession,
   isSharedSession,
+  laneKeyChatId,
   type PrivateChatSet,
   privateChatSetFrom,
   targetAudience,
   turnWasShared,
 } from '@ethosagent/core';
-// L-T8 — the inbox's own types, re-exported so a surface (web-api) reaches the
-// review inbox through the composition root rather than a second package link.
+// L-T8 — inbox types, re-exported so web-api reaches the review inbox via wiring.
 export {
   AWAITING_DECISION,
   type CandidateStatus,
@@ -2484,9 +2484,8 @@ export { createOAuthService } from './oauth-factory';
 // Security kernel — passthrough for apps (ARCHITECTURE.md §II, §III Law 5)
 //
 // The list lives in ./security-kernel so a lazily-loaded CLI command can import
-// it WITHOUT the composition root's import graph (a barrel import costs ~7s and
-// loads every extension). Re-exported here so surfaces already on the barrel —
-// gateway, serve — keep one import.
+// it WITHOUT the barrel's import graph (~7s, loads every extension); re-exported
+// here so surfaces already on the barrel keep one import.
 // ---------------------------------------------------------------------------
 
 export * from './security-kernel';
@@ -2523,4 +2522,5 @@ export {
   type McpLoginSettlement,
   type McpLoginStart,
 } from './mcp-login';
+export * from './room-policy'; // per-room prompts and policy; also the `@ethosagent/wiring/room-policy` subpath
 export * from './system-jobs';

@@ -239,6 +239,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     surfaces: ['gateway'],
   },
   {
+    name: 'channel',
+    description: 'Show this room’s prompt policy (show: full prompt, owner in a DM)',
+    usage: '/channel [show]',
+    surfaces: ['gateway'],
+  },
+  {
     name: 'queue',
     description: 'Show queued turns for this chat',
     usage: '/queue',

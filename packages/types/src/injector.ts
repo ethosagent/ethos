@@ -34,6 +34,12 @@ export interface PromptContext {
   reviewOfJobId?: string;
   agentId?: string;
   dryRun?: boolean;
+  /**
+   * Skill names pinned for this room (`RunOptions.roomSkills`), copied verbatim
+   * by `assembleContext`. Static per lane, so an injector may render it in the
+   * static prefix. Absent outside a room with pinned skills.
+   */
+  roomSkills?: readonly string[];
   /** Phase 4 — small-window mode. When true, injectors that support an index /
    *  content split (e.g. skills) must emit the compact index form. Derived from
    *  static inputs (model window + fixed overhead), constant across turns, so it

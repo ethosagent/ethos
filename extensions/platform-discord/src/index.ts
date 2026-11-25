@@ -21,7 +21,8 @@ import type { clarifyModalPayload } from './clarify-blocks';
 import type { CommandContext, CommandPayload } from './commands';
 import { COMMAND_DEFINITIONS, dispatch } from './commands';
 import type { Binding, ChannelMode } from './config';
-import { ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
+import { ChannelModeSchema, DEFAULT_CHANNEL_MODE, type RoomModeDefault } from './config';
+import { classifyDiscordStartError, isPermanentDiscordError } from './errors';
 import { buildModal, registerInteractionHandler, toActionRowBuilder } from './events/interactions';
 import { registerEditHandler, registerMessageHandler } from './events/messages';
 import { toNativeMarkdown } from './format';
@@ -51,11 +52,23 @@ interface DiscordAdapterConfig {
    * resolver the gateway binds (`setPresenceResolver`).
    */
   mentionByName?: boolean;
+  /**
+   * `channels.discord.fetch_metadata` (plan channel-prompts L7): stamp the
+   * channel topic and name (from the cached channel object, no API call) and
+   * the effective channel mode on guild messages. Default `false`.
+   */
+  fetchMetadata?: boolean;
   cache?: AttachmentCache;
   storage?: Storage;
   discordDir?: string;
   binding?: Binding;
   defaultChannelMode?: ChannelMode;
+  /**
+   * Room config's default reply mode (plan channel-prompts L12), injected by
+   * `buildAdapters`. Precedence: runtime override > this > `defaultChannelMode`
+   * > built-in. Absent: today's behaviour.
+   */
+  roomModeDefault?: RoomModeDefault;
   applicationId?: string;
   /**
    * Where to register slash commands. Omit or set to `undefined` to skip
@@ -115,12 +128,6 @@ interface DiscordAdapterConfig {
 }
 
 /**
- * Discord JSON error codes no retry can fix: Unknown Channel, Missing Access,
- * Cannot send messages to this user, Missing Permissions.
- */
-const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50007, 50013]);
-
-/**
  * A tracked "Thinking…" placeholder whose typing refresh last fired this long
  * ago belongs to a PREVIOUS turn that ended without a reply (errored, halted,
  * or answered elsewhere). The adapter has no turn id — `sendTyping(chatId, opts)`
@@ -132,52 +139,6 @@ const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50007, 50013]);
  * delete the placeholder outright (`clearThinkingPlaceholder`).
  */
 const THINKING_PLACEHOLDER_STALE_MS = 30_000;
-
-/**
- * Does `err` (a discord.js `DiscordAPIError`, read by shape) say the bot can
- * never post here — until an operator changes something? HTTP 403/404 or one
- * of {@link PERMANENT_DISCORD_CODES}. Rate limits (429) and server errors are
- * not: discord.js retries 429s itself and a 5xx is transient.
- */
-function isPermanentDiscordError(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const status = 'status' in err ? err.status : undefined;
-  const code = 'code' in err ? err.code : undefined;
-  if (status === 403 || status === 404) return true;
-  return typeof code === 'number' && PERMANENT_DISCORD_CODES.has(code);
-}
-
-/**
- * discord.js error codes `client.login()` raises when the credentials or the
- * application settings are wrong — a revoked or mistyped token, or a
- * privileged intent the Developer Portal has not enabled. No retry fixes
- * either; an operator has to.
- */
-const PERMANENT_DISCORD_LOGIN_CODES = new Set([
-  'TokenInvalid',
-  'TokenMissing',
-  'DisallowedIntents',
-]);
-
-/**
- * `err` re-thrown carrying `permanent: true` when it is a login failure no
- * retry can fix (a {@link PERMANENT_DISCORD_LOGIN_CODES} code, or an HTTP 401),
- * so the gateway's adapter-start retry (`isPermanentAdapterStartError`,
- * apps/ethos/src/commands/gateway-adapters.ts) gives up instead of retrying a dead
- * token for ever. Anything else is returned unchanged.
- */
-function classifyDiscordStartError(err: unknown): unknown {
-  if (typeof err !== 'object' || err === null) return err;
-  const code = 'code' in err ? err.code : undefined;
-  const status = 'status' in err ? err.status : undefined;
-  const permanent =
-    (typeof code === 'string' && PERMANENT_DISCORD_LOGIN_CODES.has(code)) || status === 401;
-  if (!permanent) return err;
-  const detail = err instanceof Error ? err.message : String(code ?? status);
-  return Object.assign(new Error(`Discord refused the bot login: ${detail}`, { cause: err }), {
-    permanent: true,
-  });
-}
 
 export class DiscordAdapter
   implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter
@@ -237,11 +198,14 @@ export class DiscordAdapter
   /** `receiptReaction` was configured: it wins over the personality emoji. */
   private readonly receiptReactionExplicit: boolean;
   private readonly mentionByName: boolean;
+  private readonly fetchMetadata: boolean;
   private readonly cache?: AttachmentCache;
   private readonly applicationId?: string;
   private readonly registerCommandsTo?: 'global' | string;
   private readonly binding: Binding;
   private readonly defaultChannelMode: ChannelMode;
+  private readonly defaultChannelModeConfigured: boolean;
+  private readonly roomModeDefault?: RoomModeDefault;
   private readonly approvalRoleIds: string[];
   /** CHS-005 — optional sink for adapter-local security decisions. */
   private readonly observability: DiscordAdapterConfig['observability'];
@@ -302,6 +266,7 @@ export class DiscordAdapter
     this.receiptReaction = config.receiptReaction ?? '👀';
     this.receiptReactionExplicit = config.receiptReaction !== undefined;
     this.mentionByName = config.mentionByName ?? false;
+    this.fetchMetadata = config.fetchMetadata ?? false;
     this.botKey = config.botKey;
     this.id = `discord:${this.botKey}`;
     this.cache = config.cache;
@@ -316,6 +281,8 @@ export class DiscordAdapter
     this.missedMessageBackfill = config.missedMessageBackfill;
 
     this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+    this.defaultChannelModeConfigured = config.defaultChannelMode !== undefined;
+    this.roomModeDefault = config.roomModeDefault;
 
     if (config.storage) {
       const dir = config.discordDir ?? 'discord';
@@ -365,6 +332,8 @@ export class DiscordAdapter
       client: this.client,
       botKey: this.botKey,
       defaultChannelMode: this.defaultChannelMode,
+      defaultChannelModeConfigured: this.defaultChannelModeConfigured,
+      ...(this.roomModeDefault ? { roomModeDefault: this.roomModeDefault } : {}),
       receiptReaction: this.receiptReaction,
       receiptReactionExplicit: this.receiptReactionExplicit,
       cache: this.cache,
@@ -376,6 +345,7 @@ export class DiscordAdapter
       onMessage: (msg: InboundMessage) => this.messageHandler?.(msg),
       presence: (chatId: string, threadId?: string) => this.presence?.(chatId, threadId),
       mentionByName: this.mentionByName,
+      fetchMetadata: this.fetchMetadata,
       onReceipt: (channelId: string, messageId: string, reactions: string[]) => {
         if (this.pendingReactions.size >= this.pendingReactionsMax) {
           const oldest = this.pendingReactions.keys().next().value;
@@ -620,6 +590,17 @@ export class DiscordAdapter
     }
   }
 
+  /** A turn ended with nothing sent (silent room): drop the "Thinking..." placeholder. */
+  async endTurn(chatId: string, opts?: { threadId?: string }): Promise<void> {
+    await this.clearThinkingPlaceholder(opts?.threadId ?? chatId);
+  }
+
+  /** `client.user` for the room prompt's identity line (plan channel-prompts §3.8). */
+  selfIdentity(): { handle: string; platformUserId?: string } | undefined {
+    const user = this.client.user;
+    return user ? { handle: user.username, platformUserId: user.id } : undefined;
+  }
+
   async health(): Promise<{ ok: boolean; latencyMs?: number }> {
     return {
       ok: this.client.ws.status === 0,
@@ -802,6 +783,8 @@ export class DiscordAdapter
       const ctx: CommandContext = this.commandContext ?? {
         binding: this.binding,
         defaultChannelMode: this.defaultChannelMode,
+        defaultChannelModeConfigured: this.defaultChannelModeConfigured,
+        ...(this.roomModeDefault ? { roomModeDefault: this.roomModeDefault } : {}),
         channelOverrides: this.channelOverrides,
       };
       const response = await dispatch(payload, ctx);
@@ -1031,4 +1014,5 @@ export const capabilities: AdapterCapabilities = {
   webhookMode: false,
 };
 
+export { CHANNEL_MODES, type RoomModeDefault } from './config';
 export { loadDiscordSdk } from './sdk';

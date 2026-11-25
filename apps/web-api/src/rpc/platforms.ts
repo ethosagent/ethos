@@ -65,4 +65,28 @@ export const platformsRouter = {
   setChannelFilter: os.platforms.setChannelFilter.handler(({ input, context }) =>
     context.platforms.setChannelFilter(input.platform, input.filter),
   ),
+
+  listRoomPolicies: os.platforms.listRoomPolicies.handler(({ input, context }) =>
+    context.roomPolicies.listRoomPolicies(input),
+  ),
+
+  setRoomPolicy: os.platforms.setRoomPolicy.handler(({ input, context }) =>
+    context.roomPolicies.setRoomPolicy(input),
+  ),
+
+  deleteRoomPolicy: os.platforms.deleteRoomPolicy.handler(({ input, context }) =>
+    context.roomPolicies.deleteRoomPolicy(input),
+  ),
+
+  previewRoomPolicy: os.platforms.previewRoomPolicy.handler(({ input, context }) =>
+    context.roomPolicies.previewRoomPolicy(input),
+  ),
+
+  listRecentRooms: os.platforms.listRecentRooms.handler(({ input, context }) =>
+    context.roomPolicies.listRecentRooms(input),
+  ),
+
+  setRoomPlatformSettings: os.platforms.setRoomPlatformSettings.handler(({ input, context }) =>
+    context.roomPolicies.setRoomPlatformSettings(input),
+  ),
 };

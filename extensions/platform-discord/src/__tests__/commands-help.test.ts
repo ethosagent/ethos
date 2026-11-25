@@ -41,4 +41,19 @@ describe('commands/help', () => {
     const embed = result.embeds[0];
     expect(embed.description).toContain('mention_only');
   });
+
+  it('in a thread, asks the room hook for the parent channel plus the thread id', () => {
+    const seen: unknown[] = [];
+    handleHelp(
+      { ...payload, channelId: 'thr1', threadId: 'thr1', parentChannelId: 'ch1', guildId: 'g1' },
+      {
+        ...ctx,
+        roomModeDefault: (i) => {
+          seen.push(i);
+          return undefined;
+        },
+      },
+    );
+    expect(seen).toEqual([{ chatId: 'ch1', threadId: 'thr1', isDm: false }]);
+  });
 });

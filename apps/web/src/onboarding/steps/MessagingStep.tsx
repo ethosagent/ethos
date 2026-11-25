@@ -2,6 +2,8 @@ import type { PlatformId } from '@ethosagent/web-contracts';
 import { useMutation } from '@tanstack/react-query';
 import { Button, Input } from 'antd';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useOnboardingState } from '../../features/config/api/queries';
 import { rpc } from '../../rpc';
 import type { WizardAnswers } from '../reducer';
 
@@ -108,6 +110,17 @@ export function MessagingStep({
     result?.status === 'ok' ||
     result?.status === 'unreachable' ||
     result?.status === 'email-saved';
+
+  // Optional shortcut to the Rooms section; never gates Continue (plan §3.7).
+  // Only once onboarding is done (the /setup/messaging re-entry): during
+  // first-run `useOnboardingRedirect` (App.tsx) sends every non-onboarding path
+  // back to /onboarding, so the link would bounce. Pinned by
+  // onboarding/__tests__/messaging-rooms-link.test.ts.
+  const { data: onboarding } = useOnboardingState();
+  const roomsLinkVisible =
+    onboarding?.step === 'done' &&
+    (result?.status === 'ok' || result?.status === 'unreachable') &&
+    (platformId === 'telegram' || platformId === 'discord' || platformId === 'slack');
 
   const resetResult = () => runMut.reset();
 
@@ -253,6 +266,16 @@ export function MessagingStep({
             {result?.status === 'rejected' ? (
               <div className="onboarding-error" role="alert">
                 Token rejected by {platform.label} — re-enter to continue.
+              </div>
+            ) : null}
+            {roomsLinkVisible ? (
+              <div style={{ marginTop: 8 }}>
+                <Link
+                  to={`/communications?tab=${platformId}#rooms`}
+                  className="onboarding-signup-link"
+                >
+                  Give a channel its own instructions →
+                </Link>
               </div>
             ) : null}
             {runMut.isError ? (

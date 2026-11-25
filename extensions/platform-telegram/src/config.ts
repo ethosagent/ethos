@@ -1,3 +1,4 @@
+import type { RoomModeDefault } from '@ethosagent/types';
 import { z } from 'zod';
 
 // `observe` records the chat's messages and never replies in it — not even to
@@ -19,3 +20,6 @@ export const ChannelModeSchema = z.enum(CHANNEL_MODES);
 export type ChannelMode = z.infer<typeof ChannelModeSchema>;
 
 export const DEFAULT_CHANNEL_MODE: ChannelMode = 'mention_only';
+
+/** The room config's default reply mode hook (plan channel-prompts L12); defined once in `@ethosagent/types`. */
+export type { RoomModeDefault };

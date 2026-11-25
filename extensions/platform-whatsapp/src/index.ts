@@ -13,9 +13,16 @@ import type {
   Storage,
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
-import { CHANNEL_MODES, type ChannelMode, ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
+import {
+  CHANNEL_MODES,
+  type ChannelMode,
+  ChannelModeSchema,
+  DEFAULT_CHANNEL_MODE,
+  type RoomModeDefault,
+} from './config';
 import { downloadMedia } from './media';
 import {
+  botNumberOf,
   hasMedia,
   isBotMentioned,
   parseInboundMessage,
@@ -79,6 +86,15 @@ export interface WhatsAppAdapterConfig {
   /** Mode for every group chat without a stored override. Absent = `all`
    *  (`DEFAULT_CHANNEL_MODE`), which is what absence has always meant here. */
   defaultMode?: ChannelMode;
+  /** `defaultMode` was configured by the operator, not filled in by the host
+   *  (diagnostic source `platform` vs `default`). Absent: `defaultMode !== undefined`. */
+  defaultModeConfigured?: boolean;
+  /**
+   * Room config's default reply mode (plan channel-prompts L12), injected by
+   * `buildAdapters`. Precedence: runtime override > this > `defaultMode` >
+   * built-in. Absent: today's behaviour.
+   */
+  roomModeDefault?: RoomModeDefault;
   /** Where per-chat mode overrides live. Absent = no override store, and every
    *  chat uses `defaultMode` — which is why the adapter's advertised
    *  `channelModes: true` needs this wired to be true. */
@@ -388,10 +404,11 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
         // the allowlist first sent it to the GROUP jid, and in an observed
         // group every participant is non-allowlisted by definition, so the bot
         // answered every message in the one mode that must never answer any.
+        const { mode: channelMode, source: modeSource } = this.resolveMode(jid, isDm);
         const decision = evaluateChannelMode({
           isDm,
           isGroupMention: !isDm && isBotMentioned(msg, this.botJid),
-          channelMode: this.channelOverrides?.get(jid)?.mode ?? this.defaultChannelMode,
+          channelMode,
           supportedModes: CHANNEL_MODES,
         });
         if (!decision.shouldRecord) continue;
@@ -454,6 +471,11 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
         // Recorded, not answered: the gateway writes the transcript row and
         // returns before the channel filter runs.
         parsed.recordOnly = recordOnly;
+        // Diagnostic mode + source, only when room policies configure this adapter.
+        if (this.config.roomModeDefault) {
+          parsed.channelMode = channelMode;
+          parsed.channelModeSource = modeSource;
+        }
 
         // Receipt reaction — skipped when the message is only being recorded.
         // A reaction is a visible reply, and an observed room is a room the
@@ -487,6 +509,29 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
     // reconnect's own start() waits too, harmlessly — nothing awaits it.
     // Pinned by `extensions/platform-whatsapp/src/__tests__/readiness.test.ts`.
     await this.waitForOpen(START_OPEN_TIMEOUT_MS);
+  }
+
+  /**
+   * The chat's effective mode. Precedence (plan channel-prompts L12): runtime
+   * `ChannelOverrideStore` override > room config `mode` > `defaultMode` >
+   * built-in. `string`: a mode outside `CHANNEL_MODES` reaches
+   * `evaluateChannelMode`, which fails closed on it.
+   */
+  private resolveMode(
+    jid: string,
+    isDm: boolean,
+  ): { mode: string; source: NonNullable<InboundMessage['channelModeSource']> } {
+    const override = this.channelOverrides?.get(jid);
+    if (override) return { mode: override.mode, source: 'runtime' };
+    const room = this.config.roomModeDefault?.({ chatId: jid, isDm });
+    if (room !== undefined) return { mode: room, source: 'room' };
+    return {
+      mode: this.defaultChannelMode,
+      source:
+        (this.config.defaultModeConfigured ?? this.config.defaultMode !== undefined)
+          ? 'platform'
+          : 'default',
+    };
   }
 
   async stop(): Promise<void> {
@@ -632,6 +677,13 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
     this.messageHandler = handler;
   }
 
+  /** The `botJid` user part for the room prompt's identity line (plan channel-prompts §3.8). */
+  selfIdentity(): { handle: string; platformUserId?: string } | undefined {
+    if (!this.botJid) return undefined;
+    const number = botNumberOf(this.botJid);
+    return number ? { handle: number, platformUserId: this.botJid } : undefined;
+  }
+
   async health(): Promise<{ ok: boolean; latencyMs?: number }> {
     return { ok: this.sock !== null && this.botJid !== '' };
   }
@@ -653,3 +705,5 @@ function chunkText(text: string, maxLen: number): string[] {
   }
   return chunks;
 }
+
+export { CHANNEL_MODES, type RoomModeDefault } from './config';

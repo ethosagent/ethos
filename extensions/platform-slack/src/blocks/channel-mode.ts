@@ -1,16 +1,24 @@
 import type { ChannelMode } from '../config';
 import { context, header, type SlackBlock, section } from './shared';
 
+const SOURCE_LABEL = {
+  runtime: 'per-channel override',
+  room: 'room config',
+  platform: 'platform default',
+  default: 'app default',
+} as const;
+
 export function channelModeShowBlocks(input: {
   channel: string;
   /** `string`, not `ChannelMode`: `/ethos channel-mode show` is where an
    *  operator looks when a channel has gone quiet, so an unreadable stored
    *  override is shown verbatim instead of as the default it is not. */
   mode: string;
-  isOverride: boolean;
+  /** Which layer supplied `mode` (`resolveChannelModeSource`). */
+  source: 'runtime' | 'room' | 'platform' | 'default';
 }): SlackBlock[] {
-  const { channel, mode, isOverride } = input;
-  const source = isOverride ? 'per-channel override' : 'app default';
+  const { channel, mode } = input;
+  const source = SOURCE_LABEL[input.source];
   return [
     header(`Channel mode: ${mode}`),
     section(`<#${channel}> currently uses *${mode}* (${source}).`),

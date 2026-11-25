@@ -32,6 +32,8 @@ export interface BootReloadContext {
   watcherManager: Parameters<typeof buildGatewayBots>[2];
   outbox: ReturnType<typeof createOutboxRuntime>;
   attachmentCache: Parameters<typeof buildGatewayAdapters>[1];
+  /** The boot-time room table; a hot-added bot's adapter gets its `roomModeDefault` (plan L12). */
+  roomPolicies: Parameters<typeof buildGatewayAdapters>[2];
   gateway: BootGateway;
   gatewayRef: BootGateway | null;
   botWiring: Map<string, () => Promise<void>>;

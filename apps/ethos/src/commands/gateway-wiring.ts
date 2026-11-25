@@ -18,6 +18,7 @@ import type {
   GatewayConfig,
   GatewayObservability,
   GatewayQuietHours,
+  RoomPolicyTable,
 } from '@ethosagent/gateway';
 import type {
   InboundMessage,
@@ -120,6 +121,9 @@ export function idleGatewayBot(
  */
 export interface BuildGatewayOptions {
   config: EthosConfig;
+  /** Per-room prompt/policy table from `loadRoomPolicyTable`, built once at boot
+   *  (static per process, plan channel-prompts D9). Omitted = no room policies. */
+  roomPolicies?: RoomPolicyTable;
   bots: GatewayBotConfig[];
   /** Used only on the no-bot idle path, as the idle bot's loop (`idleGatewayBot`). */
   systemLoop: AgentLoop;

@@ -11,6 +11,7 @@
 // turn counter genuinely advances) with UNCHANGED memory and asserts the
 // static prefix is byte-identical across turns.
 
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   CompletionChunk,
   CompletionOptions,
@@ -310,5 +311,89 @@ describe('§6 — prefix stability with server-side compaction on', () => {
     expect(staticPrefix(captured[1]?.system ?? '').length).toBeGreaterThan(0);
     // The block did reach turn 2 — in the messages, not the prompt.
     expect(replayed[1]?.length).toBeGreaterThan(replayed[0]?.length ?? 0);
+  });
+});
+
+// channel-prompts L2 (plan §3.6, §12) — the room block (`RunOptions.roomPrompt`)
+// sits in the static prefix: after the injection-defense prelude and SOUL.md,
+// before the injectors and the memory tail. Core adds nothing per turn to it.
+describe('§6 — room block placement and stability', () => {
+  const SOUL = 'You are Lean, a focused assistant.';
+  const ROOM = 'Engineering group for the Atlas team.';
+  const ROOM_BLOCK = `## This room\n\n${ROOM}`;
+
+  // A formatting-style injector that PREPENDS (today's PlatformFormattingInjector
+  // shape). It lands before the prelude, never between SOUL and the room block.
+  const prepender: ContextInjector = {
+    id: 'platform-formatting',
+    priority: 1,
+    async inject() {
+      return { content: 'PREPENDED-FORMATTING', position: 'prepend' };
+    },
+  };
+
+  async function runRoomTurns(
+    runOpts: { roomAudience?: 'shared' | 'private'; sessionKey?: string },
+    memory = true,
+  ): Promise<{ first: string; second: string }> {
+    const storage = new InMemoryStorage();
+    await storage.mkdir('/personalities/lean');
+    await storage.write('/personalities/lean/SOUL.md', SOUL);
+    const personalities = new DefaultPersonalityRegistry();
+    vi.spyOn(personalities, 'getDefault').mockReturnValue({
+      id: 'lean',
+      name: 'Lean',
+      toolset: [],
+      soulFile: '/personalities/lean/SOUL.md',
+    });
+    const captured: CompletionOptions[] = [];
+    const loop = new AgentLoop({
+      llm: capturingLLM(captured),
+      personalities,
+      safety: createTestSafety(),
+      storage,
+      injectors: [prepender, staticInjector],
+      ...(memory ? { memory: constantMemory(MEMORY_CONTENT) } : {}),
+    });
+    await collect(loop.run('hello', { ...runOpts, roomPrompt: ROOM }));
+    await collect(loop.run('hello', { sessionKey: runOpts.sessionKey, roomPrompt: ROOM }));
+    return { first: captured[0]?.system ?? '', second: captured[1]?.system ?? '' };
+  }
+
+  it('two turns with the same roomPrompt give a byte-identical system prompt', async () => {
+    const { first, second } = await runRoomTurns({ sessionKey: 'cli:room' });
+    expect(first).toBe(second);
+    expect(first).toContain(ROOM_BLOCK);
+    // Core adds no per-turn text to the room block: it is exactly heading + text.
+    expect(first.split(ROOM_BLOCK)).toHaveLength(2);
+    expect(first).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  });
+
+  it('orders prepended injector, prelude, SOUL, room, injectors, memory tail exactly', async () => {
+    const { first } = await runRoomTurns({ sessionKey: 'cli:room' });
+    const at = (needle: string) => first.indexOf(needle);
+    const order = [
+      at('PREPENDED-FORMATTING'),
+      at(PRELUDE_MARKER),
+      at(SOUL),
+      at('## This room'),
+      at('## Skills'),
+      at('## Memory'),
+    ];
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // Nothing slides between SOUL and the room block.
+    expect(first).toContain(`${SOUL}\n\n${ROOM_BLOCK}\n\n`);
+    expect(first.trimEnd().endsWith(MEMORY_CONTENT)).toBe(true);
+  });
+
+  it('a shared lane with roomPrompt is byte-stable and carries no memory', async () => {
+    const { first, second } = await runRoomTurns({
+      sessionKey: 'telegram:bot:-100',
+      roomAudience: 'shared',
+    });
+    expect(first).toBe(second);
+    expect(first).toContain(`${SOUL}\n\n${ROOM_BLOCK}`);
+    expect(first).not.toContain(MEMORY_CONTENT);
   });
 });

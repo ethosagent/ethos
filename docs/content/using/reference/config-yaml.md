@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model registry, 
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-11-04
+updated: 2026-11-25
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -115,6 +115,7 @@ This is what `ethos setup` writes for a default Anthropic install. The key value
 | <a id="plugins-host-sandbox"></a>[plugins.host.sandbox](config-yaml/plugin-isolation.md#plugins-host-sandbox) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
 | <a id="plugins-host-hook-timeout-ms"></a>[plugins.host.hook\_timeout\_ms](config-yaml/plugin-isolation.md#plugins-host-hook-timeout-ms) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
 | <a id="plugins-host-idle-stop-minutes"></a>[plugins.host.idle\_stop\_minutes](config-yaml/plugin-isolation.md#plugins-host-idle-stop-minutes) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
+| <a id="room-prompts"></a>[channels.\<platform\>.\<selector\>.\*](config-yaml/room-prompts.md#fields) | [config.yaml: per-room prompts and policy](config-yaml/room-prompts.md) |
 | <a id="plugins-host-max-heap-mb"></a>[plugins.host.max\_heap\_mb](config-yaml/plugin-isolation.md#plugins-host-max-heap-mb) | [config.yaml: plugin isolation keys](config-yaml/plugin-isolation.md) |
 | <a id="active-context"></a>[activeContext](config-yaml/background-and-browser.md#active-context) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
 | <a id="file-location"></a>[File location and permissions](config-yaml/background-and-browser.md#file-location) | [config.yaml: background agents, browser and search keys](config-yaml/background-and-browser.md) |
@@ -123,6 +124,7 @@ This is what `ethos setup` writes for a default Anthropic install. The key value
 
 - [CLI reference](./cli.md) — every `ethos` subcommand and the flags that override what config.yaml sets
 - [Back up and restore an Ethos install](../how-to/back-up-and-restore.md) — the `backup.*` keys in practice, plus the one-command move to a new machine
+- [Give each room its own prompt](../how-to/give-each-room-its-own-prompt.md) — the `channels.*` keys in practice
 - [Personality config reference](./personality-yaml.md) — the per-personality `config.yaml` and `toolset.yaml` (different file, different schema)
 - [How to configure providers](../how-to/configure-providers.md) — task-shaped recipe for switching between Anthropic, OpenAI, OpenRouter, and Ollama
 - [Run multiple Telegram bots from one process](../how-to/run-multi-bot-telegram.md) — `telegram.bots` list shape in practice

@@ -38,6 +38,7 @@ import type { PersonalitiesService } from '../services/personalities.service';
 import type { PlatformsService } from '../services/platforms.service';
 import type { PluginLoader, PluginsService } from '../services/plugins.service';
 import type { RecipesService } from '../services/recipes.service';
+import type { RoomPolicyService } from '../services/room-policy.service';
 import type { SkillsService } from '../services/skills.service';
 import type { TasksService } from '../services/tasks.service';
 import type { ToolSettingsService } from '../services/tool-settings.service';
@@ -79,6 +80,8 @@ export interface RpcContext {
   /** The unified catalog index (read-only; installs arrive in Phase 3). */
   catalog: CatalogService;
   platforms: PlatformsService;
+  /** Per-room prompt and policy editor (Communications → Rooms). */
+  roomPolicies: RoomPolicyService;
   lab: LabService;
   kanban: KanbanService;
   teams: import('../services/teams.service').TeamsService;

@@ -1,6 +1,11 @@
 import { embed } from '../blocks/shared';
 import { canSpeakInChannel, resolveChannelMode } from '../routing/triage';
-import type { CommandContext, CommandPayload, CommandResponse } from './index';
+import {
+  type CommandContext,
+  type CommandPayload,
+  type CommandResponse,
+  commandRoom,
+} from './index';
 
 export async function handleAsk(
   payload: CommandPayload,
@@ -24,11 +29,18 @@ export async function handleAsk(
   // Slack's `/ethos ask` had. Enforced by `canSpeakInChannel` in
   // `../routing/triage.ts`; pinned by
   // `extensions/platform-discord/src/__tests__/commands-ask.test.ts`.
-  const channelMode = resolveChannelMode(payload.channelId, {
-    botKey: '',
-    defaultChannelMode: ctx.defaultChannelMode,
-    channelOverrides: ctx.channelOverrides,
-  });
+  const room = commandRoom(payload);
+  const channelMode = resolveChannelMode(
+    room.chatId,
+    {
+      botKey: '',
+      defaultChannelMode: ctx.defaultChannelMode,
+      defaultChannelModeConfigured: ctx.defaultChannelModeConfigured,
+      roomModeDefault: ctx.roomModeDefault,
+      channelOverrides: ctx.channelOverrides,
+    },
+    { isDm: !payload.guildId, ...(room.threadId ? { threadId: room.threadId } : {}) },
+  );
   // Discord marks a DM by the absence of a guild: `interaction.guildId` is null
   // outside a server, and `events/interactions.ts` maps that to `undefined`.
   // A DM is not a room (`evaluateChannelMode` ranks `isDm` first), so it is

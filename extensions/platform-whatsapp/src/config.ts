@@ -1,3 +1,4 @@
+import type { RoomModeDefault } from '@ethosagent/types';
 import { z } from 'zod';
 
 // `observe` records the room's messages and never replies in it — not even to
@@ -24,3 +25,6 @@ export type ChannelMode = z.infer<typeof ChannelModeSchema>;
  * working one on upgrade.
  */
 export const DEFAULT_CHANNEL_MODE: ChannelMode = 'all';
+
+/** The room config's default reply mode hook (plan channel-prompts L12); defined once in `@ethosagent/types`. */
+export type { RoomModeDefault };

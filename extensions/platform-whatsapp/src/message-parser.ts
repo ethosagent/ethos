@@ -54,7 +54,7 @@ export interface RawWhatsAppMessage {
 /**
  * The bot's own number as WhatsApp writes it in a JID: `<number>[:<device>]@<server>`.
  */
-function botNumberOf(botJid: string): string {
+export function botNumberOf(botJid: string): string {
   return botJid.split('@')[0].split(':')[0];
 }
 

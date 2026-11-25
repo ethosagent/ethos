@@ -25,8 +25,27 @@ import type {
 } from '@ethosagent/types';
 import type { Bot, InputFile } from 'grammy';
 import { formatApprovalCardText } from './blocks/approval';
-import { CHANNEL_MODES, type ChannelMode, ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
+import {
+  CHANNEL_MODES,
+  type ChannelMode,
+  ChannelModeSchema,
+  DEFAULT_CHANNEL_MODE,
+  type RoomModeDefault,
+} from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
+import type {
+  OutboxCardBody,
+  OutboxCardInput,
+  OutboxCardKind,
+  OutboxCardStatus,
+  OutboxDecisionEvent,
+} from './outbox-card';
+import {
+  outboxCardText,
+  outboxNoticeText,
+  outboxSettledText,
+  parseOutboxCallback,
+} from './outbox-card';
 import { grammy } from './sdk';
 import { ThreadStateStore } from './store/thread-state';
 
@@ -56,194 +75,6 @@ export interface CallbackQueryEvent {
   username: string | undefined;
   /** Dismiss the loading spinner on the button. Idempotent best-effort. */
   answer: (text?: string) => Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Outbox approval cards (Part 2, O-T8)
-//
-// A publication a gated personality wants to send is DM'd to the operator as a
-// card carrying the full text and two buttons. The adapter renders and routes;
-// every policy decision — who is allowed to tap, whether the tapped revision is
-// still current, what happens next — belongs to the outbox wiring
-// (`apps/ethos/src/lib/outbox-wiring.ts`), which holds the store. Same division
-// as `postApprovalCard` / `approvalDecisionHandler`.
-// ---------------------------------------------------------------------------
-
-/** Where a publication is headed. Rendered as `name (platform:chatId)`. */
-export interface OutboxCardDestination {
-  /** Human-readable chat title, when the wiring knows one. */
-  name?: string;
-  platform: string;
-  chatId: string;
-}
-
-/** The advisory reviewer's verdict, when a review ran. Rendered verbatim — the
- *  adapter does not interpret a verdict, it shows the one it was handed. */
-export interface OutboxCardReview {
-  /** The approver personality's id, e.g. `brand-editor`. */
-  reviewer: string;
-  /** e.g. `PASS` / `FAIL` / `UNCLEAR` / `UNAVAILABLE`. */
-  verdict: string;
-  reasons?: string;
-}
-
-/**
- * Everything a card SHOWS: who wants to publish what, where, as whom.
- *
- * Split out from {@link OutboxCardInput} because a settled card renders it
- * too — a tap must not turn the DM into a bare "Approved", leaving no record
- * of the text that went out. The adapter deliberately remembers nothing about
- * a card it posted (the wiring owns that side map), so `updateOutboxCard` is
- * handed the body back rather than looking it up.
- */
-export interface OutboxCardBody {
-  revision: number;
-  /** The personality that wants to publish, e.g. `cmo`. */
-  personalityId: string;
-  destination: OutboxCardDestination;
-  /** The sending bot as the operator recognises it, e.g. `@EthosMarketingBot`. */
-  sender: string;
-  /** The publication, byte-exact. Never truncated — see `postOutboxCard`. */
-  text: string;
-  review?: OutboxCardReview;
-}
-
-export interface OutboxCardInput extends OutboxCardBody {
-  /** The operator's DM chat. */
-  chatId: string;
-  threadId?: string;
-  itemId: string;
-}
-
-/** What a posted card was: the full publication, or the notice that it was too
- *  long to show here. A notice cannot be tapped, so the wiring should not wait
- *  on one. */
-export type OutboxCardKind = 'card' | 'notice';
-
-/** The states a posted card can be edited into once it is no longer awaiting a
- *  decision. */
-export type OutboxCardStatus =
-  | { kind: 'approved'; by: string }
-  | { kind: 'sent'; at: string }
-  | { kind: 'rejected'; by: string; reason?: string }
-  | { kind: 'superseded'; revision: number }
-  | { kind: 'expired' }
-  /** The send did not happen. `reason` is the item's own failure reason,
-   *  rendered verbatim so the DM and the web pane cannot disagree about why. */
-  | { kind: 'failed'; reason?: string }
-  /** Handed to the delivery ledger, which got no confirmation back. Neither
-   *  "sent" nor "not sent" is true yet, and the card must claim neither. */
-  | { kind: 'unconfirmed' };
-
-/** An operator tap on an outbox card, surfaced to the outbox wiring. */
-export interface OutboxDecisionEvent {
-  itemId: string;
-  /** The revision the tapped card was posted for. The wiring compares it to
-   *  the item's current revision and answers "superseded" when it is stale. */
-  revision: number;
-  decision: 'approve' | 'reject';
-  /** The tapping Telegram user. The wiring compares it to
-   *  `channel_filter.telegram.ownerUserId` — the adapter enforces nothing. */
-  userId: string | undefined;
-  username: string | undefined;
-  /** The chat and message of the card that was tapped, so the wiring can edit
-   *  it in place. */
-  chatId: string;
-  messageId: string;
-  /** Dismiss the tapping client's spinner, optionally with a toast. If the
-   *  handler does not call this, the adapter answers for it. */
-  answer: (text?: string) => Promise<void>;
-}
-
-/** Parse `obx:a:<id>:<rev>` / `obx:r:<id>:<rev>`. Returns null for anything
- *  else; a malformed payload is answered and dropped, never thrown. Item ids
- *  are `obx_<hex>` and carry no colon, so a fixed 4-field split is exact. */
-function parseOutboxCallback(
-  data: string,
-): { itemId: string; revision: number; decision: 'approve' | 'reject' } | null {
-  const parts = data.split(':');
-  if (parts.length !== 4) return null;
-  const [, verb, itemId, rawRevision] = parts;
-  if (verb !== 'a' && verb !== 'r') return null;
-  if (!itemId || !rawRevision) return null;
-  if (!/^\d+$/.test(rawRevision)) return null;
-  const revision = Number(rawRevision);
-  if (!Number.isSafeInteger(revision) || revision < 1) return null;
-  return { itemId, revision, decision: verb === 'a' ? 'approve' : 'reject' };
-}
-
-function outboxHeader(input: OutboxCardBody): string {
-  const { name, platform, chatId } = input.destination;
-  const dest = name ? `${name} (${platform}:${chatId})` : `${platform}:${chatId}`;
-  return `${input.personalityId} wants to post to ${dest} as ${input.sender} — revision ${input.revision}`;
-}
-
-function outboxCardText(input: OutboxCardBody): string {
-  const review = input.review
-    ? `\n\n${input.review.reviewer}: ${input.review.verdict}${
-        input.review.reasons ? ` — ${input.review.reasons}` : ''
-      }`
-    : '';
-  return `${outboxHeader(input)}\n\n${input.text}${review}`;
-}
-
-function outboxNoticeText(input: OutboxCardBody): string {
-  return `${outboxHeader(input)}\n\n${input.text.length} characters — too long to show in one Telegram message. Approve it in the web UI: Outbox → ${input.personalityId}. Ethos will not show you a partial draft to approve.`;
-}
-
-/** The wiring hands over `username ?? userId`. A username gets the `@` the
- *  operator recognises; a bare numeric id is printed as-is. */
-function outboxHandle(by: string): string {
-  return /^\d+$/.test(by) ? by : `@${by.replace(/^@/, '')}`;
-}
-
-function outboxStatusText(status: OutboxCardStatus): string {
-  switch (status.kind) {
-    case 'approved':
-      return `Approved by ${outboxHandle(status.by)} — sending…`;
-    case 'sent':
-      return `Sent ${status.at}`;
-    case 'rejected':
-      return status.reason
-        ? `Rejected by ${outboxHandle(status.by)} — ${status.reason}`
-        : `Rejected by ${outboxHandle(status.by)}`;
-    case 'superseded':
-      return `Superseded by revision ${status.revision}`;
-    case 'expired':
-      return 'Expired';
-    case 'failed':
-      return status.reason ? `Failed — ${status.reason}` : 'Failed — not sent.';
-    case 'unconfirmed':
-      return (
-        'Unconfirmed — the platform did not confirm this send. The delivery ledger owns the ' +
-        'retry from here; check the channel before sending it again.'
-      );
-  }
-}
-
-/**
- * What a SETTLED card reads: the header and the whole draft, with the status
- * line under them. The chat stays a record of what was approved, not only that
- * something was — the operator scrolling back a week later sees the text that
- * went out next to who let it out.
- *
- * Falls back to the status line alone when the re-render would not fit in one
- * Telegram message (4096 chars, `maxMessageLength`). The edit MUST land: a
- * refused edit leaves the card on its previous text — "Approved — sending…"
- * over a publication that has already gone out, or failed — and a card that
- * asserts something untrue is worse than a terse one. The draft is never
- * truncated to make room, for the same reason `postOutboxCard` posts a notice
- * instead of a partial: a fragment of a publication is not the publication.
- */
-function outboxSettledText(
-  status: OutboxCardStatus,
-  card: OutboxCardBody | undefined,
-  limit: number,
-): string {
-  const line = outboxStatusText(status);
-  if (!card) return line;
-  const full = `${outboxCardText(card)}\n\n${line}`;
-  return full.length <= limit ? full : line;
 }
 
 // grammy's ReactionTypeEmoji.emoji is a strict union of specific emoji
@@ -678,6 +509,12 @@ export interface TelegramAdapterConfig {
    */
   defaultChannelMode?: ChannelMode;
   /**
+   * Room config's default reply mode (plan channel-prompts L12), injected by
+   * `buildAdapters`. Precedence: runtime override > this > `defaultChannelMode`
+   * > built-in. Absent: today's behaviour.
+   */
+  roomModeDefault?: RoomModeDefault;
+  /**
    * Enable webhook mode instead of long-polling. Requires `webhookUrl`.
    * When enabled, the adapter registers the webhook with Telegram and
    * exposes a `webhook` getter for the host app to mount on an HTTP route.
@@ -836,7 +673,7 @@ export class TelegramAdapter
    * that call failed (bad token, network). Nothing waits on it: every reader
    * has a fallback, because a bot that cannot name itself must still run.
    */
-  private me: { username?: string; can_read_all_group_messages?: boolean } | undefined;
+  private me: { id?: number; username?: string; can_read_all_group_messages?: boolean } | undefined;
 
   /**
    * Declared voice capabilities. `opus` leads the outbound list because
@@ -1020,20 +857,41 @@ export class TelegramAdapter
     isGroupMention: boolean;
     threadId: string | undefined;
     text: string;
-  }): { shouldReply: boolean; shouldRecord: boolean } {
+  }): {
+    shouldReply: boolean;
+    shouldRecord: boolean;
+    mode: string;
+    source: NonNullable<InboundMessage['channelModeSource']>;
+  } {
     const override = this.channelOverrides?.get(input.chatIdStr);
     // `string`, not `ChannelMode`: a stored override this build's enum cannot
     // read is preserved verbatim by the shared store rather than dropped, so
     // it reaches `evaluateChannelMode` and fails closed there instead of
-    // being replaced by the answering default.
+    // being replaced by the answering default. Precedence (plan channel-prompts
+    // L12): runtime override > room config `mode` > platform default > built-in.
+    // A room mode outside `CHANNEL_MODES` fails closed the same way.
+    const room = override
+      ? undefined
+      : this.config.roomModeDefault?.({
+          chatId: input.chatIdStr,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+          isDm: input.isDm,
+        });
     const channelMode: string =
-      override?.mode ?? this.config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+      override?.mode ?? room ?? this.config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;
+    const source: NonNullable<InboundMessage['channelModeSource']> = override
+      ? 'runtime'
+      : room !== undefined
+        ? 'room'
+        : this.config.defaultChannelMode !== undefined
+          ? 'platform'
+          : 'default';
     const hasBotPosted =
       input.threadId !== undefined && this.threadState !== undefined
         ? this.threadState.hasBotPosted(input.chatIdStr, input.threadId)
         : false;
 
-    return evaluateChannelMode({
+    const decision = evaluateChannelMode({
       isDm: input.isDm,
       isGroupMention: input.isGroupMention,
       channelMode,
@@ -1053,6 +911,17 @@ export class TelegramAdapter
         }
       },
     });
+    return { ...decision, mode: channelMode, source };
+  }
+
+  /** Diagnostic mode + source, only when room policies configure this adapter (L12). */
+  private modeStamp(decision: {
+    mode: string;
+    source: NonNullable<InboundMessage['channelModeSource']>;
+  }): Pick<InboundMessage, 'channelMode' | 'channelModeSource'> {
+    return this.config.roomModeDefault
+      ? { channelMode: decision.mode, channelModeSource: decision.source }
+      : {};
   }
 
   /**
@@ -1303,6 +1172,7 @@ export class TelegramAdapter
         // Recorded, not answered. The gateway reads this flag, writes the
         // transcript row and returns before the channel filter ever runs.
         recordOnly,
+        ...this.modeStamp(decision),
         // Telegram's own send time, in seconds. Not a clock reading here: a
         // message delayed in transit still orders by when it was sent. Omitted
         // rather than stamped non-finite when Telegram sends no usable `date`.
@@ -1394,6 +1264,7 @@ export class TelegramAdapter
           ? String((rawMsg.reply_to_message as Record<string, unknown>).message_id)
           : undefined,
         recordOnly,
+        ...this.modeStamp(decision),
         ...(sentAt !== undefined ? { sentAt } : {}),
         raw: ctx,
       };
@@ -2190,6 +2061,13 @@ export class TelegramAdapter
     this.outboxDecisionHandler = handler;
   }
 
+  /** `getMe` identity for the room prompt's identity line (plan channel-prompts §3.8). */
+  selfIdentity(): { handle: string; platformUserId?: string } | undefined {
+    const handle = this.me?.username;
+    if (!handle) return undefined;
+    return { handle, ...(this.me?.id !== undefined ? { platformUserId: String(this.me.id) } : {}) };
+  }
+
   async registerCommands(cmds: { name: string; description: string }[]): Promise<void> {
     const builtins = telegramMenuCommands();
     const pluginEntries = cmds.map((c) => ({
@@ -2203,4 +2081,14 @@ export class TelegramAdapter
   }
 }
 
+export { CHANNEL_MODES, type RoomModeDefault } from './config';
+export type {
+  OutboxCardBody,
+  OutboxCardDestination,
+  OutboxCardInput,
+  OutboxCardKind,
+  OutboxCardReview,
+  OutboxCardStatus,
+  OutboxDecisionEvent,
+} from './outbox-card';
 export { loadTelegramSdk } from './sdk';

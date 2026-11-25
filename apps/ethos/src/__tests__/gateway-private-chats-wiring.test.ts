@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { EthosConfig } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
-import type { GatewayConfig } from '@ethosagent/gateway';
+import type { GatewayConfig, RoomPolicyTable } from '@ethosagent/gateway';
 import type { PlatformAdapter } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bootFileWith } from '../commands/__tests__/boot-sources';
@@ -63,9 +63,10 @@ function stubAdapter(id: string): PlatformAdapter {
   } as unknown as PlatformAdapter;
 }
 
-function build(config: EthosConfig, botKeys: string[]) {
+function build(config: EthosConfig, botKeys: string[], roomPolicies?: RoomPolicyTable) {
   return buildGateway({
     config,
+    ...(roomPolicies ? { roomPolicies } : {}),
     bots: botKeys.map((botKey) => ({
       botKey,
       loop: stubLoop(),
@@ -154,6 +155,25 @@ describe('buildGateway — GatewayConfig.privateChats', () => {
   it('does not create a channel filter as a side effect', async () => {
     const gw = build(WITH_LIST, ['sales-bot']);
     expect(captured[0]?.channelFilter).toBeUndefined();
+    await gw.shutdown();
+  });
+});
+
+describe('buildGateway — GatewayConfig.roomPolicies', () => {
+  const table = { platforms: {} } as unknown as RoomPolicyTable;
+
+  it.each([
+    ['multi-bot (production)', ['sales-bot']],
+    ['idle (no bot)', []],
+  ])('%s branch hands the room policy table to the Gateway', async (_label, botKeys) => {
+    const gw = build({ personality: 'default' } as EthosConfig, botKeys, table);
+    expect(captured[0]?.roomPolicies).toBe(table);
+    await gw.shutdown();
+  });
+
+  it('passes nothing when there is no table', async () => {
+    const gw = build({ personality: 'default' } as EthosConfig, ['sales-bot']);
+    expect(captured[0]?.roomPolicies).toBeUndefined();
     await gw.shutdown();
   });
 });

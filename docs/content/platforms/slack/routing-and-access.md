@@ -4,7 +4,7 @@ description: "Route Slack messages, restrict senders and run multiple workspaces
 kind: how-to
 audience: shared
 time: "5 min"
-updated: 2026-11-03
+updated: 2026-11-25
 ---
 
 ## Task
@@ -40,6 +40,12 @@ With [`slack.apps.<i>.mentionByName: true`](../../using/reference/config-yaml.md
 When the inbound message has a `thread_ts` or the `replyToId` is set, the adapter passes `thread_ts` to `chat.postMessage` so the reply lands in the same thread. New top-level mentions start a new thread when the agent's reply spans multiple chunks.
 
 The adapter skips messages with any `subtype` (bot messages, edits, joins) — Bolt surfaces those as `message` events too. Bot- and workflow-authored posts are the one exception: allowlist their `bot_id` under [`slack.apps.<i>.allowedBotIds`](../../using/reference/config-yaml.md#slack-apps) and they reach the agent.
+
+### 4b. Per-room prompts
+
+A Slack room's id is its channel id (`C…` for public, `G…` for private, `D…` for a DM). To find it, open the channel, click its name, then About: the Channel ID is at the bottom (it starts with C or G). Use that id as the selector: `channels.slack.C0DEPLOY.prompt`. A thread (`thread_ts`) is not a room: every thread in a channel inherits the channel's entry. A DM matches `channels.slack.*dm`.
+
+In a channel the model also gets a line naming the bot (`In this room you are the bot "@<handle>"…`), taken from Slack's own `auth.test`, never from a message. Turn it off with `channels.slack.<id>.identity: false`. The channel topic and purpose reach the model only when you set both `channels.slack.fetch_metadata: true` and `channels.slack.<id>.metadata: true`. They are fenced as untrusted text on the user message. Messages in a channel are delivered in order, so the first message in a channel may wait briefly (bounded) while the topic and purpose are fetched. Send `/ethos channel` in the room to see which entry matched. Full recipe: [Give each room its own prompt](../../using/how-to/give-each-room-its-own-prompt.md).
 
 ### 4a. Plugin commands
 

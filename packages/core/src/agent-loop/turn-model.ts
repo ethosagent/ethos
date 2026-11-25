@@ -86,6 +86,8 @@ export function resolveTurnModel(input: {
   role: ModelRoleName;
   ctx: ModelResolutionContext;
   runOverride?: string;
+  /** See `resolveModel`'s `runOverrideLabel`. */
+  runOverrideLabel?: string;
   isCoordinator?: boolean;
   /** `LLMProvider.name` — the legacy path's provider. */
   llmName: string;
@@ -127,6 +129,7 @@ export function resolveTurnModel(input: {
     role: input.role,
     ctx: input.ctx,
     ...(input.runOverride ? { runOverride: input.runOverride } : {}),
+    ...(input.runOverrideLabel ? { runOverrideLabel: input.runOverrideLabel } : {}),
     ...(input.isCoordinator !== undefined ? { isCoordinator: input.isCoordinator } : {}),
   });
   if ('ok' in resolved) return resolved;

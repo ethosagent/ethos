@@ -96,6 +96,7 @@ export async function* setupTurn(
     abortSignal?: AbortSignal;
     tierOverride?: ModelTierName;
     modelOverride?: string;
+    modelOverrideSource?: 'room';
     toolsetOverride?: string[];
     toolsetNarrow?: string[];
     toolsetExclude?: string[];
@@ -380,6 +381,9 @@ export async function* setupTurn(
             role,
             ctx: deps.modelResolution,
             ...(opts.modelOverride ? { runOverride: opts.modelOverride } : {}),
+            ...(opts.modelOverrideSource === 'room'
+              ? { runOverrideLabel: "This room's policy" }
+              : {}),
             llmName: deps.llm.name,
             llmModel: deps.llm.model,
           });
@@ -410,6 +414,7 @@ export async function* setupTurn(
     role: activeTier,
     ctx: deps.modelResolution,
     ...(opts.modelOverride ? { runOverride: opts.modelOverride } : {}),
+    ...(opts.modelOverrideSource === 'room' ? { runOverrideLabel: "This room's policy" } : {}),
     llmName: deps.llm.name,
     llmModel: deps.llm.model,
   });

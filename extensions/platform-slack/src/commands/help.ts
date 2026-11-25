@@ -1,14 +1,10 @@
 import { helpBlocks } from '../blocks/help';
 import { plaintextFallback } from '../blocks/shared';
-import { resolveChannelMode } from '../routing/triage';
 import type { SlashContext, SlashResponse } from './index';
+import { slashChannelMode } from './mode';
 
 export function handleHelp(channel: string, ctx: SlashContext): SlashResponse {
-  const channelMode = resolveChannelMode(channel, {
-    botKey: '',
-    defaultChannelMode: ctx.defaultChannelMode,
-    channelOverrides: ctx.channelOverrides,
-  });
+  const { mode: channelMode } = slashChannelMode(channel, ctx);
   const blocks = helpBlocks({ binding: ctx.binding, channel, channelMode });
   return {
     blocks,

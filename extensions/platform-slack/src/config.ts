@@ -5,6 +5,7 @@
 // `apps/ethos/src/config.ts` and is translated into this shape per app by
 // `apps/ethos/src/commands/gateway.ts`.
 
+import type { RoomModeDefault } from '@ethosagent/types';
 import { z } from 'zod';
 
 // `observe` records the channel's messages and never replies in it — not even
@@ -37,3 +38,6 @@ export const ChannelDefaultsSchema = z.object({
   channelMode: ChannelModeSchema.optional(),
 });
 export type ChannelDefaults = z.infer<typeof ChannelDefaultsSchema>;
+
+/** The room config's default reply mode hook (plan channel-prompts L12); defined once in `@ethosagent/types`. */
+export type { RoomModeDefault };
