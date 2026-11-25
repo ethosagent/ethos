@@ -377,6 +377,12 @@ jobs:
         if: steps.bump.outputs.bumped == 'true'
         uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
         with:
+          # A fine-grained PAT (this repo only; Contents + Pull requests: read/write)
+          # in the CHART_BUMP_TOKEN secret. GITHUB_TOKEN cannot open PRs while the repo
+          # setting "Allow GitHub Actions to create and approve pull requests" is off,
+          # and PRs it opens trigger no workflows. Without the secret the step behaves
+          # as before.
+          token: ${{ secrets.CHART_BUMP_TOKEN || github.token }}
           branch: chart-bump/${{ needs.docker-publish.outputs.version }}
           delete-branch: true
           commit-message: |
@@ -397,8 +403,8 @@ jobs:
             - `appVersion` → `${{ needs.docker-publish.outputs.version }}`
             - `version` → `${{ steps.bump.outputs.chart_version }}` (patch bump)
 
-            Note: PRs opened with the default `GITHUB_TOKEN` do not trigger other
-            workflows — re-run the `helm` workflow manually if you want its checks
-            on this branch before merging.
+            Note: if the `CHART_BUMP_TOKEN` secret is unset this PR was opened with
+            `GITHUB_TOKEN`, which triggers no other workflows — re-run the `helm`
+            workflow manually before merging.
 
             🤖 Generated with [Claude Code](https://claude.com/claude-code)
