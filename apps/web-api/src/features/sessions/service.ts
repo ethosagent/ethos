@@ -8,8 +8,14 @@ import type {
   Session as WireSession,
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
-import { isIncognitoSession, isSharedSession, type RewindTarget } from '@ethosagent/wiring';
+import {
+  isIncognitoSession,
+  isSharedSession,
+  type RewindTarget,
+  type SqliteShareLinkStore,
+} from '@ethosagent/wiring';
 import { exportFilename, formatAsMarkdown } from '../../services/sessions.export';
+import type { ActorReader } from '../share/actor';
 import type { SessionsRepository } from './repository';
 
 // Business logic for the `sessions` namespace. Wraps `SessionsRepository`,
@@ -30,6 +36,11 @@ export interface SessionsServiceOptions {
    *  is: an aborted turn still writes its tail, so a fork would snapshot a
    *  half-written source. Absent → never busy (tests, onboarding). */
   isTurnRunning?: (sessionId: string) => boolean;
+  /** Share-link store: `delete` revokes the session's live links (plan share-links D4).
+   *  Absent → nothing to revoke (onboarding, tests). */
+  shareLinks?: Pick<SqliteShareLinkStore, 'revokeForSession'>;
+  /** The audit actor for that revoke (`web:<admin>`); absent → `web`. */
+  actor?: ActorReader;
 }
 
 /** Byte cap (message `content` + `toolCalls` JSON) on one `sessions.messages` page. */
@@ -202,6 +213,9 @@ export class SessionsService {
   async delete(id: string): Promise<void> {
     const exists = await this.opts.sessions.get(id);
     if (!exists) throw notFound(id);
+    // Before the row goes: a delete that fails midway must never leave a live public link.
+    // Pinned by __tests__/services/sessions-delete-shares.test.ts.
+    this.opts.shareLinks?.revokeForSession(id, (await this.opts.actor?.()) ?? 'web');
     await this.opts.sessions.delete(id);
     // Cards live in their own database, outside the sessions.db cascade — a
     // deleted session would otherwise leave its rows behind forever.

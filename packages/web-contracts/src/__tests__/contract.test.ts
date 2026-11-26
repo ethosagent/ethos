@@ -15,7 +15,6 @@ import {
 
 // ---------------------------------------------------------------------------
 // Schemas — every entity round-trips through Zod parse without loss.
-// ---------------------------------------------------------------------------
 
 describe('entity schemas', () => {
   it('Session round-trips through parse', () => {
@@ -357,6 +356,7 @@ describe('contract router', () => {
       'plugins',
       'recipes',
       'sessions',
+      'shares',
       'skills',
       'slashCommands',
       'tasks',

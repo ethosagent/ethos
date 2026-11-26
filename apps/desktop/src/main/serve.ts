@@ -19,6 +19,8 @@ import {
   createLLM,
   createSessionStore,
   IdentityMap,
+  SqliteShareLinkStore,
+  shareLinksDbPath,
 } from '@ethosagent/wiring';
 import { serve as honoServe } from '@hono/node-server';
 import { resolveBuiltinPersonalitiesDir } from './builtin-personalities-dir';
@@ -513,6 +515,13 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     return undefined;
   })();
 
+  // Share links (plan share-links §3): the store must exist in this process so /share/* is
+  // mounted (404 while the feature is off) and a session delete revokes its links. `port` is
+  // the requested one until the listener binds (see `shareHost.bind.port = actual`).
+  const shareStore = new SqliteShareLinkStore(shareLinksDbPath(dataDir));
+  rt.shareLinks = shareStore;
+  const shareHost = { store: shareStore, bind: { host: '127.0.0.1', port } };
+
   const {
     app: webApp,
     voiceSocket,
@@ -523,6 +532,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     dispose: disposeWebApi,
   } = createWebApi({
     dataDir,
+    shareLinks: shareHost,
     sessionStore: session,
     // The memory surfaces `createAgentLoop` built from this same config (F04):
     // editor, Timeline, restore and approve on the backend the agent reads —
@@ -674,6 +684,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   }
 
   boundPort = actual;
+  shareHost.bind.port = actual;
   console.log(`[ethos-backend] in-process server listening on http://127.0.0.1:${actual}`);
   const callCapture = startCallCaptureDesktop({
     wiringConfig,

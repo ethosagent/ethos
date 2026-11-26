@@ -12,6 +12,8 @@ import {
   useSessionRename,
 } from '../features/sessions/api/mutations';
 import { useSessionList } from '../features/sessions/api/queries';
+import { useShareEnabled } from '../features/share/api/queries';
+import { ShareDialog } from '../features/share/ShareDialog';
 import { buildWorkspaceChatPath, sessionOpenPath } from '../lib/workspaceRoutes';
 
 // Sessions tab — list, search, paginate, fork, delete. The chat tab uses
@@ -80,6 +82,9 @@ export function Sessions() {
   const renameMut = useSessionRename();
 
   const exportMut = useSessionExport();
+
+  const shareEnabled = useShareEnabled();
+  const [sharing, setSharing] = useState<Session | null>(null);
 
   // --- render ---
 
@@ -286,6 +291,7 @@ export function Sessions() {
                       })
                     }
                     onExport={() => exportMut.mutate(row.id)}
+                    onShare={shareEnabled && !row.incognito ? () => setSharing(row) : undefined}
                     onDelete={() => deleteMut.mutate(row.id)}
                     deleting={deleteMut.isPending && deleteMut.variables === row.id}
                   />
@@ -307,6 +313,7 @@ export function Sessions() {
           ) : null}
         </>
       )}
+      {sharing ? <ShareDialog session={sharing} onClose={() => setSharing(null)} /> : null}
     </div>
   );
 }
@@ -317,6 +324,7 @@ interface RowActionsProps {
   onRename: () => void;
   onFork: () => void;
   onExport: () => void;
+  onShare?: (() => void) | undefined;
   onDelete: () => void;
   deleting: boolean;
 }
@@ -327,6 +335,7 @@ function RowActions({
   onRename,
   onFork,
   onExport,
+  onShare,
   onDelete,
   deleting,
 }: RowActionsProps) {
@@ -335,6 +344,7 @@ function RowActions({
     { key: 'rename', label: 'Rename' },
     { key: 'fork', label: 'Fork' },
     { key: 'export', label: 'Export as Markdown' },
+    ...(onShare ? [{ key: 'share', label: 'Share…' }] : []),
     {
       key: 'delete',
       label: (
@@ -372,6 +382,7 @@ function RowActions({
             else if (key === 'rename') onRename();
             else if (key === 'fork') onFork();
             else if (key === 'export') onExport();
+            else if (key === 'share') onShare?.();
             // delete handled by the Popconfirm inside the menu item
           },
         }}

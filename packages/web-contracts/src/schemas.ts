@@ -24,4 +24,5 @@ export * from './schema/outbox';
 export * from './schema/personalities';
 export * from './schema/recipes';
 export * from './schema/sessions';
+export * from './schema/shares';
 export * from './schema/skills';

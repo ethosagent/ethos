@@ -183,6 +183,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // are bearer credentials for external clients, this is the human one.
       section('access', 'access'),
       section('api-keys', 'API keys'),
+      section('shared-links', 'shared links'),
       section('a2a', 'A2A'),
     ],
   },

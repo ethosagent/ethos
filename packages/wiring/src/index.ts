@@ -2219,7 +2219,7 @@ export { parseDuration } from '@ethosagent/observability-sqlite';
 // Secret redaction for app-level output (e.g. the `ethos -z` stream wire in
 // apps/ethos/src/commands/zero-stream.ts) — re-exported so apps reach the
 // safety package through wiring (ARCHITECTURE.md Law 5).
-export { redactString } from '@ethosagent/safety-redact';
+export { redactPii, redactString } from '@ethosagent/safety-redact';
 // Raw-handle FTS health helpers for apps (doctor, sessions repair): functions
 // only, so the diagnostics-never-migrate class scan sees no store class.
 export {
@@ -2511,8 +2511,7 @@ export * from './backup-schedule';
 // publishing tools see. `createOutboundPolicyGate` is its policy half alone —
 // what an app root hands a `WatcherManager` at construction.
 export { createOutboundPolicyGate, createOutboxGate, type OutboxWiring } from './compose-tools';
-// The gateway singleton lock (plan reach-and-containment §2.7) — taken by
-// `ethos gateway start`, read by `ethos gateway status`.
+// Gateway singleton lock (reach-and-containment §2.7): `ethos gateway start|status`.
 export * from './gateway-lock';
 // `/mcp login` seam for the gateway (plan mcp-device-code-login §8.2).
 export {
@@ -2523,4 +2522,5 @@ export {
   type McpLoginStart,
 } from './mcp-login';
 export * from './room-policy'; // per-room prompts and policy; also the `@ethosagent/wiring/room-policy` subpath
+export * from './share'; // share-links store + redacted snapshot builder (plan share-links)
 export * from './system-jobs';

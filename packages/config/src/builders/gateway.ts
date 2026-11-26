@@ -205,6 +205,10 @@ export function buildGrounding(
   };
 }
 
+/** The `idleWatcher.<field>: <value>` config line; group 1 is the field. */
+export const IDLE_WATCHER_LINE =
+  /^idleWatcher\.(enabled|idleThresholdMs|startupCooldownMs|checkIntervalMs|wakePathConfirmed):\s*(.+)$/;
+
 /**
  * Assemble the scale-to-zero idle-watcher config from parsed flat keys.
  * Returns `undefined` when nothing survives, so the watcher stays off.

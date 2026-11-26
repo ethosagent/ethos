@@ -1,0 +1,400 @@
+/* Share links: ShareDialog + Settings > Security > Shared links.
+   Built from the approved mockup (plan/phases/share-links.md T0) on the
+   DESIGN.md tokens in styles.css. Raw primitives, no Card. */
+
+.share-dialog,
+.share-section {
+  --share-warning-bg: color-mix(in srgb, var(--warning) 12%, transparent);
+  --share-error-bg: color-mix(in srgb, var(--error) 12%, transparent);
+  --share-redact-bg: var(--bg-overlay);
+}
+.share-dialog .ant-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.share-mono,
+.share-dialog code,
+.share-section code {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.share-dialog code,
+.share-section code {
+  font-size: 12px;
+  background: var(--bg-overlay);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.share-small {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.share-dim {
+  color: var(--text-tertiary);
+}
+.share-gap {
+  margin-top: 6px;
+}
+.share-micro {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.share-btn {
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 6px 12px;
+  min-height: 32px;
+  transition:
+    background-color var(--motion-fast, 80ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1)),
+    opacity var(--motion-fast, 80ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.share-btn:hover {
+  background: var(--bg-overlay);
+}
+.share-btn-primary {
+  background: var(--text-primary);
+  color: var(--bg-base);
+  border-color: var(--text-primary);
+}
+.share-btn-primary:hover {
+  opacity: 0.88;
+  background: var(--text-primary);
+}
+.share-btn-danger {
+  color: var(--error);
+  border-color: var(--error);
+  background: transparent;
+}
+.share-btn-sm {
+  padding: 2px 8px;
+  min-height: 28px;
+  font-size: 12px;
+}
+.share-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.share-btn:focus-visible,
+.share-select:focus-visible,
+.share-preview:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+.share-ctx {
+  margin: 2px 0 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.share-field {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.share-ctx + .share-field {
+  border-top: 0;
+  padding-top: 0;
+}
+.share-l {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.share-l-flat {
+  margin: 0;
+}
+.share-select {
+  font: inherit;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  width: 100%;
+  max-width: 220px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 6px 8px;
+  min-height: 32px;
+  display: block;
+  margin-bottom: 4px;
+}
+.share-trow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.share-tx {
+  flex: 1;
+  min-width: 0;
+}
+.share-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex: none;
+  margin-top: 2px;
+}
+.share-switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.share-switch i {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--border-strong);
+  transition: background-color var(--motion-fast, 80ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.share-switch i::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--bg-elevated);
+  transition: transform var(--motion-fast, 80ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.share-switch input:checked + i {
+  background: var(--success);
+}
+.share-switch input:checked + i::after {
+  transform: translateX(16px);
+}
+/* After the switch rules: it is the more specific selector. */
+.share-switch input:focus-visible + i {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+.share-preview {
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-base);
+  padding: 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+.share-turn + .share-turn {
+  margin-top: 10px;
+}
+.share-role {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.share-txt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+}
+.share-red {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  background: var(--share-redact-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.share-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-overlay);
+  border-radius: 4px;
+  padding: 0 6px;
+  margin: 4px 4px 0 0;
+}
+.share-chip-err {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.share-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.share-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border: 1px solid;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-top: 12px;
+}
+.share-note-ic {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  flex: none;
+}
+.share-note-warn {
+  color: var(--warning);
+  background: var(--share-warning-bg);
+  border-color: var(--warning);
+}
+.share-note-err {
+  color: var(--error);
+  background: var(--share-error-bg);
+  border-color: var(--error);
+}
+.share-note-info {
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
+  border-color: var(--border-strong);
+}
+.share-note-body {
+  color: var(--text-primary);
+  min-width: 0;
+}
+.share-note-body b {
+  font-weight: 500;
+}
+
+.share-urlrow {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.share-urlbox {
+  flex: 1;
+  min-width: 0;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 6px 8px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.share-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 16px;
+  margin-top: 12px;
+}
+.share-kv dt {
+  color: var(--text-tertiary);
+}
+.share-kv dd {
+  margin: 0;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  align-self: center;
+}
+
+/* Settings list */
+.share-sec-sub {
+  margin: 0 0 4px;
+}
+.share-lrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  align-items: start;
+}
+.share-lt {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.share-lm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.share-lm .share-mono {
+  color: var(--text-primary);
+}
+.share-act {
+  align-self: center;
+}
+.share-lrow-confirm {
+  background: var(--share-error-bg);
+  margin: 0 -16px;
+  padding: 12px 16px;
+}
+.share-cf {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.share-cf-text {
+  color: var(--text-primary);
+}
+.share-expsoon,
+.share-lm .share-expsoon .share-mono {
+  color: var(--warning);
+}
+.share-empty {
+  padding: 16px 0;
+  color: var(--text-secondary);
+  max-width: 62ch;
+  margin: 0;
+}
+.share-off {
+  padding: 12px 0;
+}
+.share-cfg {
+  display: block;
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--bg-overlay);
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+}
+.share-foot-note {
+  padding: 8px 0 12px;
+}
+
+@media (max-width: 440px) {
+  .share-lrow {
+    grid-template-columns: 1fr;
+  }
+  .share-act {
+    margin-top: 4px;
+  }
+  .share-urlrow {
+    flex-direction: column;
+  }
+  .share-kv {
+    grid-template-columns: 1fr;
+  }
+  .share-kv dd {
+    margin-bottom: 6px;
+  }
+}

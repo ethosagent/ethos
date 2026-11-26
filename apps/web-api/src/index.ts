@@ -62,6 +62,8 @@ import { CompletionsService } from './features/completions/service';
 import { DebugService } from './features/debug/service';
 import { SessionsRepository } from './features/sessions/repository';
 import { SessionsService } from './features/sessions/service';
+import { buildShareFeature } from './features/share/wire';
+import { builtinRouteModules } from './lib/builtin-route-modules';
 import { lateDelegate, lateFn } from './lib/late-slot';
 import { createPendingLoop } from './lib/pending-loop';
 import { buildPlatformServices } from './lib/platform-services';
@@ -85,9 +87,6 @@ import { WebAdminRepository } from './repositories/web-admin.repository';
 import { WebSessionStore } from './repositories/web-session.store';
 import { resolveWebTokenEnv, WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
-import { backupRoutes } from './routes/backup';
-import { documentsRoutes } from './routes/documents';
-import { personalityAvatarRoutes } from './routes/personality-avatar';
 import type { RouteModule } from './routes/route-module';
 import { type AmendmentReader, AmendmentsService } from './services/amendments.service';
 import { ApiKeysService } from './services/api-keys.service';
@@ -490,6 +489,8 @@ export interface CreateWebApiOptions {
    * `http://localhost:3000` when omitted.
    */
   webBaseUrl?: string;
+  /** Share links (plan share-links): the store and where `ethos serve` listens. Absent → off. */
+  shareLinks?: import('./features/share/service').ShareLinksHost;
   /**
    * Setter from `CreateAgentLoopResult.setOnSkillProposed`. When provided,
    * `createWebApi` registers a callback that broadcasts an
@@ -957,6 +958,15 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   });
 
   const systemBus = new SystemEventBus();
+  const share = buildShareFeature({
+    host: opts.shareLinks,
+    configSource: configRepo,
+    admin: webAdmin,
+    sessions: opts.sessionStore,
+    webBaseUrl: opts.webBaseUrl,
+    trustProxy: opts.trustProxy,
+  });
+  disposers.push('share-link purge', share.stop);
 
   // --- Services (business logic) ---
   // Typed UI cards get their own database, not a column on the STRICT
@@ -971,6 +981,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     cards: cardStore,
     // Resolved at call time: `chatService` is built later (below), after this service.
     isTurnRunning: (id) => chatService.isTurnRunning(id),
+    ...(share.store ? { shareLinks: share.store, actor: share.actor } : {}),
     ...(opts.contextAnatomyFn ? { contextAnatomy: opts.contextAnatomyFn } : {}),
   });
   const sharedMcpJsonStore = new McpJsonStore(storage);
@@ -2152,6 +2163,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       completions: completionsService,
       debug: debugService,
       apiKeys: apiKeysService,
+      shares: share.service,
       digest: digestService,
       documents: documentsService,
       modelRegistry: modelRegistryService,
@@ -2194,42 +2206,17 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.cronFireTrigger ? { cronFireTrigger: opts.cronFireTrigger } : {}),
     ...(opts.idempotencyStore ? { idempotencyStore: opts.idempotencyStore } : {}),
     ...(opts.corsOrigins ? { corsOrigins: opts.corsOrigins } : {}),
-    // The download/upload routes are a built-in module rather than a
-    // caller-supplied one: they need `documentsService`, which is constructed
-    // here. Declaring it through the same seam keeps its auth posture explicit
-    // and reviewable, and mounts it BEFORE the static `/*` catch-all.
+    // Built-in cookie modules (lib/builtin-route-modules.ts) and the public share page
+    // mount through the same reviewable seam, BEFORE the static `/*` catch-all.
     routeModules: [
       ...(opts.routeModules ?? []),
       ...(nodeLane ? [nodeLane.routeModule] : []),
-      {
-        basePath: '/documents',
-        router: documentsRoutes({ documents: documentsService }),
-        auth: 'cookie',
-        description:
-          'Streams a file out of a personality workdir, and accepts a raw-body upload ' +
-          'into one. Cookie-only: an `<a download>` navigation carries `ethos_auth`, ' +
-          'but a Bearer header cannot be attached to one.',
-      },
-      {
-        basePath: '/backup',
-        router: backupRoutes({ backup: backupService }),
-        auth: 'cookie',
-        description:
-          'Streams one `~/.ethos` backup archive out of the backup directory. Cookie-only, ' +
-          'same posture as `/documents`: an `<a download>` navigation carries `ethos_auth`, ' +
-          'but a Bearer header cannot be attached to one — so desktop remote mode cannot ' +
-          'use it, and `backup.status` says so via `downloadAvailable`.',
-      },
-      {
-        basePath: '/api/personalities',
-        router: personalityAvatarRoutes({ personalities: personalitiesService }),
-        auth: 'cookie',
-        description:
-          'Upload/serve/delete a personality avatar image. Cookie-only, same posture as ' +
-          '`/documents`: personality-mutating writes are cookie-only everywhere else in ' +
-          'this app too (see dual-auth.ts SCOPE_MAP), and `<img src>` cannot carry a ' +
-          'Bearer header regardless.',
-      },
+      ...builtinRouteModules({
+        documents: documentsService,
+        backup: backupService,
+        personalities: personalitiesService,
+      }),
+      ...share.routeModules,
     ],
     storage,
     secrets,

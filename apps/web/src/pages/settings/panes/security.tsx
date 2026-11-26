@@ -60,6 +60,7 @@ import {
   useToolSettingsDefault,
   useToolSettingsSchemas,
 } from '../../../features/settings/api/queries';
+import { SharedLinksSection } from '../../../features/share/SharedLinksSection';
 import { fetchAuthState, resolveAccessSection } from '../../../lib/auth/auth-flow';
 import { rpc } from '../../../rpc';
 import { AdvancedBlock } from '../components/advanced';
@@ -157,6 +158,8 @@ export function SecurityPane() {
 
       <SectionHeading id="api-keys">API keys</SectionHeading>
       <ApiKeysSection />
+
+      <SharedLinksSection />
 
       <SectionHeading id="a2a">A2A</SectionHeading>
       <A2aSection />
@@ -1034,12 +1037,6 @@ function ApiKeysSection() {
           style={{ fontFamily: 'Geist Mono, monospace', fontSize: 13 }}
         />
       </Modal>
-
-      <style>{`
-        .api-key-revoked {
-          opacity: 0.5;
-        }
-      `}</style>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import type { SearchResult, Session, SessionUsage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { formatContextAnatomy } from '../lib/context-anatomy-format';
 import { runSessionsRepair } from './sessions-repair';
+import { revokeSharesForSession, runSessionsShare } from './sessions-share';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,10 +103,15 @@ export async function renameSession(
   await store.updateSession(sessionId, { title });
 }
 
+/**
+ * Confirm the session exists, run `beforeDelete` (share-link revoke), then delete. Fails closed:
+ * if `beforeDelete` throws, the session is left intact. Returns `beforeDelete`'s count (0 if none).
+ */
 export async function deleteSessionById(
   store: SQLiteSessionStore,
   sessionId: string,
-): Promise<void> {
+  beforeDelete?: (sessionId: string) => Promise<number>,
+): Promise<number> {
   const session = await store.getSession(sessionId);
   if (!session)
     throw new EthosError({
@@ -113,7 +119,9 @@ export async function deleteSessionById(
       cause: `Session not found: ${sessionId}`,
       action: 'Check the session ID with `ethos sessions list`.',
     });
+  const revoked = beforeDelete ? await beforeDelete(sessionId) : 0;
   await store.deleteSession(sessionId);
+  return revoked;
 }
 
 export async function searchSessions(
@@ -323,6 +331,11 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
     if (code !== 0) process.exitCode = code;
     return;
   }
+  // `share` opens its own session + share-link stores (list/revoke need no sessions.db).
+  if (sub === 'share') {
+    await runSessionsShare(argv);
+    return;
+  }
   const dbPath = join(ethosDir(), 'sessions.db');
   const store = new SQLiteSessionStore(dbPath);
 
@@ -380,8 +393,14 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
             });
           });
         }
-        await deleteSessionById(store, sessionId);
+        // Plan share-links §3: a deleted session's links die with it. Revoke runs after the
+        // existence check (a typo touches nothing) and BEFORE the delete, so a revoke failure
+        // leaves the session intact and exits non-zero instead of orphaning live links.
+        const revokedLinks = await deleteSessionById(store, sessionId, revokeSharesForSession);
         console.log(`Deleted: ${sessionId}`);
+        if (revokedLinks > 0) {
+          console.log(`Revoked ${revokedLinks} share link${revokedLinks === 1 ? '' : 's'}.`);
+        }
         break;
       }
 
@@ -415,7 +434,9 @@ export async function runSessionsCommand(sub: string, argv: string[]): Promise<v
 
       default:
         console.error(`Unknown sessions subcommand: ${sub}`);
-        console.log('Usage: ethos sessions [list | show | rename | delete | search | repair]');
+        console.log(
+          'Usage: ethos sessions [list | show | rename | delete | search | share | repair]',
+        );
         process.exit(1);
     }
   } finally {

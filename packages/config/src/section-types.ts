@@ -182,6 +182,14 @@ export interface IdleWatcherConfig {
   wakePathConfirmed?: boolean;
 }
 
+/** Global share-link switch (plan share-links D11). Absent means off and nothing excluded. */
+export interface ShareLinksConfig {
+  /** Default false. Only a literal `true` turns share links on. */
+  enabled?: boolean;
+  /** Personality ids whose sessions cannot be shared (comma-separated in config.yaml). */
+  excludePersonalities?: string[];
+}
+
 export interface NodesConfig {
   /** Operator switch for laptop tool nodes (plan laptop-tool-node D18). Default false: no /node routes, no node_* tools. */
   enabled?: boolean;

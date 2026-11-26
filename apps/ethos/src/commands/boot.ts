@@ -103,6 +103,7 @@ import {
   takeGatewayLockOrExit,
 } from '../lib/gateway-inbound-durability';
 import { scrubExpiredIncognito } from '../lib/incognito-retention';
+import { openShareLinks } from '../lib/open-share-links';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -677,6 +678,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   });
 
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  const shareLinks = openShareLinks(dir, webHost, webPort);
   const idempotencyStore = new IdempotencyStore(join(dir, 'sessions.db'));
   const serveAttachmentCache = new FsAttachmentCache(
     new FsStorage(),
@@ -743,6 +745,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     identityMap,
     attachmentCache: serveAttachmentCache,
     apiKeys,
+    shareLinks: shareLinks.host,
     idempotencyStore,
     toolRegistry: shared.toolRegistry,
     mcpManager: shared.mcpManager,
@@ -1669,6 +1672,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
    *  exactly as exposing as a cold boot onto it, so it owes the operator the
    *  same notice. */
   const announceWebBind = (host: string, boundPort: number): string | null => {
+    shareLinks.host.bind = { host, port: boundPort };
     const displayHost = host === '0.0.0.0' ? 'localhost' : host;
     console.log(`  web:     http://${displayHost}:${boundPort}`);
     return formatNonLoopbackNotice(host, boundPort, cfg.webBaseUrl);
@@ -1954,6 +1958,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
                 contextLog.close();
                 session.close();
                 apiKeys.close();
+                shareLinks.close();
                 idempotencyStore.close();
                 metricsApiKeys.close();
               },

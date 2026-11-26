@@ -136,6 +136,7 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'quick_commands.',
   'retention.',
   'security.',
+  'shareLinks.',
   'storage.',
   'slack.apps.',
   'teamSupervisor.',

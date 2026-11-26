@@ -317,6 +317,9 @@ const sqliteFiles = (name: string): string[] => [name, `${name}-wal`, `${name}-s
  *   run executes on the host.
  * - `sessions.db`, `observability.db`, `memory.db` — every personality's
  *   transcripts, telemetry and vector memory in one file each.
+ * - `share-links.db` — hashed share tokens and frozen transcript snapshots
+ *   (plan share-links §4); a write could mint or revive a public link, a read
+ *   leaks a redacted-but-still-private transcript. Pinned by `state-dir-deny.test.ts`.
  * - `constitution.yaml`, `evolve-config.json`, `allowlist.json`,
  *   `approval-leases.json` — operator policy (verification round F1). The
  *   constitution bounds every personality's tools, budget and mounts;
@@ -358,6 +361,7 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   ...sqliteFiles('sessions.db'),
   ...sqliteFiles('observability.db'),
   ...sqliteFiles('memory.db'),
+  ...sqliteFiles('share-links.db'),
   'learning',
   'channels',
 ];

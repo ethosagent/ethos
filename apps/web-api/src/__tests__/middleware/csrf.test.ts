@@ -212,3 +212,70 @@ describe('csrf on cookie-auth route modules (S8)', () => {
     expect(JSON.stringify(await res.json())).toMatch(/Cross-origin/);
   });
 });
+
+// plan share-links §4 'CSRF on create/revoke': `/rpc/shares/*` rides the same `/rpc/*` Origin
+// check as every cookie request, so a cross-origin page cannot publish a link.
+describe('csrf on shares.create and shares.revoke', () => {
+  let dataDir: string;
+  let store: SQLiteSessionStore;
+  let app: ReturnType<typeof createWebApi>['app'];
+  let cookie: string;
+  const sameOrigin = { origin: 'http://localhost:3000', host: 'localhost:3000' };
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'ethos-csrf-shares-'));
+    store = new SQLiteSessionStore(':memory:');
+    app = createWebApi({
+      dataDir,
+      sessionStore: store,
+      memoryBundle: makeStubMemoryBundle(),
+      agentLoop: makeStubAgentLoop(),
+      personalities: makeStubPersonalityRegistry(),
+      chatDefaults: { model: 'm', provider: 'p' },
+    }).app;
+    const token = await new WebTokenRepository({ dataDir, storage: new FsStorage() }).getOrCreate();
+    const exchange = await app.request(`/auth/exchange?t=${token}`, { headers: sameOrigin });
+    cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
+  });
+
+  afterEach(async () => {
+    store.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const create = (headers: Record<string, string>) =>
+    app.request('/rpc/shares/create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie, ...headers },
+      body: JSON.stringify({
+        json: { sessionId: 's', expiresIn: '1h', includeToolNames: false, pii: true },
+      }),
+    });
+
+  it('refuses a cross-origin POST and one with no Origin', async () => {
+    expect((await create({ origin: 'http://localhost:5999', host: 'localhost:3000' })).status).toBe(
+      401,
+    );
+    expect((await create({ host: 'localhost:3000' })).status).toBe(401);
+  });
+
+  it('refuses a cross-origin shares.revoke and one with no Origin', async () => {
+    const revoke = (headers: Record<string, string>) =>
+      app.request('/rpc/shares/revoke', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie, ...headers },
+        body: JSON.stringify({ json: { id: 'abcd1234' } }),
+      });
+    expect((await revoke({ origin: 'http://localhost:5999', host: 'localhost:3000' })).status).toBe(
+      401,
+    );
+    expect((await revoke({ host: 'localhost:3000' })).status).toBe(401);
+    expect((await revoke(sameOrigin)).status).toBe(200);
+  });
+
+  it('accepts a same-origin POST (feature off answers a typed refusal)', async () => {
+    const res = await create(sameOrigin);
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(await res.json())).toContain('disabled');
+  });
+});

@@ -65,6 +65,11 @@ export class WebAdminRepository {
     return (await this.read()) !== null;
   }
 
+  /** The admin's username, or null while unclaimed. Names the actor on audit rows. */
+  async username(): Promise<string | null> {
+    return (await this.read())?.username ?? null;
+  }
+
   /**
    * First-time claim: hash the password and write the record. Refuses when a
    * record already exists — re-claiming goes through `reset` (token-gated at

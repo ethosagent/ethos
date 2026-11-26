@@ -114,6 +114,7 @@ The tests include adversarial bypass attempts — encoding tricks, redirect chai
 | <a id="read-only-sql"></a>[Read-only plugin data source access](controls/audit-and-access.md#read-only-sql) | [Security controls: audit, admin auth and remote access](controls/audit-and-access.md) |
 | <a id="desktop-remote-connection"></a>[Desktop remote connection security](controls/audit-and-access.md#desktop-remote-connection) | [Security controls: audit, admin auth and remote access](controls/audit-and-access.md) |
 | <a id="removed-empty-safety-stubs"></a>[Removed empty safety stubs](controls/audit-and-access.md#removed-empty-safety-stubs) | [Security controls: audit, admin auth and remote access](controls/audit-and-access.md) |
+| <a id="share-links"></a>[Shared session links](controls/share-links.md#threat-model) | [Security controls: shared session links](controls/share-links.md) |
 
 ## See also {#see-also}
 

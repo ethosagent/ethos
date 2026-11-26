@@ -30,6 +30,8 @@ export interface DesktopRuntime {
   webApi?: { dispose(): Promise<void> };
   /** `CreateAgentLoopResult.dispose` — the loop's own runtime. */
   loop?: { dispose(): Promise<void> };
+  /** The share-links store the desktop opened and lent to the web API (closed after it). */
+  shareLinks?: { close(): void };
   /** The desktop's own sessions.db handle, lent to the web API. */
   sessionStore?: { close(): void };
 }
@@ -65,6 +67,7 @@ export async function shutdownDesktopRuntime(
     ['http server', () => closeServer(runtime.server)],
     ['web api', () => runtime.webApi?.dispose()],
     ['agent loop', () => runtime.loop?.dispose()],
+    ['share links store', () => runtime.shareLinks?.close()],
     ['session store', () => runtime.sessionStore?.close()],
   ];
   const failures: Error[] = [];

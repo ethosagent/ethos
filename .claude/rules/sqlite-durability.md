@@ -11,6 +11,7 @@ paths:
   - "extensions/channel-transcript-sqlite/**"
   - "extensions/notify-queue/**"
   - "extensions/outbox/**"
+  - "extensions/share-links/**"
   - "extensions/observability-sqlite/**"
   - "packages/a2a/src/sqlite-task-store.ts"
   - "packages/sqlite/**"
@@ -39,6 +40,7 @@ What the trade is, per [sqlite.org](https://www.sqlite.org/pragma.html#pragma_sy
 | `extensions/job-store/` | A `queued` row is often the only record that work is owed, and the user was told the job started. | No — a few commits per job; heartbeat is 30s. |
 | `extensions/notify-queue/` | A queued wake notice is work owed to a person; a lost enqueue is never retried. | No — one commit per notification. |
 | `extensions/outbox/` | A pending publication is work owed to a person; a lost approve silently drops it. | No — a handful of commits per publication. |
+| `extensions/share-links/` | A revoke that a power cut rolls back reopens a public transcript URL, and revoke/purge null the snapshot in the same transaction. Pinned by the `durability posture` case in `__tests__/share-link-store.test.ts`. | No — a commit per create, revoke or view of a human-shared link. |
 | `extensions/inbound-dedup/` | It IS the durable half of dedup. A power cut is the one restart that can roll back the last sightings, and a platform retry afterwards is a second billed LLM turn replying to an answered message. | No — `seen()` runs only on an in-memory Set miss. |
 | `extensions/inbound-spool/` | A `received` row is a message the user sent and was never answered; losing it is the failure the store exists to prevent. | No — a turn is three commits (`accept`, `markProcessing`, `markDone`) around an LLM turn that takes seconds, four when it starts a tool (`markToolStarted`); a message consumed without a turn is two (`accept`, `markDone`), and so is a steer folded into a running turn (`accept`, `markAbsorbed` — its terminal rides in its turn's `markDone` transaction). |
 | `extensions/call-log/` | `ringing`/`live` rows are LIVE STATE, not history — nothing deletes them however old they look. | No — a few commits per phone call. |

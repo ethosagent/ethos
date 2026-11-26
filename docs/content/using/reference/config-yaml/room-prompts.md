@@ -147,7 +147,7 @@ channels.slack.C0ALERTS.silent: true
 | `channel_overrides.allow_silence` | `channels.<platform>.<id>.silent` |
 | `free_response_channels` | `channels.<platform>.<id>.mode: all` |
 | `thread_require_mention: true` | `channels.<platform>.<id>.mode: mention_only` |
-| `group_allowed_chats` | [`channel_filter`](../../platforms/telegram/access.md). Admission is a separate setting from room policy. |
+| `group_allowed_chats` | [`channel_filter`](../../../platforms/telegram/access.md). Admission is a separate setting from room policy. |
 
 ## See also {#see-also}
 

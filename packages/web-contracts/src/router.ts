@@ -21,6 +21,7 @@ import {
 import { personalities } from './routes/personalities';
 import { mcp, platforms, plugins } from './routes/platforms-plugins-mcp';
 import { activity, sessions } from './routes/sessions-activity';
+import { shares } from './routes/shares';
 import { voice } from './routes/voice';
 
 export { type ModelRegistryAdoptedModel, ModelRegistryAdoptedModelSchema } from './routes/_shared';
@@ -175,6 +176,7 @@ export const contract = {
   catalog,
   backup,
   execution,
+  shares,
 };
 
 export type Contract = typeof contract;

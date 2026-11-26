@@ -72,6 +72,7 @@
   "resolveLearningReplay",
   "resolvePersonalityDecisionSite",
   "resolveSecretRef",
+  "resolveShareLinks",
   "rotationSecretRef",
   "secretRefForConfigKey",
   "secretRefFromValue",

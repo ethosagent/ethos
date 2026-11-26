@@ -108,10 +108,10 @@ describe('backup scopes: WAL store drift gate', () => {
     }
   });
 
-  it('resolves the 23 sites to 17 distinct database files', () => {
+  it('resolves the 24 sites to 18 distinct database files', () => {
     const files = new Set(WAL_STORES.map((s) => s.database));
-    expect(WAL_STORES.reduce((n, s) => n + s.sites, 0)).toBe(23);
-    expect(files.size).toBe(17);
+    expect(WAL_STORES.reduce((n, s) => n + s.sites, 0)).toBe(24);
+    expect(files.size).toBe(18);
   });
 });
 
@@ -211,6 +211,8 @@ describe('backup scopes: classification', () => {
       'inbound-dedup.db',
       'inbound-spool.db',
       'notify-queue.db',
+      // share-links D10: a restore on another host must not revive public URLs.
+      'share-links.db',
       'cache/thumb.png',
       'logs/ethos.log',
       'processes/registry.json',

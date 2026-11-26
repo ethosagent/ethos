@@ -13,6 +13,8 @@ import {
 } from '../features/personalities/api/queries';
 import { useSessionRename } from '../features/sessions/api/mutations';
 import { useRecentSessions } from '../features/sessions/api/queries';
+import { useShareEnabled } from '../features/share/api/queries';
+import { ShareDialog } from '../features/share/ShareDialog';
 import { useTeam, useTeamsList } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
@@ -90,6 +92,9 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
     position: { x: number; y: number };
   } | null>(null);
   const [renaming, setRenaming] = useState<RecentSessionRow | null>(null);
+  const [sharing, setSharing] = useState<RecentSessionRow | null>(null);
+  // Always mounted, so `shares.list` is already answered when a menu opens.
+  const shareEnabled = useShareEnabled();
 
   const openContextMenu = (e: React.MouseEvent, session: RecentSessionRow) => {
     setMenu({ session, position: { x: e.clientX, y: e.clientY } });
@@ -569,8 +574,11 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
             setRenaming(menu.session);
             setMenu(null);
           }}
+          onShare={() => setSharing(menu.session)}
+          shareEnabled={shareEnabled && !menu.session.incognito}
         />
       )}
+      {sharing ? <ShareDialog session={sharing} onClose={() => setSharing(null)} /> : null}
 
       {renaming && (
         <RenameSessionModal

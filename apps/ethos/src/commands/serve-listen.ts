@@ -165,3 +165,27 @@ function tryListen(app: FetchApp, port: number, hostname: string): Promise<Liste
     server.once('error', (err) => reject(err));
   });
 }
+
+/** The onboarding-mode banner: where the UI listens and how the operator gets in (D2). */
+export function printOnboardingAccess(o: {
+  webHost: string;
+  port: number;
+  token: string;
+  fromEnv: boolean;
+  hasWebDist: boolean;
+}): void {
+  const displayHost = o.webHost === '0.0.0.0' ? 'localhost' : o.webHost;
+  console.log(`ethos web UI (onboarding mode) listening on http://${displayHost}:${o.port}`);
+  console.log(`  admin: http://${displayHost}:${o.port}/admin`);
+  if (o.fromEnv) {
+    // D2 — the operator already holds the token; never print it or a
+    // granting URL to logs.
+    console.log('  web token: from ETHOS_WEB_TOKEN');
+  } else if (o.hasWebDist) {
+    console.log(`  open: http://${displayHost}:${o.port}/auth/exchange?t=${o.token}`);
+  } else {
+    console.log(`  auth token: ${o.token}`);
+    console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
+    console.log(`    then visit http://localhost:5173/auth/exchange?t=${o.token}`);
+  }
+}

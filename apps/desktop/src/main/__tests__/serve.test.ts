@@ -373,3 +373,20 @@ describe('shared config reads', () => {
     expect((await readSharedLearningReplaySettings(storage, secrets)).maxCases).toBe(3);
   });
 });
+
+// Share links (plan share-links §3, processes without a share store). The desktop keeps one
+// createWebApi for the process; without `shareLinks` /share/* falls through to the SPA and a
+// session delete revokes nothing. Opened through @ethosagent/wiring (layer law), bound to the
+// real port after listen, released by shutdownDesktopRuntime (runtime-shutdown.test.ts).
+// Asserted against source, like the blocks above. The web-api half is pinned by
+// apps/web-api/src/__tests__/routes/share-onboarding.test.ts.
+describe('the desktop backend passes a share-links store to createWebApi', () => {
+  it('opens the store via wiring, hands it over, updates the port and registers its close', async () => {
+    const src = await readFile(join(import.meta.dirname, '..', 'serve.ts'), 'utf8');
+    expect(src).toContain('new SqliteShareLinkStore(shareLinksDbPath(dataDir))');
+    expect(src).toMatch(/^\s*shareLinks: shareHost,$/m);
+    expect(src).toContain('shareHost.bind.port = actual;');
+    expect(src).toContain('rt.shareLinks = shareStore;');
+    expect(src).not.toContain('@ethosagent/share-links');
+  });
+});

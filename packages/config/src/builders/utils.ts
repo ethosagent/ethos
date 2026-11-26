@@ -1,3 +1,5 @@
+import { parseConfigScalar } from '../scalar';
+
 /** An integer inside [min, max], or `undefined` — never a clamped near-miss. */
 export function parseBoundedInt(v: string, min: number, max: number): number | undefined {
   const n = Number(v);
@@ -44,4 +46,15 @@ export function quotedList(values: readonly string[]): string {
   const quoted = values.map((v) => `'${v}'`);
   const last = quoted[quoted.length - 1] ?? '';
   return quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} or ${last}` : last;
+}
+
+/**
+ * If `line` matches `pattern` (group 1 = field, group 2 = raw value), store the parsed scalar in
+ * `kv[field]` and return true; otherwise return false and leave `kv` alone.
+ */
+export function takeKvLine(line: string, pattern: RegExp, kv: Record<string, string>): boolean {
+  const m = line.match(pattern);
+  if (!m) return false;
+  kv[m[1]] = parseConfigScalar(m[2]);
+  return true;
 }

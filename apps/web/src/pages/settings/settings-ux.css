@@ -112,3 +112,9 @@
 .settings-resolved-note {
   color: var(--ethos-text-tertiary);
 }
+
+/* --- Revoked API-key rows (panes/security.tsx ApiKeysSection) ------------ */
+
+.api-key-revoked {
+  opacity: 0.5;
+}

@@ -71,6 +71,7 @@ describe('styles.css — tokens only (W5)', () => {
 const TOKEN_ONLY_STYLESHEETS = [
   'pages/settings/settings-ux.css',
   'components/ui/state-blocks.css',
+  'features/share/share.css',
 ] as const;
 
 describe.each(TOKEN_ONLY_STYLESHEETS)('%s — tokens only, no allowlist', (relPath) => {

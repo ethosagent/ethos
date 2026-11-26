@@ -57,6 +57,7 @@ import { personalitiesMcpExportRouter } from './personalities-mcp-export';
 import { platformsRouter } from './platforms';
 import { pluginsRouter } from './plugins';
 import { recipesRouter } from './recipes';
+import { sharesRouter } from './shares';
 import { skillsRouter } from './skills';
 import { slashCommandsRouter } from './slash-commands';
 import { tasksRouter } from './tasks';
@@ -119,6 +120,7 @@ export const apiRouter = {
   teams: teamsRouter,
   tasks: tasksRouter,
   apiKeys: apiKeysRouter,
+  shares: sharesRouter,
   meta: metaRouter,
   models: modelsRouter,
   modelRegistry: modelRegistryRouter,

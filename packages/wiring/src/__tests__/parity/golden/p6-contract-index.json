@@ -363,6 +363,12 @@
     "sessions.unpin",
     "sessions.update"
   ],
+  "shares": [
+    "shares.create",
+    "shares.list",
+    "shares.preview",
+    "shares.revoke"
+  ],
   "skills": [
     "skills.create",
     "skills.delete",

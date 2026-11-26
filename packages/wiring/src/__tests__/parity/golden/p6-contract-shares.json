@@ -1,0 +1,581 @@
+{
+  "shares.create": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "expiresIn": {
+          "enum": [
+            "1h",
+            "1d",
+            "7d",
+            "30d"
+          ],
+          "type": "string"
+        },
+        "includeToolNames": {
+          "type": "boolean"
+        },
+        "pii": {
+          "type": "boolean"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "includeToolNames",
+        "pii",
+        "sessionId",
+        "expiresIn"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expiresAt": {
+              "type": "string"
+            },
+            "loopback": {
+              "type": "boolean"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "url",
+            "prefix",
+            "expiresAt",
+            "loopback"
+          ],
+          "type": "object"
+        },
+        {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "disabled",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "not_found",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "shared_session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "personalityId": {
+                  "type": "string"
+                },
+                "reason": {
+                  "const": "excluded_personality",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason",
+                "personalityId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "limitBytes": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "too_large",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason",
+                "limitBytes"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "empty",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      ]
+    },
+    "route": {}
+  },
+  "shares.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "activeOnly": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "links": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "createdAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "lastViewedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "revokedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "viewCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "sessionId",
+              "title",
+              "createdAt",
+              "expiresAt",
+              "viewCount",
+              "lastViewedAt",
+              "revokedAt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "links"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "shares.preview": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "includeToolNames": {
+          "type": "boolean"
+        },
+        "pii": {
+          "type": "boolean"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "includeToolNames",
+        "pii",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "snapshot": {
+              "additionalProperties": false,
+              "properties": {
+                "createdAt": {
+                  "type": "string"
+                },
+                "personalityId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "turns": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "role": {
+                        "enum": [
+                          "user",
+                          "assistant"
+                        ],
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "tools": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "isError": {
+                              "type": "boolean"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "isError"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "v": {
+                  "const": 1,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "v",
+                "title",
+                "personalityId",
+                "createdAt",
+                "turns"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "ok",
+            "snapshot"
+          ],
+          "type": "object"
+        },
+        {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "disabled",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "not_found",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "shared_session",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "personalityId": {
+                  "type": "string"
+                },
+                "reason": {
+                  "const": "excluded_personality",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason",
+                "personalityId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "limitBytes": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "too_large",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason",
+                "limitBytes"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "reason": {
+                  "const": "empty",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      ]
+    },
+    "route": {}
+  },
+  "shares.revoke": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "reason": {
+              "enum": [
+                "not_found",
+                "ambiguous_prefix",
+                "prefix_too_short"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  }
+}

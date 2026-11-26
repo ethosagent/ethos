@@ -3,7 +3,7 @@ title: "config.yaml: logs, backup and trust keys"
 description: "config.yaml log rotation, backup and trust keys."
 kind: reference
 audience: user
-updated: 2026-11-24
+updated: 2026-11-26
 ---
 
 ## Synopsis {#synopsis}
@@ -130,4 +130,22 @@ When `true`, a process that runs the web API (`ethos boot`, `ethos serve`) mount
 
 ```yaml
 nodes.enabled: true
+```
+
+## shareLinks {#share-links}
+
+Type: object · Default: absent (off)
+
+Operator switch and exclusion list for [shared session links](../../how-to/share-a-session.md). Read in [`packages/config/src/builders/share-links.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/builders/share-links.ts); pinned by `packages/config/src/__tests__/config-share-links.test.ts`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `shareLinks.enabled` | boolean | `false` | Only a literal `true` or `false` is read. Any other value is dropped with a warning and the feature stays off. |
+| `shareLinks.excludePersonalities` | comma list of personality ids | empty | Sessions of a listed personality cannot be shared. An id that is not a valid personality id is dropped with a warning; the rest are kept. |
+
+Both keys are read from `config.yaml` on every share request and every `/share/<token>` page view, so turning `shareLinks.enabled` off makes every existing link answer 404 at once, and turning it back on restores links that have not expired (pinned by 'live switch' in `apps/web-api/src/__tests__/routes/share-route.test.ts`). When absent or `false`, creating a link is refused with a "share links are off" error from the web UI and the CLI.
+
+```yaml
+shareLinks.enabled: true
+shareLinks.excludePersonalities: ops, legal
 ```

@@ -263,6 +263,15 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
       'Publications approved to go out from THIS machine, as THIS bot. Restoring approved rows ' +
       'elsewhere posts old messages to real people (same exclusion as delivery-ledger).',
   },
+  {
+    source: 'extensions/share-links/src/index.ts',
+    sites: 1,
+    database: 'share-links.db',
+    scope: null,
+    reason:
+      'Public read-only transcript links served by THIS deployment. Restoring them on another ' +
+      'host would revive revoked or expired URLs (plan share-links D10, always-excluded).',
+  },
 ];
 
 /**
@@ -390,6 +399,8 @@ const ALWAYS_EXCLUDED: readonly string[] = [
   '.pre-restore',
   '.pre-repair',
   'backups',
+  // share-links D10: a restore must not revive public URLs. Pinned by scopes.test.ts.
+  'share-links.db',
 ];
 
 /**

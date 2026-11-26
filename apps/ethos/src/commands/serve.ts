@@ -103,6 +103,7 @@ import { scrubExpiredIncognito } from '../lib/incognito-retention';
 import { bumpKanbanHeartbeats, KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
 import { createLateBoundGoals } from '../lib/late-goals';
 import { adoptBootedLoop } from '../lib/onboarding-boot';
+import { openShareLinks } from '../lib/open-share-links';
 import { createOutboxProposalSide } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { callCaptureWake, runWatcherWakeTurn } from '../lib/watcher-wake';
@@ -151,6 +152,7 @@ import {
   formatNonLoopbackNotice,
   isLoopbackHost,
   listenWithFallback,
+  printOnboardingAccess,
 } from './serve-listen';
 import {
   buildServeDangerPredicate,
@@ -334,8 +336,13 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
     void attachmentCache.pruneOlderThan(24 * 60 * 60 * 1000).catch(() => {});
 
+    // The onboarding web API is kept for the whole process (even after `adoptBootedLoop`), so
+    // it gets a share store like the normal path: `/share/*` mounts (404 while the feature is
+    // off) and a session delete revokes its links. Pinned by web-api share-onboarding.test.ts.
+    const shareLinks = openShareLinks(dir, webHost, webPort);
     const created = createWebApi({
       dataDir: dir,
+      shareLinks: shareLinks.host,
       funnelTracker: getFunnelTracker(),
       attachmentCache,
       sessionStore: session,
@@ -389,20 +396,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       WEB_PORT_FALLBACK_ATTEMPTS,
       webHost,
     );
-    const displayHost = webHost === '0.0.0.0' ? 'localhost' : webHost;
-    console.log(`ethos web UI (onboarding mode) listening on http://${displayHost}:${port}`);
-    console.log(`  admin: http://${displayHost}:${port}/admin`);
-    if (tokens.fromEnv) {
-      // D2 — the operator already holds the token; never print it or a
-      // granting URL to logs.
-      console.log('  web token: from ETHOS_WEB_TOKEN');
-    } else if (webDist) {
-      console.log(`  open: http://${displayHost}:${port}/auth/exchange?t=${token}`);
-    } else {
-      console.log(`  auth token: ${token}`);
-      console.log('  no SPA build found — run `pnpm --filter @ethosagent/web dev` for HMR,');
-      console.log(`    then visit http://localhost:5173/auth/exchange?t=${token}`);
-    }
+    shareLinks.host.bind.port = port;
+    printOnboardingAccess({ webHost, port, token, fromEnv: tokens.fromEnv, hasWebDist: !!webDist });
     // Reported against the bound port, not the requested one — listenWithFallback
     // may have walked forward on EADDRINUSE. Onboarding runs before a config
     // exists, so no `webBaseUrl` to pass; ETHOS_TRUST_PROXY still suppresses.
@@ -451,6 +446,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
                 session.close();
               },
             ],
+            ['share-links.db', async () => shareLinks.close()],
             ['observability.db', async () => closeObservabilityStore()],
           ],
           (message) => console.warn(message),
@@ -1172,6 +1168,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
   // and `ethos serve` see the same rows.
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  const shareLinks = openShareLinks(dir, webHost, webPort);
   // Idempotency cache for `POST /v1/chat/completions` retries — same db,
   // same rationale.
   const idempotencyStore = new IdempotencyStore(join(dir, 'sessions.db'));
@@ -1410,6 +1407,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     identityMap,
     attachmentCache,
     apiKeys,
+    shareLinks: shareLinks.host,
     idempotencyStore,
     createTeamLoop,
     // With `--team`, `loop` IS that team's loop already; keep that behaviour
@@ -1469,6 +1467,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   );
   // Talk-mode's persistent binary lane (`GET /voice/ws`). Same server, same
   // auth cookie; unattached it simply 404s and the browser uses the batch RPCs.
+  shareLinks.host.bind.port = port;
   created.voiceSocket.attach(server);
   // The wake-satellite lane (`GET /satellite/ws`). Shares the upgrade router
   // with the voice lane above, so attach order does not matter and neither
@@ -1614,6 +1613,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
               contextLog.close();
               session.close();
               apiKeys.close();
+              shareLinks.close();
               idempotencyStore.close();
             },
           ],
@@ -2307,6 +2307,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     ...(pluginLoader ? { pluginLoader } : {}),
     ...(notificationRouter ? { notificationRouter } : {}),
     apiKeys,
+    shareLinks: opts.shareLinks,
     ...(config.nodes?.enabled === true ? { nodes: { hub: processNodeHub() } } : {}),
     idempotencyStore,
     // The screencast takeover lane's session registry (B3). `ethos serve` and

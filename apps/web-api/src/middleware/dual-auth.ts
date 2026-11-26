@@ -106,6 +106,15 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     pendingApprove: 'memory:write',
     pendingReject: 'memory:write',
   },
+  // plan share-links D12: a bearer key (or a prompt-injected agent holding one) must never
+  // publish a link. Every method is COOKIE_ONLY; `/rpc/shares/*` also mounts
+  // `cookieOnlyGuard` (routes/index.ts). Pinned by __tests__/middleware/apikeys-auth-bypass.test.ts.
+  shares: {
+    preview: COOKIE_ONLY,
+    create: COOKIE_ONLY,
+    list: COOKIE_ONLY,
+    revoke: COOKIE_ONLY,
+  },
   tools: {
     approve: 'tools:approve',
     deny: 'tools:approve',

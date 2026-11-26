@@ -1026,29 +1026,27 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       stateBacked: true,
       keyUnresolved: 'API-key store (rpc.apiKeys.list/create/revoke), not a config.yaml key.',
     },
+    ...(
+      [
+        ['name', 'Name', 'Field'],
+        ['scopes', 'Scopes', 'Field'],
+        ['origins', 'Allowed Origins', 'Form.List field'],
+      ] as const
+    ).map(([formName, label, kind]) => ({
+      key: null,
+      formName,
+      label: `New API key — ${label}`,
+      saves: 'self' as const,
+      keyUnresolved: `${kind} of the create-key modal form; writes to the API-key store, not config.yaml.`,
+    })),
+  ]),
+  ...group('security', 'shared-links', [
     {
       key: null,
-      formName: 'name',
-      label: 'New API key — Name',
+      label: 'Shared links table',
       saves: 'self',
-      keyUnresolved:
-        'Field of the create-key modal form; writes to the API-key store, not config.yaml.',
-    },
-    {
-      key: null,
-      formName: 'scopes',
-      label: 'New API key — Scopes',
-      saves: 'self',
-      keyUnresolved:
-        'Field of the create-key modal form; writes to the API-key store, not config.yaml.',
-    },
-    {
-      key: null,
-      formName: 'origins',
-      label: 'New API key — Allowed Origins',
-      saves: 'self',
-      keyUnresolved:
-        'Form.List field of the create-key modal form; writes to the API-key store, not config.yaml.',
+      stateBacked: true,
+      keyUnresolved: 'Share-link store (rpc.shares.list/revoke), not a config.yaml key.',
     },
   ]),
   ...group('security', 'a2a', [

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { ApiKeyStaticScopeSchema } from '@ethosagent/web-contracts';
+import { SqliteShareLinkStore } from '@ethosagent/wiring';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createWebApi } from '../../index';
 import { COOKIE_ONLY, SCOPE_MAP } from '../../middleware/dual-auth';
@@ -68,6 +69,12 @@ const PUBLIC_ROUTES: Record<string, string> = {
     '(claimed + bad credentials is a uniform 401). Rate-limited + Origin-checked.',
   'GET /auth/callback':
     'OAuth redirect target; only completes a flow the coordinator started, by its state',
+  'GET /share/:token':
+    'share-links D1/D3 — the public read-only page; the 256-bit token in the path is the ' +
+    'credential, every miss is one uniform 404 (share-route.test.ts), rate limited',
+  'POST /share/*':
+    'share-links — the catch-all of the same public module (ALL is probed as POST): every ' +
+    'other method or path under /share is the uniform 404',
   'GET /oauth/callback':
     'MCP OAuth redirect target; only completes a flow whose state matches the ' +
     'ethos_mcp_pending cookie (McpService.complete)',
@@ -76,11 +83,14 @@ const PUBLIC_ROUTES: Record<string, string> = {
 describe('mount-posture drift — every non-public route refuses an unauthenticated request', () => {
   let dir: string;
   let store: SQLiteSessionStore;
+  let shareStore: SqliteShareLinkStore;
   let app: ReturnType<typeof createWebApi>['app'];
 
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'ethos-mount-posture-'));
     store = new SQLiteSessionStore(':memory:');
+    // A share host, so `/share/*` is mounted and enumerated by the gate below.
+    shareStore = new SqliteShareLinkStore(':memory:');
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
@@ -88,11 +98,13 @@ describe('mount-posture drift — every non-public route refuses an unauthentica
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'm', provider: 'p' },
+      shareLinks: { store: shareStore, bind: { host: '127.0.0.1', port: 3000 } },
     }).app;
   });
 
   afterAll(async () => {
     store.close();
+    shareStore.close();
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -112,6 +124,13 @@ describe('mount-posture drift — every non-public route refuses an unauthentica
     }
     return out;
   }
+
+  it('enumerates the public /share mount', () => {
+    const paths = mounted().map((r) => `${r.method} ${r.path}`);
+    expect(paths.filter((p) => p.includes('/share'))).toEqual(
+      expect.arrayContaining(Object.keys(PUBLIC_ROUTES).filter((k) => k.includes('/share/'))),
+    );
+  });
 
   it('enumerates /auth/codex', () => {
     const paths = mounted().map((r) => `${r.method} ${r.path}`);

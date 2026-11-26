@@ -34,6 +34,7 @@
 //   extensions/inbound-dedup/     per-session `seq` with MAX()+1 inside the insert
 //   extensions/inbound-spool/
 //   extensions/outbox/
+//   extensions/share-links/
 //   extensions/channel-transcript-sqlite/
 //                                 — both need a real transaction, not file IO.
 //                                 notify-queue's read-and-consume is the same shape:
@@ -55,7 +56,12 @@
 //                                 inbound-spool's replay claim is the same shape
 //                                 as delivery-ledger's: a conditional UPDATE inside
 //                                 a transaction whose affected-row count decides
-//                                 which claimant runs the owed turn.)
+//                                 which claimant runs the owed turn.
+//                                 share-links mkdirSyncs the same way, and its
+//                                 revoke / revokeForSession / purgeExpired null the
+//                                 snapshot and append the audit event in one
+//                                 transaction, which no Storage interface can
+//                                 express.)
 //
 //   packages/a2a/                Same rationale as the SQLite stores above:
 //   src/sqlite-task-store.ts     SQLiteA2aTaskStore (T1.6) opens a raw path via
@@ -307,6 +313,7 @@ const ALLOWED_PREFIXES = [
   'extensions/call-log/',
   'extensions/notify-queue/',
   'extensions/outbox/',
+  'extensions/share-links/',
   'extensions/inbound-dedup/',
   'extensions/inbound-spool/',
   'extensions/channel-transcript-sqlite/',

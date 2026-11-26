@@ -13,6 +13,13 @@ interface SessionContextMenuProps {
   pinned: boolean;
   onClose: () => void;
   onRename: () => void;
+  onShare: () => void;
+  /**
+   * Whether Share… is offered. Decided by the always-mounted `ScopeNav`, not here:
+   * this menu mounts on right-click, so asking `shares.list` here would make the
+   * item pop in under the cursor.
+   */
+  shareEnabled: boolean;
 }
 
 export function SessionContextMenu({
@@ -21,6 +28,8 @@ export function SessionContextMenu({
   pinned,
   onClose,
   onRename,
+  onShare,
+  shareEnabled,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const deleteMut = useSessionDelete();
@@ -68,6 +77,11 @@ export function SessionContextMenu({
     onClose();
   };
 
+  const handleShare = () => {
+    onShare();
+    onClose();
+  };
+
   const handleRename = () => {
     onRename();
     onClose();
@@ -98,6 +112,11 @@ export function SessionContextMenu({
       <button type="button" className="session-context-menu-item" onClick={handleExport}>
         ↓ Export
       </button>
+      {shareEnabled ? (
+        <button type="button" className="session-context-menu-item" onClick={handleShare}>
+          ⇪ Share…
+        </button>
+      ) : null}
       <button type="button" className="session-context-menu-item" onClick={handleRename}>
         ✎ Rename
       </button>

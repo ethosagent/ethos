@@ -129,6 +129,15 @@ describe('tools-file — personality definition files are operator-owned', () =>
     expect(isPersonalityDefinitionPath(join(dataDir, 'toolset.yaml'))).toBe(false);
   });
 
+  // plan share-links §4: an agent must not mint, revive or read a public link by
+  // writing share-links.db. Enforcer: BLOCKED_WRITE_PATHS (index.ts) and the
+  // manifest's STATE_DIR_DENY_ENTRIES (packages/storage-fs/src/sensitive-paths.ts).
+  it('write-blocks share-links.db and its WAL sidecars', () => {
+    for (const name of ['share-links.db', 'share-links.db-wal', 'share-links.db-shm']) {
+      expect(isWriteBlocked(join(homedir(), '.ethos', name))).toBe(true);
+    }
+  });
+
   it.skipIf(!CASE_INSENSITIVE_FS)('the backstops fold case (UBP-008)', () => {
     vi.stubEnv('ETHOS_STATE_DIR', dataDir);
     expect(isPersonalityDefinitionPath(join(own, 'TOOLSET.yaml'))).toBe(true);

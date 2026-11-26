@@ -5,6 +5,7 @@ import { implement } from '@orpc/server';
 import type { ChatService } from '../features/chat/service';
 import type { DebugService } from '../features/debug/service';
 import type { SessionsService } from '../features/sessions/service';
+import type { ShareService } from '../features/share/service';
 import type { AmendmentsService } from '../services/amendments.service';
 import type { ApiKeysService } from '../services/api-keys.service';
 import type { ApprovalsService } from '../services/approvals.service';
@@ -87,6 +88,8 @@ export interface RpcContext {
   teams: import('../services/teams.service').TeamsService;
   tasks: TasksService;
   apiKeys: ApiKeysService;
+  /** Cookie-only share-link management (plan share-links D12). */
+  shares: ShareService;
   digest: DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: DocumentsService;

@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model registry, 
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-11-25
+updated: 2026-11-26
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -84,6 +84,7 @@ This is what `ethos setup` writes for a default Anthropic install. The key value
 | <a id="backup"></a>[backup.*](config-yaml/operations.md#backup) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
 | <a id="security-trusted-github-orgs"></a>[security.trusted_github_orgs](config-yaml/operations.md#security-trusted-github-orgs) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
 | <a id="goals-allow-check-commands"></a>[goals.allowCheckCommands](config-yaml/operations.md#goals-allow-check-commands) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
+| <a id="share-links"></a>[shareLinks.*](config-yaml/operations.md#share-links) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
 | <a id="learning-replay"></a>[learningReplay.*](config-yaml/learning.md#learning-replay) | [config.yaml: learning and evolver keys](config-yaml/learning.md) |
 | <a id="nightly-pass"></a>[nightlyPass.*](config-yaml/learning.md#nightly-pass) | [config.yaml: learning and evolver keys](config-yaml/learning.md) |
 | <a id="evolver-cron-enabled"></a>[evolver.cron_enabled](config-yaml/learning.md#evolver-cron-enabled) | [config.yaml: learning and evolver keys](config-yaml/learning.md) |

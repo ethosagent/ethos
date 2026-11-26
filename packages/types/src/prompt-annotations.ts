@@ -40,3 +40,49 @@ export function editablePromptText(
   }
   return { text: rest.trim(), hadAttachments };
 }
+
+// Everything context assembly (packages/core/src/agent-loop/stages/context-assembly.ts)
+// puts BEFORE the typed text of a stored user row, one paragraph each:
+//  - inline file blocks (core attachment-text-resolver.ts `formatInlinedAttachment`,
+//    and the extractor path in context-assembly.ts); greedy up to the last end
+//    marker so a document body that itself contains one cannot end the strip early;
+//  - the inline-budget overflow line;
+//  - attachment error lines (unsupported type, undecodable, extraction failure or
+//    size, native-viewing failure or cap), whose shapes are literals in
+//    context-assembly.ts, attachment-classifier.ts `unsupportedTypeError` and
+//    attachment-blocks.ts `encodeNativeBlocks`.
+// Drift is pinned by packages/core/src/__tests__/user-prompt-body.test.ts, which
+// builds these strings with the real producers.
+const PARA_END = '(?:\\n\\n|$)';
+const FILE_BLOCK = /^=== file: [^\n]*===\n[\s\S]*\n=== end file ===(?:\n\n|$)/;
+const LEADING_PARAGRAPHS: readonly RegExp[] = [
+  FILE_BLOCK,
+  new RegExp(`^\\[\\d+ more file\\(s\\) omitted — inline budget exceeded\\]${PARA_END}`),
+  new RegExp(`^Failed to read "[^\\n]*": file could not be decoded as text${PARA_END}`),
+  new RegExp(`^Failed to extract text from "[^\\n]*"${PARA_END}`),
+  new RegExp(`^"[^\\n]*" is too large for extraction \\([^\\n]*\\)${PARA_END}`),
+  new RegExp(`^[^\\n]* files aren't supported yet -- supported: [^\\n]*${PARA_END}`),
+  new RegExp(`^"[^\\n]*" is [\\d.]+ MB, over the \\d+ MB limit for inline viewing${PARA_END}`),
+  new RegExp(`^"[^\\n]*" could not be read for inline viewing${PARA_END}`),
+  new RegExp(
+    `^\\d+ images/documents attached; at most \\d+ can be viewed in one turn\\. [^\\n]*${PARA_END}`,
+  ),
+];
+
+/**
+ * Only what the user typed: `editablePromptText` plus the inline attachment
+ * text, attachment error lines and overflow line that context assembly puts
+ * before it. For any consumer that must not carry uploaded document text
+ * (the share-link snapshot, plan/phases/share-links.md D5). Text with no
+ * leading annotation comes back unchanged apart from trimming. Pinned by
+ * packages/types/src/__tests__/prompt-annotations.test.ts.
+ */
+export function userPromptBody(content: string): string {
+  let rest = editablePromptText(content).text;
+  for (;;) {
+    const hit = LEADING_PARAGRAPHS.map((re) => re.exec(rest)).find((m) => m !== null);
+    if (!hit) return rest;
+    // Annotation blocks can follow the inline blocks' siblings in any order; re-strip them.
+    rest = editablePromptText(rest.slice(hit[0].length)).text;
+  }
+}

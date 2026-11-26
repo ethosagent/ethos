@@ -267,6 +267,7 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
       'security/approval-leases',
       'security/logins',
       'security/named-secrets',
+      'security/shared-links',
       'security/web-search-defaults',
       'voice/wake-routes',
     ]);
@@ -295,6 +296,7 @@ describe('every self-saving section renders SelfSaveMarker', () => {
       'logins',
       'web-search-defaults',
       'api-keys',
+      'shared-links',
       'a2a',
     ])('%s', (id) => {
       expect(sectionBlock(html, id)).toContain(MARKER_TEXT);

@@ -59,6 +59,8 @@ export interface BuildServeWebApiOptions {
   identityMap: IdentityMap;
   attachmentCache: FsAttachmentCache;
   apiKeys: SqliteApiKeyStore;
+  /** Share-links store + bind address (`lib/open-share-links.ts`). */
+  shareLinks: import('../lib/open-share-links').ServeShareLinks['host'];
   idempotencyStore: IdempotencyStore;
   /** The concrete registry — the character sheet's `mcpExport` seam resolves
    *  `mcp_export` against it, which needs `toolNamesForPersonality`. */

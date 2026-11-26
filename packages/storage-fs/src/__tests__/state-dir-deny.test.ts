@@ -34,6 +34,10 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'observability.db',
     'observability.db-wal',
     'memory.db',
+    // plan share-links §4: an agent must not mint or read public links.
+    'share-links.db',
+    'share-links.db-wal',
+    'share-links.db-shm',
     // plan personality-memory-boundary G2-pre B — read AND write.
     'learning',
     // plan channel-prompts D15 — operator-written room prompts, write-denied.

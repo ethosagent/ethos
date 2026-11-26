@@ -51,6 +51,7 @@ export type {
   TelegramBotConfig,
   WhatsAppConfig,
 } from './builders/platforms';
+export { type ResolvedShareLinks, resolveShareLinks } from './builders/share-links';
 export {
   PLUGIN_ISOLATION_DEFAULTS,
   type PluginIsolationConfig,

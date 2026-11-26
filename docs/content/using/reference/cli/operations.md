@@ -137,7 +137,9 @@ Synopsis: `ethos data [stats | sessions | traces]`
 
 List, search and manage stored [sessions](../../../getting-started/glossary.md#session), and repair a damaged `sessions.db`.
 
-Synopsis: `ethos sessions [list | show | rename | delete | search | repair]`
+Synopsis: `ethos sessions [list | show | rename | delete | search | share | repair]`
+
+`ethos sessions share <id> [--expires 1h|1d|7d|30d] [--tools] [--no-pii] [--json]` publishes a redacted, read-only, expiring snapshot of one session and prints its URL once (default expiry `7d`). It needs `shareLinks.enabled: true` in `config.yaml`, and refuses shared-room, incognito and excluded-personality sessions. The URL is built from `webBaseUrl`, else the host and port `ethos serve` binds; a loopback URL opens only on this machine and the command says so. `ethos sessions share list [--json]` shows active links (never tokens) and `ethos sessions share revoke <prefix>` revokes one. `ethos sessions delete` revokes the session's links. Source: [`apps/ethos/src/commands/sessions-share.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/sessions-share.ts).
 
 `ethos sessions repair [--deep] [--apply] [--yes] [--json]` checks `~/.ethos/sessions.db` and, with `--apply`, repairs a damaged search index or table index. Walkthrough: [Repair a damaged sessions database](../../how-to/repair-a-damaged-sessions-database.md).
 

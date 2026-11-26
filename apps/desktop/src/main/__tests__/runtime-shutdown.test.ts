@@ -38,6 +38,7 @@ function recordingRuntime(order: string[]): DesktopRuntime {
     },
     webApi: { dispose: step('web api') },
     loop: { dispose: step('loop') },
+    shareLinks: { close: () => void order.push('share-links.db') },
     sessionStore: { close: () => void order.push('sessions.db') },
   };
 }
@@ -58,6 +59,7 @@ describe('shutdownDesktopRuntime (F06)', () => {
       'http',
       'web api',
       'loop',
+      'share-links.db',
       'sessions.db',
     ]);
   });

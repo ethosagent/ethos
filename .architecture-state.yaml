@@ -178,7 +178,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 152 packages: 11 at Tier 0, 29 at Tier 1, 112 at Tier 2.
+# apps/ carries a tier. 153 packages: 11 at Tier 0, 30 at Tier 1, 112 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -460,6 +460,17 @@ tiers:
     package: "@ethosagent/session-sqlite"
     tier: 1
     assigned: 2026-08-12
+
+  # Share links hold operator transcripts, redacted at creation, that are served
+  # publicly at an unauthenticated /share/<token> URL. Tier 1 because the store
+  # sits on a trust boundary like session-sqlite and delivery-ledger: its
+  # revoke and expiry semantics are what make a link stop working. It is not
+  # the kernel, though: the redaction itself is safety-redact's (Tier 0), and
+  # this store only keeps the already-redacted snapshot.
+  extensions/share-links:
+    package: "@ethosagent/share-links"
+    tier: 1
+    assigned: 2026-11-26
 
   extensions/skill-evolver:
     package: "@ethosagent/skill-evolver"

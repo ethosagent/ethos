@@ -25,6 +25,7 @@ import {
   buildPauseClockCorrection,
   buildPauseLifecycleHttp,
   buildRestartLoopGuard,
+  IDLE_WATCHER_LINE,
 } from './builders/gateway';
 import { buildLearningReplayConfig } from './builders/learning';
 import {
@@ -42,6 +43,7 @@ import {
   buildWhatsApps,
 } from './builders/platforms';
 import { buildPersonalitiesConfig, buildRetentionConfig } from './builders/retention';
+import { buildShareLinks, SHARE_LINKS_LINE } from './builders/share-links';
 import {
   buildBackupConfig,
   buildChannelDigestConfig,
@@ -56,7 +58,7 @@ import {
   buildQuickCommands,
   parseToolLoading,
 } from './builders/tools';
-import { parseBoundedFloat, parseBoundedInt, splitList } from './builders/utils';
+import { parseBoundedFloat, parseBoundedInt, splitList, takeKvLine } from './builders/utils';
 import { buildWebhooks } from './builders/webhooks';
 import type { EthosConfig } from './config-types';
 import { buildDecisionsConfig, DECISIONS_LINE_RE } from './decisions';
@@ -216,6 +218,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   const memoryConsolidationKv: Record<string, string> = keyUse.track('memoryConsolidation.', {});
   // Scale-to-zero idle watcher — idleWatcher.<field>: <value>.
   const idleWatcherKv: Record<string, string> = keyUse.track('idleWatcher.', {});
+  const shareLinksKv: Record<string, string> = keyUse.track('shareLinks.', {});
   const nodesKv: Record<string, string> = keyUse.track('nodes.', {}); // laptop tool nodes (D18)
   // Resume-side clock correction — pauseClockCorrection.<field>: <value>.
   const pauseClockCorrectionKv: Record<string, string> = keyUse.track('pauseClockCorrection.', {});
@@ -1044,18 +1047,10 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // idleWatcher.<field>: <value>  (scale-to-zero watcher; default OFF).
-    const iw = line.match(
-      /^idleWatcher\.(enabled|idleThresholdMs|startupCooldownMs|checkIntervalMs|wakePathConfirmed):\s*(.+)$/,
-    );
-    if (iw) {
-      idleWatcherKv[iw[1]] = parseConfigScalar(iw[2]);
-      continue;
-    }
-    const nd = line.match(/^nodes\.(enabled):\s*(.+)$/); // nodes.enabled (default OFF)
-    if (nd) {
-      nodesKv[nd[1]] = parseConfigScalar(nd[2]);
-      continue;
-    }
+    if (takeKvLine(line, IDLE_WATCHER_LINE, idleWatcherKv)) continue;
+    // shareLinks.<field>: <value>  (global share-link switch; default OFF).
+    if (takeKvLine(line, SHARE_LINKS_LINE, shareLinksKv)) continue;
+    if (takeKvLine(line, /^nodes\.(enabled):\s*(.+)$/, nodesKv)) continue; // nodes.enabled (default OFF)
     // pauseClockCorrection.<field>: <value>  (resume clock correction; default OFF).
     const pcc = line.match(/^pauseClockCorrection\.(enabled|thresholdMs):\s*(.+)$/);
     if (pcc) {
@@ -1333,6 +1328,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     : undefined;
   const memoryConsolidation = buildMemoryConsolidation(memoryConsolidationKv);
   const idleWatcher = buildIdleWatcher(idleWatcherKv);
+  const shareLinksWarnings: string[] = [];
+  const shareLinks = buildShareLinks(shareLinksKv, shareLinksWarnings);
   const nodes = buildNodes(nodesKv);
   const pauseClockCorrection = buildPauseClockCorrection(pauseClockCorrectionKv);
   // ETHOS_ORCHESTRATOR_URL / ETHOS_ORCHESTRATOR_TOKEN win over the yaml value,
@@ -1853,6 +1850,7 @@ export function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     idleWatcher,
+    shareLinks,
     nodes,
     pauseClockCorrection,
     pauseLifecycle: pauseLifecycleHttp ? { http: pauseLifecycleHttp } : undefined,
@@ -1872,6 +1870,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...executionResult.warnings,
     ...auxTimeoutWarnings,
     ...retentionWarnings,
+    ...shareLinksWarnings,
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,

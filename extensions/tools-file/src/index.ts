@@ -19,15 +19,15 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Ethos operational-state files the write tools must never clobber. Distinct
-// from the credential/system floor below: these are app state, not secrets —
-// write-blocked here but still readable.
+// Ethos app-state files the write tools must never clobber (write-blocked, still
+// readable). share-links.db sidecars: sensitiveDenyPaths() below (plan share-links §4).
 const BLOCKED_WRITE_PATHS = [
   join(homedir(), '.ethos', 'config.yaml'),
   join(homedir(), '.ethos', 'web-token'),
   join(homedir(), '.ethos', 'web-admin.json'),
   join(homedir(), '.ethos', 'web-sessions.json'),
   join(homedir(), '.ethos', 'pairing.db'),
+  join(homedir(), '.ethos', 'share-links.db'),
 ];
 const BLOCKED_WRITE_PREFIXES = [
   join(homedir(), '.ethos', 'sessions'),

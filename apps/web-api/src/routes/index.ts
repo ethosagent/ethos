@@ -130,6 +130,7 @@ export interface ServiceContainer {
   completions: import('../features/completions/service').CompletionsService;
   debug: import('../features/debug/service').DebugService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
+  shares: import('../features/share/service').ShareService;
   digest: import('../services/digest.service').DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: import('../services/documents.service').DocumentsService;
@@ -423,6 +424,8 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     app.use('/sse/*', dual);
     // apiKeys namespace rejects bearer auth — cookie only.
     app.use('/rpc/apiKeys/*', cookieOnlyGuard());
+    // Same for share links (plan share-links D12): a bearer key must not mint a public URL.
+    app.use('/rpc/shares/*', cookieOnlyGuard());
   } else {
     app.use('/rpc/*', authMiddleware({ verify: opts.verifyCookie }));
     app.use('/sse/*', authMiddleware({ verify: opts.verifyCookie }));

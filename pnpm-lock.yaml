@@ -2005,6 +2005,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
 
+  extensions/share-links:
+    dependencies:
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
+
   extensions/skill-evolver:
     dependencies:
       '@ethosagent/batch-runner':
@@ -3050,6 +3056,9 @@ importers:
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
+      '@ethosagent/share-links':
+        specifier: workspace:*
+        version: link:../../extensions/share-links
       '@ethosagent/skill-evolver':
         specifier: workspace:*
         version: link:../../extensions/skill-evolver

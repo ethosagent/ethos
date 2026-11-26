@@ -38,6 +38,7 @@
       "@ethosagent/job-store": ["./extensions/job-store/src"],
       "@ethosagent/job-runner": ["./extensions/job-runner/src"],
       "@ethosagent/delivery-ledger": ["./extensions/delivery-ledger/src"],
+      "@ethosagent/share-links": ["./extensions/share-links/src"],
       "@ethosagent/inbound-dedup": ["./extensions/inbound-dedup/src"],
       "@ethosagent/inbound-spool": ["./extensions/inbound-spool/src"],
       "@ethosagent/channel-transcript-sqlite": ["./extensions/channel-transcript-sqlite/src"],
