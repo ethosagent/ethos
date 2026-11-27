@@ -34,7 +34,25 @@ export interface Constitution {
     requireSandbox?: boolean;
     forbidLocal?: boolean;
   };
+  initiatives?: {
+    enabled?: boolean; // default true; false overrides every personality
+    maxUsdPerDay?: number; // all personalities
+    maxUsdPerDayPerPersonality?: number;
+    selfStartPoolUsdPerDay?: number; // proposed default 0.50
+    maxSelfStarted?: number; // default 2
+    readableRoots?: string[]; // empty/absent = no source outside the personality's own reach
+  };
 }
+
+/** Every key allowed inside `Constitution['initiatives']`; the loader rejects any other. */
+export const CONSTITUTION_INITIATIVES_KEYS = [
+  'enabled',
+  'maxUsdPerDay',
+  'maxUsdPerDayPerPersonality',
+  'selfStartPoolUsdPerDay',
+  'maxSelfStarted',
+  'readableRoots',
+] as const satisfies readonly (keyof NonNullable<Constitution['initiatives']>)[];
 
 export const PERMISSIVE_DEFAULT_CONSTITUTION: Constitution = {};
 
