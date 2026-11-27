@@ -1048,6 +1048,11 @@ tiers:
     tier: 2
     assigned: 2026-08-14
 
+  extensions/world-sqlite:
+    package: "@ethosagent/world-sqlite"
+    tier: 2
+    assigned: 2026-11-27
+
   extensions/voice-session:
     package: "@ethosagent/voice-session"
     tier: 2
