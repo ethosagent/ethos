@@ -467,6 +467,7 @@ const sidebars: SidebarsConfig = {
             ),
             'building/explanation/personality-governance',
             'building/explanation/decision-provider-governance',
+            'building/explanation/world-graph-governance',
             'building/explanation/tool-shape',
             'building/explanation/injection-at-construction',
             splitDoc(

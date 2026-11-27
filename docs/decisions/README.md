@@ -16,3 +16,4 @@ Format per line: `NNNN — Title — status — one-line decision`.
 0008 — [Frozen-schema bump rules and forbidden fields](0008-frozen-schema-bump-rules.md) — Accepted — a bump moves the drift gate in the same commit; voice, emotion and display affordances never become schema fields.
 0009 — [An archcheck exception entry carries the §VIII fields in its reason](0009-archcheck-exception-field-mapping.md) — Accepted — five of the eight §VIII fields fold into the single archcheck `reason` string.
 0010 — [Two checkers enforce the constitution](0010-validator-operating-model.md) — Accepted — `architecture.config.ts` plus archcheck and `scripts/check-architecture.mjs` never restate each other.
+0012 — [The world graph is a new contract, and `worlds` joins the protected paths](0012-world-graph-contract.md) — Proposed — `WorldGraphProvider` (13 methods) joins the §VII roster; `worlds` joins the turn deny list and `worlds.yaml` the definition write floor.
