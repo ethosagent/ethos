@@ -391,6 +391,7 @@ The personality schema is the worked example. [Personality governance](docs/cont
 | AgentCard (A2A signed card) | Any two repository maintainers | Adding, removing, or renaming a top-level field on `AgentCard` (`packages/types/src/a2a.ts`) | Field-count + field-name test (`agent-card-field-count`) |
 | Pause lifecycle contract | Any two repository maintainers | Adding, removing, or renaming a method on `PauseLifecycle` | Method-count test (`pause-lifecycle-method-count`) |
 | Decision provider contract | Any two repository maintainers | Adding, removing, or renaming a method on `DecisionProvider` (`packages/types/src/decision.ts`) | Method-count test (`decision-provider-method-count`) |
+| World graph contract (proposed, O-8) | Any two repository maintainers | Adding, removing, or renaming a method on `WorldGraphProvider` (`packages/types/src/world-graph.ts`) | Method-count test (`world-graph-method-count`) |
 
 ### Bump obligations
 
@@ -659,6 +660,15 @@ frozen_schemas:
     drift_gate: method_count_test
     frozen_method_count: 4
     frozen_methods: [put, get, has, hash]
+
+  # Proposed (O-8): pending maintainer approval of
+  # docs/content/building/explanation/world-graph-governance.md. The gate is
+  # packages/types/src/__tests__/world-graph-method-count.test.ts.
+  world_graph:
+    owner_class: any_two_maintainers
+    drift_gate: method_count_test
+    frozen_method_count: 13
+    frozen_methods: [query, neighbours, history, changes, assert, close, retire, getSchema, applySchema, import, export, purge, capabilities]
 
   pause_lifecycle:
     owner_class: any_two_maintainers
