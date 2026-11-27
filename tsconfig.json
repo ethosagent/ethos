@@ -36,6 +36,7 @@
       "@ethosagent/goal-store": ["./extensions/goal-store/src"],
       "@ethosagent/goal-runner": ["./extensions/goal-runner/src"],
       "@ethosagent/initiative-store": ["./extensions/initiative-store/src"],
+      "@ethosagent/initiative-runner": ["./extensions/initiative-runner/src"],
       "@ethosagent/job-store": ["./extensions/job-store/src"],
       "@ethosagent/job-runner": ["./extensions/job-runner/src"],
       "@ethosagent/delivery-ledger": ["./extensions/delivery-ledger/src"],

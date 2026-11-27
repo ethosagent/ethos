@@ -1366,6 +1366,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sqlite
 
+  extensions/initiative-runner:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/initiative-store:
     dependencies:
       '@ethosagent/sqlite':
