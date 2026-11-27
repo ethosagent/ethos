@@ -689,6 +689,11 @@ tiers:
     tier: 2
     assigned: 2026-09-24
 
+  extensions/initiative-store:
+    package: "@ethosagent/initiative-store"
+    tier: 2
+    assigned: 2026-11-27
+
   extensions/job-runner:
     package: "@ethosagent/job-runner"
     tier: 2
