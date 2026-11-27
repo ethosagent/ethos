@@ -29,6 +29,16 @@ describe('isPersonalityDefinitionPath', () => {
     },
   );
 
+  it('initiatives/ is a definition entry', () => {
+    expect(isPersonalityDefinitionPath(`${HOME}/personalities/a/initiatives/x.yaml`, DIRS)).toBe(
+      true,
+    );
+    expect(isPersonalityDefinitionPath(`${HOME}/personalities/a/Initiatives/X.yaml`, DIRS)).toBe(
+      true,
+    );
+    expect(isPersonalityDefinitionPath(`${HOME}/personalities/a/initiatives`, DIRS)).toBe(true);
+  });
+
   it('matches anything below skills/', () => {
     expect(isPersonalityDefinitionPath(`${HOME}/personalities/a/skills/x/SKILL.md`, DIRS)).toBe(
       true,

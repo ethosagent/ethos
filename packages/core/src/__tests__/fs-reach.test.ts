@@ -257,6 +257,7 @@ describe('deriveFsReachPaths — writeDeny', () => {
     `${OWN_DIR}skills/`,
     `${OWN_DIR}commands/`,
     `${OWN_DIR}.expression-history/`,
+    `${OWN_DIR}initiatives/`,
   ];
 
   it('lists the nine definition entries under ownDir on the default branch', () => {
