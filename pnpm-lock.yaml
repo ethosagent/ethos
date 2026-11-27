@@ -1368,13 +1368,16 @@ importers:
 
   extensions/initiative-runner:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
     devDependencies:
-      '@ethosagent/core':
+      '@ethosagent/storage-fs':
         specifier: workspace:*
-        version: link:../../packages/core
+        version: link:../../packages/storage-fs
       '@ethosagent/tools-file':
         specifier: workspace:*
         version: link:../tools-file

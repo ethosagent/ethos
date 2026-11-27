@@ -14,10 +14,11 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
-    "@ethosagent/core": "workspace:*",
+    "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/tools-file": "workspace:*",
     "@ethosagent/tools-memory": "workspace:*"
   }

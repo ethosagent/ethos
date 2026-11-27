@@ -1,8 +1,13 @@
 import type { ToolSettingsMap } from '@ethosagent/config';
 import { DefaultToolRegistry } from '@ethosagent/core';
-import { assertReadOnlyCapabilities, runToolNames } from '@ethosagent/initiative-runner';
+import {
+  assertReadOnlyCapabilities,
+  readOnlyCapabilityBackends,
+  runToolNames,
+} from '@ethosagent/initiative-runner';
 import type { KanbanStore } from '@ethosagent/kanban-store';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
+import { defaultAlwaysDeny } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createGoalTools } from '@ethosagent/tools-goals';
@@ -24,7 +29,9 @@ import type {
   InitiativeLedgerPort,
   MemoryProvider,
   PersonalityConfig,
+  SecretRef,
   SessionStore,
+  Storage,
   Tool,
 } from '@ethosagent/types';
 
@@ -145,9 +152,23 @@ export function buildReadOnlyRegistry(input: {
   /** From the validated YAML; the `fs_reach.read` roots for read_file / search_files. */
   sourcePaths: readonly string[];
   factories: InitiativeToolFactories;
+  /** Backs each read tool's `scopedFs` (readOnlyCapabilityBackends); reach is `sourcePaths` only. */
+  storage: Storage;
+  /** Refs the read tools may resolve, and how; absent means no tool resolves a secret. */
+  secrets?: { allowedRefs: readonly SecretRef[]; backend: (ref: SecretRef) => Promise<string> };
+  /** The Ethos state dir; derives the read deny floor and state-dir exclusion, as build-infrastructure does. */
+  dataDir: string;
 }): DefaultToolRegistry {
   const allowed = new Set(runToolNames(input.personality.toolset));
-  const registry = new DefaultToolRegistry();
+  const registry = new DefaultToolRegistry(
+    readOnlyCapabilityBackends({
+      storage: input.storage,
+      sourcePaths: input.sourcePaths,
+      ...(input.secrets ? { secrets: input.secrets } : {}),
+      alwaysDenyPaths: defaultAlwaysDeny([input.dataDir]),
+      stateDirs: [input.dataDir],
+    }),
+  );
   const candidates = [
     ...input.factories.read.flatMap((make) => make()),
     ...input.factories.ledger(input.ledger, input.initiativeId),

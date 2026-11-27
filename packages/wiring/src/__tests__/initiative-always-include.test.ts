@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runToolNames } from '@ethosagent/initiative-runner';
+import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { InitiativeLedgerPort, MemoryProvider, SessionStore, Tool } from '@ethosagent/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentLoop, type WiringConfig, type WiringProfile } from '../index';
@@ -30,6 +31,8 @@ function build(
     initiativeId: 'i1',
     sourcePaths: over.sourcePaths ?? [],
     factories: over.factories ?? factories,
+    storage: new InMemoryStorage(),
+    dataDir: '/ethos-state',
   });
 }
 
