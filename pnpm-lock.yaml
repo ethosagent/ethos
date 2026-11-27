@@ -1368,12 +1368,18 @@ importers:
 
   extensions/initiative-runner:
     dependencies:
+      '@ethosagent/constitution':
+        specifier: workspace:*
+        version: link:../constitution
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../cron
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1384,9 +1390,6 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
-      '@ethosagent/storage-fs':
-        specifier: workspace:*
-        version: link:../../packages/storage-fs
       '@ethosagent/tools-file':
         specifier: workspace:*
         version: link:../tools-file

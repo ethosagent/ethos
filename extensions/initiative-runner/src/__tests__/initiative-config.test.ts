@@ -15,7 +15,7 @@ created_in: session-abc123
 state: active
 title: Self-serve activation
 outcome: Raise the share of new signups reaching first value in 24h
-sources: [sessions, kanban, repo, slack_read, memory, web]
+sources: [sessions, kanban, { repo: ~/code/app }, slack_read, memory, web]
 exclude:
   - enterprise accounts
 guidance:
@@ -85,8 +85,10 @@ describe('initiative file schema', () => {
     expect(InitiativeFileSchema.safeParse(agent).success).toBe(true);
   });
 
-  it('rejects an unknown source', () => {
-    expect(InitiativeFileSchema.safeParse({ ...spec(), sources: ['shell'] }).success).toBe(false);
+  it('rejects an unknown source, a bare repo, a repo without a path and extra keys', () => {
+    for (const bad of ['shell', 'repo', { repo: '' }, {}, { repo: '/a', web: 1 }, { web: '/a' }]) {
+      expect(InitiativeFileSchema.safeParse({ ...spec(), sources: [bad] }).success).toBe(false);
+    }
   });
 
   it('exports one key list covering every top-level key', () => {

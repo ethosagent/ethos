@@ -12,8 +12,20 @@ import { z } from 'zod';
  * Pinned by `__tests__/initiative-config.test.ts` ('unknown key fails').
  */
 
-const AUTONOMY_MODES = ['ask', 'free', 'free_under'] as const;
-const SOURCES = ['sessions', 'kanban', 'repo', 'slack_read', 'memory', 'web'] as const;
+const TARGETLESS_SOURCES = ['sessions', 'kanban', 'memory', 'web', 'slack_read'] as const;
+
+/** Ordered strictest first: `ask` always asks, `free_under` asks above a threshold, `free` never asks. */
+export const AUTONOMY_MODES = ['ask', 'free_under', 'free'] as const;
+
+/**
+ * One source entry: a bare kind for kinds with no target, or `{ repo: '<path>' }`.
+ * A repo path is checked against `readableRoots` by `checkSources` on save and load.
+ */
+export const SourceEntrySchema = z.union([
+  z.enum(TARGETLESS_SOURCES),
+  z.object({ repo: z.string().min(1) }).strict(),
+]);
+export type SourceEntry = z.infer<typeof SourceEntrySchema>;
 const usd = z.number().finite().nonnegative();
 
 const ExploreWindow = z.string().refine((s) => parseSchedule(s) !== null, {
@@ -37,7 +49,7 @@ export const InitiativeFileSchema = z
     state: z.enum(['active', 'self_started', 'paused', 'review', 'ended', 'stopped']),
     title: z.string().min(1),
     outcome: z.string().min(1),
-    sources: z.array(z.enum(SOURCES)),
+    sources: z.array(SourceEntrySchema),
     exclude: z.array(z.string()).default([]),
     guidance: z.array(GuidanceEntry).default([]),
     autonomy: z.object({ mode: z.enum(AUTONOMY_MODES), ask_above_usd: usd.optional() }).strict(),
