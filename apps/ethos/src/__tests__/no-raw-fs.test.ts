@@ -314,6 +314,7 @@ const ALLOWED_PREFIXES = [
   'extensions/notify-queue/',
   'extensions/outbox/',
   'extensions/share-links/',
+  'extensions/world-sqlite/',
   'extensions/inbound-dedup/',
   'extensions/inbound-spool/',
   'extensions/channel-transcript-sqlite/',
