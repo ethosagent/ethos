@@ -61,6 +61,11 @@
 //                                 revoke / revokeForSession / purgeExpired null the
 //                                 snapshot and append the audit event in one
 //                                 transaction, which no Storage interface can
+//                                 express.
+//                                 initiative-store mkdirSyncs the same way, and
+//                                 its state transitions, window close-out and spend
+//                                 roll-up are multi-statement BEGIN IMMEDIATE
+//                                 transactions, which no Storage interface can
 //                                 express.)
 //
 //   packages/a2a/                Same rationale as the SQLite stores above:
@@ -314,6 +319,7 @@ const ALLOWED_PREFIXES = [
   'extensions/notify-queue/',
   'extensions/outbox/',
   'extensions/share-links/',
+  'extensions/initiative-store/',
   'extensions/inbound-dedup/',
   'extensions/inbound-spool/',
   'extensions/channel-transcript-sqlite/',
