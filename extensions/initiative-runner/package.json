@@ -15,5 +15,9 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/tools-file": "workspace:*",
+    "@ethosagent/tools-memory": "workspace:*"
   }
 }

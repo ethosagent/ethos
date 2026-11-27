@@ -1,3 +1,4 @@
+export { assertReadOnlyCapabilities } from './capability-audit';
 export {
   INITIATIVE_CHAT_TOOLS,
   INITIATIVE_LEDGER_TOOLS,

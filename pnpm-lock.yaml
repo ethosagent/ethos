@@ -1371,6 +1371,13 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/tools-file':
+        specifier: workspace:*
+        version: link:../tools-file
+      '@ethosagent/tools-memory':
+        specifier: workspace:*
+        version: link:../tools-memory
 
   extensions/initiative-store:
     dependencies:
