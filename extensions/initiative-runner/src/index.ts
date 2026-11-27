@@ -6,3 +6,4 @@ export {
   INITIATIVE_READ_TOOLS,
   runToolNames,
 } from './tool-classes';
+export { createInitiativeToolGate } from './tool-gate';

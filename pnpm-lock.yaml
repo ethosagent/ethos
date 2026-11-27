@@ -1372,6 +1372,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
     devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/tools-file':
         specifier: workspace:*
         version: link:../tools-file
@@ -2283,6 +2286,12 @@ importers:
         specifier: ^7.62.0
         version: 7.62.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@8.10.0)(ws@8.23.0)(zod@4.4.3)
 
+  extensions/tools-initiatives:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-interactive:
     dependencies:
       '@ethosagent/core':
@@ -2940,6 +2949,9 @@ importers:
       '@ethosagent/goal-store':
         specifier: workspace:*
         version: link:../../extensions/goal-store
+      '@ethosagent/initiative-runner':
+        specifier: workspace:*
+        version: link:../../extensions/initiative-runner
       '@ethosagent/job-runner':
         specifier: workspace:*
         version: link:../../extensions/job-runner
@@ -3132,6 +3144,9 @@ importers:
       '@ethosagent/tools-image':
         specifier: workspace:*
         version: link:../../extensions/tools-image
+      '@ethosagent/tools-initiatives':
+        specifier: workspace:*
+        version: link:../../extensions/tools-initiatives
       '@ethosagent/tools-interactive':
         specifier: workspace:*
         version: link:../../extensions/tools-interactive
