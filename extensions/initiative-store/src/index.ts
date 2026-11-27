@@ -1,3 +1,4 @@
+export { computeGateMetrics, type GateMetrics } from './metrics';
 export {
   initiativesDbPath,
   SQLiteInitiativeStore,

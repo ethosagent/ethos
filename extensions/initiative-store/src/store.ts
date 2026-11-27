@@ -19,6 +19,7 @@ import {
   type InitiativeOrigin,
   type InitiativeRow,
   type InitiativeState,
+  type InitiativeStore,
   type InitiativeVerdict,
   type QuestionRow,
   type WindowKind,
@@ -233,6 +234,22 @@ const IMPLIED: Partial<
   },
 };
 
+const INDEX_EXPLORATION_STATES = ['proposed', 'exploring', 'stalled', 'briefed'] as const;
+
+function clip(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+/** ~80 chars of `text` around the first case-insensitive match of `needle`. */
+function snippet(text: string, needle: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const at = Math.max(0, flat.toLowerCase().indexOf(needle.toLowerCase()));
+  const start = Math.max(0, at - 30);
+  const end = Math.min(flat.length, at + needle.length + 50);
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+}
+
 /**
  * SQLite initiative ledger (`<dataDir>/initiatives.db`). One file, STRICT
  * tables, `synchronous = FULL`: a decision row is a promise to the user and the
@@ -245,7 +262,7 @@ const IMPLIED: Partial<
  * inside a `BEGIN IMMEDIATE` transaction (`write`), so two connections cannot
  * mint the same one. Rows are never deleted, so the sequence never reuses an id.
  */
-export class SQLiteInitiativeStore implements InitiativeLedgerPort {
+export class SQLiteInitiativeStore implements InitiativeStore {
   private readonly db: Database.Database;
   private readonly now: () => number;
   private readonly capFor: (initiativeId: string) => number;
@@ -759,5 +776,177 @@ export class SQLiteInitiativeStore implements InitiativeLedgerPort {
       )
       .get(initiativeId, ...OPEN_EXPLORATION_STATES) as { n: number };
     return { spentUsd: spent.s, capUsd: this.capFor(initiativeId), explorationsOpen: open.n };
+  }
+
+  // ---- recall ------------------------------------------------------------
+
+  list(filter: { personalityId: string; states?: InitiativeState[] }): InitiativeRow[] {
+    const states = filter.states ?? [];
+    const clause = states.length ? ` AND state IN (${states.map(() => '?').join(', ')})` : '';
+    const rows = this.db
+      .prepare(
+        `SELECT ${INITIATIVE_COLS} FROM initiatives WHERE personality_id = ?${clause}
+         ORDER BY created_at, rowid`,
+      )
+      .all(filter.personalityId, ...states) as InitiativeDbRow[];
+    return rows.map(toInitiative);
+  }
+
+  get(id: string): {
+    initiative: InitiativeRow;
+    explorations: ExplorationRow[];
+    briefs: BriefRow[];
+    findings: FindingRow[];
+  } | null {
+    const initiative = this.getInitiative(id);
+    if (!initiative) return null;
+    const briefs = this.db
+      .prepare(
+        `SELECT b.id, b.exploration_id, b.version, b.body_md, b.recommended_option, b.partial
+         FROM briefs b JOIN explorations e ON e.id = b.exploration_id
+         WHERE e.initiative_id = ? ORDER BY b.created_at, b.rowid`,
+      )
+      .all(id) as Array<{
+      id: string;
+      exploration_id: string;
+      version: number;
+      body_md: string;
+      recommended_option: string | null;
+      partial: number;
+    }>;
+    const findings = this.db
+      .prepare(
+        `SELECT f.id, f.exploration_id, f.claim, f.source_ref, f.confidence, f.created_at
+         FROM findings f JOIN explorations e ON e.id = f.exploration_id
+         WHERE e.initiative_id = ? ORDER BY f.created_at, f.rowid`,
+      )
+      .all(id) as Array<{
+      id: string;
+      exploration_id: string;
+      claim: string;
+      source_ref: string;
+      confidence: number;
+      created_at: string;
+    }>;
+    return {
+      initiative,
+      explorations: this.explorations(id),
+      briefs: briefs.map((b) => ({
+        id: b.id,
+        explorationId: b.exploration_id,
+        version: b.version,
+        bodyMd: b.body_md,
+        recommendedOption: b.recommended_option,
+        partial: b.partial === 1,
+      })),
+      findings: findings.map((f) => ({
+        id: f.id,
+        explorationId: f.exploration_id,
+        claim: f.claim,
+        sourceRef: f.source_ref,
+        confidence: f.confidence,
+        createdAt: f.created_at,
+      })),
+    };
+  }
+
+  /**
+   * LIKE over findings.claim, briefs.body_md and explorations.question for one
+   * personality, findings first, then briefs, then explorations. `%`, `_` and
+   * `\` in `q` match literally. LIKE is ASCII case-insensitive; FTS5 is deferred
+   * because FTS5 tables cannot be STRICT.
+   */
+  search(
+    personalityId: string,
+    q: string,
+    limit: number,
+  ): Array<{ kind: 'finding' | 'brief' | 'exploration'; id: string; snippet: string }> {
+    const needle = q.trim();
+    if (needle === '' || limit <= 0) return [];
+    const pattern = `%${needle.replace(/[\\%_]/g, '\\$&')}%`;
+    const sources = [
+      {
+        kind: 'finding',
+        col: 'x.claim',
+        sql: 'findings x JOIN explorations e ON e.id = x.exploration_id',
+      },
+      {
+        kind: 'brief',
+        col: 'x.body_md',
+        sql: 'briefs x JOIN explorations e ON e.id = x.exploration_id',
+      },
+      {
+        kind: 'exploration',
+        col: 'x.question',
+        sql: 'explorations x JOIN explorations e ON e.id = x.id',
+      },
+    ] as const;
+    const out: Array<{ kind: 'finding' | 'brief' | 'exploration'; id: string; snippet: string }> =
+      [];
+    for (const src of sources) {
+      const rows = this.db
+        .prepare(
+          `SELECT x.id AS id, ${src.col} AS text FROM ${src.sql}
+           JOIN initiatives i ON i.id = e.initiative_id
+           WHERE i.personality_id = ? AND ${src.col} LIKE ? ESCAPE '\\'
+           ORDER BY x.created_at, x.rowid LIMIT ?`,
+        )
+        .all(personalityId, pattern, limit - out.length) as Array<{ id: string; text: string }>;
+      for (const r of rows)
+        out.push({ kind: src.kind, id: r.id, snippet: snippet(r.text, needle) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /**
+   * One line per active or self_started initiative, each followed by one line
+   * per open exploration (proposed, exploring, stalled, briefed). Ordered by
+   * created_at, rowid and free of anything that changes between calls, so the
+   * prompt prefix built from it stays byte-identical (prompt-prefix-stability).
+   */
+  indexLines(personalityId: string, max: number): string[] {
+    const lines: string[] = [];
+    for (const ini of this.list({ personalityId, states: ['active', 'self_started'] })) {
+      lines.push(`INI ${ini.id} (${ini.state})`);
+      for (const e of this.explorations(ini.id, [...INDEX_EXPLORATION_STATES])) {
+        lines.push(`${e.id} ${e.state}: ${clip(e.question, 80)} (due ${e.deadline.slice(0, 10)})`);
+      }
+      if (lines.length >= max) break;
+    }
+    return lines.slice(0, Math.max(0, max));
+  }
+
+  /** Decisions on this personality's initiatives (or their explorations) at or after `sinceIso`. */
+  decisionsSince(personalityId: string, sinceIso: string): DecisionRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT d.id, d.target, d.gate, d.verdict, d.reason, d.option, d.decided_by, d.at
+         FROM decisions d
+         LEFT JOIN explorations e ON e.id = d.target
+         JOIN initiatives i ON i.id = COALESCE(e.initiative_id, d.target)
+         WHERE i.personality_id = ? AND d.at >= ?
+         ORDER BY d.at, d.rowid`,
+      )
+      .all(personalityId, sinceIso) as Array<{
+      id: string;
+      target: string;
+      gate: string;
+      verdict: string;
+      reason: string | null;
+      option: string | null;
+      decided_by: string;
+      at: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      target: r.target,
+      gate: r.gate as GateId,
+      verdict: r.verdict as InitiativeVerdict,
+      reason: r.reason,
+      option: r.option,
+      decidedBy: r.decided_by,
+      at: r.at,
+    }));
   }
 }
