@@ -3,17 +3,23 @@ import { dirname, join } from 'node:path';
 import Database, { migrate } from '@ethosagent/sqlite';
 import {
   type BriefRow,
+  canTransition,
+  type DecisionRow,
   type DraftRow,
   type DraftStatus,
   EthosError,
+  EXPLORATION_TRANSITIONS,
   type ExplorationRow,
   type ExplorationState,
   type FindingRow,
+  type GateId,
   type IdeaRow,
+  INITIATIVE_TRANSITIONS,
   type InitiativeLedgerPort,
   type InitiativeOrigin,
   type InitiativeRow,
   type InitiativeState,
+  type InitiativeVerdict,
   type QuestionRow,
   type WindowKind,
   type WindowRow,
@@ -195,6 +201,39 @@ function toDraft(r: DraftDbRow): DraftRow {
 }
 
 /**
+ * What a decision implies. `exploration` targets an exploration id (gate 1 and
+ * 2), `initiative` an initiative id (self-start). A gate or verdict missing here
+ * is refused; `config_change` implies no transition and accepts any verdict.
+ */
+const IMPLIED: Partial<
+  Record<
+    GateId,
+    Partial<
+      Record<
+        InitiativeVerdict,
+        { exploration: ExplorationState | null } | { initiative: InitiativeState }
+      >
+    >
+  >
+> = {
+  gate1_explore: {
+    approve: { exploration: 'exploring' },
+    reject: { exploration: 'rejected' },
+    snooze: { exploration: null },
+  },
+  gate2_adopt: {
+    adopt: { exploration: 'adopted' },
+    park: { exploration: 'parked' },
+    dig_deeper: { exploration: 'exploring' },
+  },
+  self_start: {
+    keep: { initiative: 'active' },
+    stop: { initiative: 'stopped' },
+    make_mine: { initiative: 'active' },
+  },
+};
+
+/**
  * SQLite initiative ledger (`<dataDir>/initiatives.db`). One file, STRICT
  * tables, `synchronous = FULL`: a decision row is a promise to the user and the
  * window spend rows enforce a cap the operator was promised, so a power cut must
@@ -305,6 +344,150 @@ export class SQLiteInitiativeStore implements InitiativeLedgerPort {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(v.initiativeId, v.version, v.hash, v.diff, v.sessionId, v.confirmedBy, this.iso());
+  }
+
+  /**
+   * Narrow view for ledger tools: only the `InitiativeLedgerPort` methods, bound,
+   * on a frozen object. No decision writer, config writer or transition.
+   * Pinned by `R13 ledger tool port has no decision writer`.
+   */
+  ledgerPort(): InitiativeLedgerPort {
+    return Object.freeze({
+      addIdea: this.addIdea.bind(this),
+      propose: this.propose.bind(this),
+      proposeInitiativeDraft: this.proposeInitiativeDraft.bind(this),
+      addFinding: this.addFinding.bind(this),
+      submitBrief: this.submitBrief.bind(this),
+      addQuestion: this.addQuestion.bind(this),
+      ideas: this.ideas.bind(this),
+      budget: this.budget.bind(this),
+    });
+  }
+
+  // ---- transitions and decisions -----------------------------------------
+
+  /** Throws `INITIATIVE_ILLEGAL_TRANSITION` on a move INITIATIVE_TRANSITIONS does not allow. */
+  transitionInitiative(id: string, to: InitiativeState, why: string): void {
+    this.write(() => this.moveInitiative(id, to, why));
+  }
+
+  /** Throws `INITIATIVE_ILLEGAL_TRANSITION` on a move EXPLORATION_TRANSITIONS does not allow. */
+  transitionExploration(id: string, to: ExplorationState, why: string): void {
+    this.write(() => this.moveExploration(id, to, why));
+  }
+
+  /**
+   * Approval surfaces only. One transaction: the transition the verdict implies
+   * (see IMPLIED) and the decision row. An illegal transition, an unknown target
+   * or a verdict that does not belong to the gate throws and writes nothing.
+   * `why` is kept only where a column exists: `paused_reason` and `stop_reason`.
+   */
+  recordDecision(d: Omit<DecisionRow, 'id' | 'at'>): DecisionRow {
+    if (d.decidedBy.trim() === '') {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'a decision needs decided_by',
+        action: 'Record who made the decision (owner_ui, owner_chat or a user id).',
+      });
+    }
+    const implied = d.gate === 'config_change' ? undefined : IMPLIED[d.gate]?.[d.verdict];
+    if (d.gate !== 'config_change' && implied === undefined) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `verdict ${d.verdict} does not belong to ${d.gate}`,
+        action: 'Use a verdict that gate offers.',
+        details: { gate: d.gate, verdict: d.verdict },
+      });
+    }
+    return this.write(() => {
+      let initiativeId: string;
+      if (implied && 'exploration' in implied) {
+        const e = this.requireExploration(d.target);
+        initiativeId = e.initiativeId;
+        if (implied.exploration !== null) {
+          this.moveExploration(d.target, implied.exploration, d.reason ?? d.verdict);
+        }
+      } else {
+        this.requireInitiative(d.target);
+        initiativeId = d.target;
+        if (implied && 'initiative' in implied) {
+          this.moveInitiative(d.target, implied.initiative, d.reason ?? d.verdict);
+        }
+      }
+      const id = this.nextId('decisions', 'DEC-');
+      const at = this.iso();
+      this.db
+        .prepare(
+          `INSERT INTO decisions (id, target, gate, verdict, reason, option, decided_by, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, d.target, d.gate, d.verdict, d.reason, d.option, d.decidedBy, at);
+      this.db
+        .prepare('UPDATE initiatives SET last_reaction_at = ?, updated_at = ? WHERE id = ?')
+        .run(at, at, initiativeId);
+      return { ...d, id, at };
+    });
+  }
+
+  private requireInitiative(id: string): InitiativeRow {
+    const row = this.getInitiative(id);
+    if (!row) {
+      throw new EthosError({
+        code: 'NOT_FOUND',
+        cause: `initiative ${id} does not exist`,
+        action: 'Check the initiative id.',
+        details: { id },
+      });
+    }
+    return row;
+  }
+
+  private requireExploration(id: string): ExplorationRow {
+    const row = this.getExploration(id);
+    if (!row) {
+      throw new EthosError({
+        code: 'NOT_FOUND',
+        cause: `exploration ${id} does not exist`,
+        action: 'Check the exploration id.',
+        details: { id },
+      });
+    }
+    return row;
+  }
+
+  private moveInitiative(id: string, to: InitiativeState, why: string): void {
+    const from = this.requireInitiative(id).state;
+    if (!canTransition(INITIATIVE_TRANSITIONS, from, to)) {
+      throw new EthosError({
+        code: 'INITIATIVE_ILLEGAL_TRANSITION',
+        cause: `initiative ${id} cannot move ${from} -> ${to}`,
+        action: 'Reload the initiative and choose a decision valid from its current state.',
+        details: { id, from, to },
+      });
+    }
+    this.db
+      .prepare(
+        `UPDATE initiatives SET state = ?, updated_at = ?,
+           paused_reason = CASE WHEN ? = 'paused' THEN ? ELSE paused_reason END,
+           stop_reason = CASE WHEN ? = 'stopped' THEN ? ELSE stop_reason END
+         WHERE id = ?`,
+      )
+      .run(to, this.iso(), to, why, to, why, id);
+  }
+
+  private moveExploration(id: string, to: ExplorationState, _why: string): void {
+    const from = this.requireExploration(id).state;
+    if (!canTransition(EXPLORATION_TRANSITIONS, from, to)) {
+      throw new EthosError({
+        code: 'INITIATIVE_ILLEGAL_TRANSITION',
+        cause: `exploration ${id} cannot move ${from} -> ${to}`,
+        action: 'Reload the exploration and choose a decision valid from its current state.',
+        details: { id, from, to },
+      });
+    }
+    this.db
+      .prepare('UPDATE explorations SET state = ?, updated_at = ? WHERE id = ?')
+      .run(to, this.iso(), id);
   }
 
   // ---- ideas, explorations, findings, briefs -----------------------------
