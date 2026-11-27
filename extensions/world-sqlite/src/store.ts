@@ -53,8 +53,6 @@ import { FTS_DDL, searchEntityRowids, toMatchQuery } from './search';
 //   Timestamps are ISO-8601 UTC strings compared lexicographically.
 // ---------------------------------------------------------------------------
 
-export type Stmt = ReturnType<Database.Database['prepare']>;
-
 /** `<dataDir>/worlds/graph.db` */
 export function worldGraphDbPath(dataDir: string): string {
   return join(dataDir, 'worlds', 'graph.db');
@@ -177,6 +175,9 @@ function checkAttrs(
 }
 
 const isIso = (s: string): boolean => !Number.isNaN(Date.parse(s));
+
+/** `?, ?, ?` for an `IN (...)` list of `n` bound values. */
+const placeholders = (n: number): string => Array(n).fill('?').join(', ');
 
 export class SQLiteWorldGraphProvider implements WorldGraphProvider {
   protected readonly db: Database.Database;
@@ -509,13 +510,6 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
   async import(world: WorldId, data: GraphBundle): Promise<ImportReport> {
     const report: ImportReport = { entities: 0, attributes: 0, edges: 0, skipped: [] };
     const schema = await this.getSchema(world);
-    const known = new Set<string>(
-      (
-        this.db.prepare('SELECT id FROM entities WHERE world = ?').all(world) as Array<{
-          id: string;
-        }>
-      ).map((r) => r.id),
-    );
     const typeById = new Map<string, string>();
     for (const r of this.db
       .prepare('SELECT id, type FROM entities WHERE world = ?')
@@ -530,7 +524,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     this.db.transaction(() => {
       for (const e of data.entities) {
         line++;
-        if (known.has(e.id) || exists('entities', e.id)) {
+        if (typeById.has(e.id) || exists('entities', e.id)) {
           skip(`duplicate entity id ${e.id}`);
           continue;
         }
@@ -555,7 +549,6 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
             e.sourceRef,
             e.author,
           );
-        known.add(e.id);
         typeById.set(e.id, e.type);
         report.entities++;
       }
@@ -648,8 +641,9 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
 
   /** `[sql, params]` for the two-clock slice on attributes or edges. Defaults: now, now. */
   protected sliceClause(slice?: TimeSlice): [string, string[]] {
-    const asOf = slice?.asOf ?? this.nowIso();
-    const knownAt = slice?.knownAt ?? this.nowIso();
+    const now = this.nowIso();
+    const asOf = slice?.asOf ?? now;
+    const knownAt = slice?.knownAt ?? now;
     return [`${WORLD_SQL} AND ${KNOWN_SQL}`, [asOf, asOf, knownAt, knownAt]];
   }
 
@@ -710,7 +704,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
         : (
             this.db
               .prepare(
-                `SELECT ${EDGE_COLS} FROM edges WHERE world = ? AND rowid IN (${walk.edgeRowids.map(() => '?').join(', ')})
+                `SELECT ${EDGE_COLS} FROM edges WHERE world = ? AND rowid IN (${placeholders(walk.edgeRowids.length)})
                  ORDER BY recorded_at, rowid`,
               )
               .all(world, ...walk.edgeRowids) as EdgeRow[]
@@ -736,7 +730,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     const where = ['world = ?', KNOWN_SQL];
     const params: Array<string | number> = [world, knownAt, knownAt];
     if (q.types && q.types.length > 0) {
-      where.push(`type IN (${q.types.map(() => '?').join(', ')})`);
+      where.push(`type IN (${placeholders(q.types.length)})`);
       params.push(...q.types);
     }
     let rows: EntityRow[];
@@ -748,7 +742,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
           ? []
           : (this.db
               .prepare(
-                `SELECT ${ENTITY_COLS} FROM entities WHERE rowid IN (${rowids.map(() => '?').join(', ')})`,
+                `SELECT ${ENTITY_COLS} FROM entities WHERE rowid IN (${placeholders(rowids.length)})`,
               )
               .all(...rowids) as EntityRow[]);
       const order = new Map(rowids.map((rid, i) => [rid, i]));
@@ -796,7 +790,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
       params.push(q.toId);
     }
     if (q.types && q.types.length > 0) {
-      where.push(`type IN (${q.types.map(() => '?').join(', ')})`);
+      where.push(`type IN (${placeholders(q.types.length)})`);
       params.push(...q.types);
     }
     const rows = this.db
@@ -817,7 +811,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     const rows = this.db
       .prepare(
         `SELECT ${ENTITY_COLS} FROM entities WHERE world = ? AND ${KNOWN_SQL}
-         AND id IN (${ids.map(() => '?').join(', ')}) ORDER BY recorded_at, rowid`,
+         AND id IN (${placeholders(ids.length)}) ORDER BY recorded_at, rowid`,
       )
       .all(world, knownAt, knownAt, ...ids) as EntityRow[];
     return rows.map((r) => this.toEntity(r));
@@ -834,7 +828,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     const rows = this.db
       .prepare(
         `SELECT ${ATTRIBUTE_COLS} FROM attributes WHERE world = ? AND ${sql}
-         AND entity_id IN (${entityIds.map(() => '?').join(', ')}) ORDER BY recorded_at, rowid`,
+         AND entity_id IN (${placeholders(entityIds.length)}) ORDER BY recorded_at, rowid`,
       )
       .all(world, ...sliceParams, ...entityIds) as AttributeRow[];
     return rows.map((r) => this.toAttribute(r));
