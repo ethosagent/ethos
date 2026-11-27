@@ -14,13 +14,17 @@ import type {
   GraphBundle,
   GraphQuery,
   ImportReport,
+  Subgraph,
   TimeSlice,
+  WorldGraphProvider,
   WorldId,
   WorldProviderCapabilities,
   WorldSchema,
   WriteResult,
 } from '@ethosagent/types';
+import { walkNeighbours, walkPaths } from './hops';
 import { DDL, SCHEMA_VERSION, worldSchemaZ } from './schema';
+import { FTS_DDL, searchEntityRowids, toMatchQuery } from './search';
 
 // ---------------------------------------------------------------------------
 // SQLiteWorldGraphProvider — the sqlite backend of the world graph contract.
@@ -43,6 +47,9 @@ import { DDL, SCHEMA_VERSION, worldSchemaZ } from './schema';
 //     schema does not allow'); it never closes another fact
 //     ('attribute change closes nothing by itself');
 //   - `close` refuses a fact whose valid_to is already set ('handover…').
+//   - hops are depth-capped at capabilities().maxHops (hops.test.ts '2 hops from
+//     Payments reaches Ravi and Kafka, not past') and entity text is searched
+//     through quoted FTS5 tokens (search.test.ts 'FTS operators in text are inert').
 //   Timestamps are ISO-8601 UTC strings compared lexicographically.
 // ---------------------------------------------------------------------------
 
@@ -61,6 +68,8 @@ export interface WorldGraphStoreOptions {
 }
 
 export const MAX_HOPS = 3;
+/** A subgraph is cut at this many entities and reports `truncated`. */
+export const NEIGHBOUR_LIMIT = 200;
 
 export interface EntityRow {
   rowid: number;
@@ -169,7 +178,7 @@ function checkAttrs(
 
 const isIso = (s: string): boolean => !Number.isNaN(Date.parse(s));
 
-export class SQLiteWorldGraphProvider {
+export class SQLiteWorldGraphProvider implements WorldGraphProvider {
   protected readonly db: Database.Database;
   protected readonly clock: () => Date;
   protected readonly onError: (err: unknown) => void;
@@ -187,7 +196,11 @@ export class SQLiteWorldGraphProvider {
     // Explicit, not SQLite's implicit default. Pinned by 'durability posture is FULL'.
     this.db.pragma('synchronous = FULL');
     this.db.pragma('busy_timeout = 5000');
-    migrate(this.db, { name: 'world-sqlite', targetVersion: SCHEMA_VERSION, baseline: DDL });
+    migrate(this.db, {
+      name: 'world-sqlite',
+      targetVersion: SCHEMA_VERSION,
+      baseline: DDL + FTS_DDL,
+    });
   }
 
   /** Release the database handle. (`close` is the contract's fact-closing method.) */
@@ -646,12 +659,72 @@ export class SQLiteWorldGraphProvider {
     return this.queryPaths(world, q, slice);
   }
 
-  protected queryPaths(
-    _world: WorldId,
-    _q: Extract<GraphQuery, { kind: 'paths' }>,
-    _slice?: TimeSlice,
+  private queryPaths(
+    world: WorldId,
+    q: Extract<GraphQuery, { kind: 'paths' }>,
+    slice?: TimeSlice,
   ): Facts {
-    return { entities: [], attributes: [], edges: [], paths: [], truncated: false };
+    const knownAt = slice?.knownAt ?? this.nowIso();
+    const [sql, sliceParams] = this.sliceClause(slice);
+    const maxHops = Math.min(Math.max(0, Math.floor(q.maxHops)), MAX_HOPS);
+    const found = walkPaths(
+      this.db,
+      world,
+      q.fromId,
+      q.via,
+      maxHops,
+      q.toType,
+      knownAt,
+      sql,
+      sliceParams,
+      q.limit + 1,
+    );
+    const truncated = found.length > q.limit;
+    const paths = found.slice(0, q.limit);
+    const entities = this.entitiesByIds(world, [...new Set(paths.flat())], slice);
+    return { entities, attributes: [], edges: [], paths, truncated };
+  }
+
+  async neighbours(
+    world: WorldId,
+    entityId: string,
+    hops: number,
+    slice?: TimeSlice,
+  ): Promise<Subgraph> {
+    const depth = Math.min(Math.max(0, Math.floor(hops)), this.capabilities().maxHops);
+    const [sql, sliceParams] = this.sliceClause(slice);
+    const walk = walkNeighbours(this.db, world, entityId, depth, sql, sliceParams);
+    const visible = this.entitiesByIds(
+      world,
+      walk.nodes.map((n) => n.id),
+      slice,
+    );
+    const rank = new Map(walk.nodes.map((n, i) => [n.id, i]));
+    visible.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+    const truncated = visible.length > NEIGHBOUR_LIMIT;
+    const entities = visible.slice(0, NEIGHBOUR_LIMIT);
+    const kept = new Set(entities.map((e) => e.id));
+    const edges =
+      walk.edgeRowids.length === 0
+        ? []
+        : (
+            this.db
+              .prepare(
+                `SELECT ${EDGE_COLS} FROM edges WHERE world = ? AND rowid IN (${walk.edgeRowids.map(() => '?').join(', ')})
+                 ORDER BY recorded_at, rowid`,
+              )
+              .all(world, ...walk.edgeRowids) as EdgeRow[]
+          )
+            .map((r) => this.toEdge(r))
+            .filter((e) => kept.has(e.fromId) && kept.has(e.toId));
+    return {
+      centre: entityId,
+      hops: depth,
+      entities,
+      attributes: this.liveAttributes(world, [...kept], slice),
+      edges,
+      truncated,
+    };
   }
 
   private queryEntities(
@@ -666,11 +739,27 @@ export class SQLiteWorldGraphProvider {
       where.push(`type IN (${q.types.map(() => '?').join(', ')})`);
       params.push(...q.types);
     }
-    const rows = this.db
-      .prepare(
-        `SELECT ${ENTITY_COLS} FROM entities WHERE ${where.join(' AND ')} ORDER BY recorded_at, rowid LIMIT ?`,
-      )
-      .all(...params, q.limit + 1) as EntityRow[];
+    let rows: EntityRow[];
+    if (q.text !== undefined && toMatchQuery(q.text) !== null) {
+      // Best match first; the rowid list is already filtered to this world and slice.
+      const rowids = searchEntityRowids(this.db, world, q.text, q.types, knownAt, q.limit + 1);
+      rows =
+        rowids.length === 0
+          ? []
+          : (this.db
+              .prepare(
+                `SELECT ${ENTITY_COLS} FROM entities WHERE rowid IN (${rowids.map(() => '?').join(', ')})`,
+              )
+              .all(...rowids) as EntityRow[]);
+      const order = new Map(rowids.map((rid, i) => [rid, i]));
+      rows.sort((a, b) => (order.get(a.rowid) ?? 0) - (order.get(b.rowid) ?? 0));
+    } else {
+      rows = this.db
+        .prepare(
+          `SELECT ${ENTITY_COLS} FROM entities WHERE ${where.join(' AND ')} ORDER BY recorded_at, rowid LIMIT ?`,
+        )
+        .all(...params, q.limit + 1) as EntityRow[];
+    }
     const truncated = rows.length > q.limit;
     const entities = rows.slice(0, q.limit).map((r) => this.toEntity(r));
     return {

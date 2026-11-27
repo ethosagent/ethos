@@ -50,9 +50,12 @@ describe('SQLiteWorldGraphProvider — store', () => {
   });
 
   it('tables are STRICT', () => {
+    // FTS5 cannot be STRICT: its virtual table and the shadow tables it
+    // creates (entity_names_fts_*) are the one exception (session-sqlite precedent).
     const rows = rawDb(store)
       .prepare(
-        `SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+        `SELECT name, sql FROM sqlite_master
+         WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'entity_names_fts%'`,
       )
       .all() as Array<{ name: string; sql: string }>;
     expect(rows.map((r) => r.name).sort()).toEqual(
@@ -61,6 +64,10 @@ describe('SQLiteWorldGraphProvider — store', () => {
     for (const r of rows) {
       expect(r.sql.trimEnd().endsWith('STRICT'), `${r.name} is not STRICT`).toBe(true);
     }
+    const fts = rawDb(store)
+      .prepare(`SELECT sql FROM sqlite_master WHERE name = 'entity_names_fts'`)
+      .get() as { sql: string };
+    expect(fts.sql).toContain('VIRTUAL TABLE');
   });
 
   it('durability posture is FULL', () => {
