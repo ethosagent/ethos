@@ -178,7 +178,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 155 packages: 11 at Tier 0, 31 at Tier 1, 113 at Tier 2.
+# apps/ carries a tier. 156 packages: 11 at Tier 0, 31 at Tier 1, 114 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -947,6 +947,11 @@ tiers:
     package: "@ethosagent/tools-goals"
     tier: 2
     assigned: 2026-08-12
+
+  extensions/tools-initiatives:
+    package: "@ethosagent/tools-initiatives"
+    tier: 2
+    assigned: 2026-11-28
 
   extensions/tools-image:
     package: "@ethosagent/tools-image"

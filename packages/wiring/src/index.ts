@@ -39,6 +39,12 @@ import type {
   UsageGate,
 } from '@ethosagent/types';
 
+export {
+  buildReadOnlyRegistry,
+  defaultInitiativeToolFactories,
+  type InitiativeToolDeps,
+  type InitiativeToolFactories,
+} from './initiatives';
 export type { WiringContext } from './types';
 
 import { buildAgentLoop, type JobAffinityOptions } from './build-agent-loop';

@@ -101,6 +101,7 @@
       "@ethosagent/skills": ["./extensions/skills/src"],
       "@ethosagent/tools-file": ["./extensions/tools-file/src"],
       "@ethosagent/tools-goals": ["./extensions/tools-goals/src"],
+      "@ethosagent/tools-initiatives": ["./extensions/tools-initiatives/src"],
       "@ethosagent/tools-terminal": ["./extensions/tools-terminal/src"],
       "@ethosagent/tools-terminal/reducers/bash": ["./extensions/tools-terminal/src/reducers/bash"],
       "@ethosagent/tools-web": ["./extensions/tools-web/src"],
