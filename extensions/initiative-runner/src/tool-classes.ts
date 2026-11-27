@@ -72,8 +72,9 @@ class FrozenSet<T> extends Set<T> {
 
 /**
  * Named so the census can tell a deliberate refusal from an oversight.
- * Best-effort at Task 2.1: Task 2.7 reconciles it against the composed registry
- * (including `NOT_COMPOSED` entries for names no profile registers).
+ * Reconciled against the composed registry by the L7 census (Task 2.7); names no
+ * profile registers carry a reason in its `NOT_COMPOSED` map. NEVER is the default
+ * for any tool that is not a genuine search/read tool.
  */
 export const INITIATIVE_NEVER_TOOLS: ReadonlySet<string> = new FrozenSet<string>([
   // writes and creates
@@ -85,7 +86,7 @@ export const INITIATIVE_NEVER_TOOLS: ReadonlySet<string> = new FrozenSet<string>
   'goal_complete',
   'todo_add',
   'todo_clear',
-  'todo_list',
+  'todo_list', // session todo store is mutable chat state, not a source; settled NEVER
   'todo_set',
   'todo_update',
   'kanban_archive',
@@ -108,14 +109,17 @@ export const INITIATIVE_NEVER_TOOLS: ReadonlySet<string> = new FrozenSet<string>
   'dashboard_update_panel_layout',
   'dashboard_set_params',
   'dashboard_import',
-  'dashboard_export',
-  'dashboard_list_panels',
+  'dashboard_export', // writes an export artifact; settled NEVER
+  'dashboard_list_panels', // reads chat-owned dashboards, not a run source; settled NEVER
   'image_generate',
   // outbound messaging and scheduling
   'send_message',
   'cron',
   'watcher_create',
   'watcher_list',
+  'watcher_pause',
+  'watcher_resume',
+  'watcher_delete',
   'call',
   'voice_session',
   'agent_consult',
