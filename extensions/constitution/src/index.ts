@@ -177,7 +177,7 @@ const INITIATIVE_NUMBER_KEYS = [
  * import `@ethosagent/storage-fs` (a devDependency only), so the later
  * `checkSources` and web-api validators own it.
  */
-function validateInitiatives(
+export function validateInitiatives(
   raw: unknown,
 ): NonNullable<Constitution['initiatives']> | { error: string } {
   if (!isPlainObject(raw)) return { error: 'initiatives must be a mapping' };

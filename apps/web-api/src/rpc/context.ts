@@ -23,6 +23,7 @@ import type { DocumentsService } from '../services/documents.service';
 import type { EvolverService } from '../services/evolver.service';
 import type { ExecutionService } from '../services/execution.service';
 import type { GoalsService } from '../services/goals.service';
+import type { InitiativesService } from '../services/initiatives.service';
 import type { KanbanService } from '../services/kanban.service';
 import type { KeysService } from '../services/keys.service';
 import type { LabService } from '../services/lab.service';
@@ -83,6 +84,8 @@ export interface RpcContext {
   platforms: PlatformsService;
   /** Per-room prompt and policy editor (Communications → Rooms). */
   roomPolicies: RoomPolicyService;
+  /** Initiative engine: settings.yaml, the constitution block, ledger reads and decisions. */
+  initiatives: InitiativesService;
   lab: LabService;
   kanban: KanbanService;
   teams: import('../services/teams.service').TeamsService;

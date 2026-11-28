@@ -1,9 +1,15 @@
-import { EthosError, type ExplorationRow, type InitiativeRow } from '@ethosagent/types';
-import type { InitiativeCliPort } from '@ethosagent/wiring';
+import { EthosError, type InitiativeRow } from '@ethosagent/types';
+import {
+  decideInitiative,
+  type InitiativeCliPort,
+  type InitiativeDecideResult,
+  type InitiativeDecision,
+  renderBriefMarkdown,
+} from '@ethosagent/wiring';
 
 // `ethos initiatives` subcommands other than `run`: read the ledger, pause/resume through
 // InitiativeConfigService (the only writer of initiatives/*.yaml) and record Gate 1, Gate 2 and
-// self-start decisions through SQLiteInitiativeStore.recordDecision, the one decision writer.
+// self-start decisions through decideInitiative (wiring), which calls SQLiteInitiativeStore.recordDecision.
 
 /** The decider the CLI records; web and chat surfaces record `owner_ui` / `owner_chat`. */
 export const CLI_DECIDER = 'owner:cli';
@@ -59,38 +65,32 @@ function positional(args: readonly string[]): string | undefined {
   return undefined;
 }
 
-function exploration(port: InitiativeCliPort, id: string, want: ExplorationRow['state']) {
-  const e = port.store.getExploration(id);
-  if (!e)
+/** Apply a decision through the shared wiring function; map its refusals to the CLI's typed errors. */
+async function decide(
+  port: InitiativeCliPort,
+  d: InitiativeDecision,
+  now: Date,
+): Promise<Extract<InitiativeDecideResult, { ok: true }>> {
+  const r = await decideInitiative(port, d, { decidedBy: CLI_DECIDER, now });
+  if (r.ok) return r;
+  if (r.kind === 'not_found') {
     throw new EthosError({
       code: 'NOT_FOUND',
-      cause: `exploration ${id} does not exist`,
-      action: 'Check the id with "ethos initiatives show <initiative-id>".',
+      cause: r.message,
+      action:
+        d.gate === 'self_start'
+          ? 'Check the id with "ethos initiatives list".'
+          : 'Check the id with "ethos initiatives show <initiative-id>".',
     });
-  if (e.state !== want) {
-    throw invalid(
-      `${id} is ${e.state}, not ${want === 'proposed' ? 'proposed' : want}`,
-      `This needs an exploration that is ${want}.`,
-    );
   }
-  return e;
-}
-
-function agentInitiative(port: InitiativeCliPort, id: string): InitiativeRow {
-  const row = port.store.getInitiative(id);
-  if (!row)
-    throw new EthosError({
-      code: 'NOT_FOUND',
-      cause: `initiative ${id} does not exist`,
-      action: 'Check the id with "ethos initiatives list".',
-    });
-  if (row.state !== 'self_started') {
-    throw invalid(
-      `${id} is ${row.state}, not self_started`,
-      'keep / stop apply to agent-started initiatives awaiting your decision.',
-    );
-  }
-  return row;
+  throw invalid(
+    r.message,
+    d.gate === 'self_start'
+      ? 'keep / stop apply to agent-started initiatives awaiting your decision.'
+      : r.kind === 'conflict'
+        ? `This needs an exploration that is ${d.gate === 'gate1_explore' ? 'proposed' : 'briefed'}.`
+        : 'Fix the file, then retry.',
+  );
 }
 
 function requireInitiative(port: InitiativeCliPort, id: string): InitiativeRow {
@@ -185,7 +185,15 @@ export async function runManageCommand(
           `${e.id} has no brief yet (it is ${e.state})`,
           'Export works on a briefed exploration.',
         );
-      const md = `# ${e.question}\n\n${brief.bodyMd.trimEnd()}\n${brief.recommendedOption ? `\nRecommended option: ${brief.recommendedOption}\n` : ''}`;
+      const findings = (p.store.get(e.initiativeId)?.findings ?? []).filter(
+        (f) => f.explorationId === e.id,
+      );
+      const md = renderBriefMarkdown({
+        question: e.question,
+        bodyMd: brief.bodyMd,
+        recommendedOption: brief.recommendedOption,
+        findings,
+      });
       return { lines: [], data: { explorationId: e.id, markdown: md }, raw: md };
     }
     case 'pause':
@@ -234,78 +242,60 @@ export async function runManageCommand(
     }
     case 'approve':
     case 'deny': {
-      const p = need();
-      const e = exploration(p, needId(), 'proposed');
       const verdict = sub === 'approve' ? 'approve' : 'reject';
-      p.store.recordDecision({
-        target: e.id,
-        gate: 'gate1_explore',
-        verdict,
-        reason: null,
-        option: null,
-        decidedBy: CLI_DECIDER,
-      });
+      const r = await decide(need(), { target: needId(), gate: 'gate1_explore', verdict }, now);
       return {
-        lines: [`${e.id}: ${sub === 'approve' ? 'approved, now exploring' : 'denied'}`],
-        data: { id: e.id, verdict },
+        lines: [
+          `${r.exploration?.id}: ${sub === 'approve' ? 'approved, now exploring' : 'denied'}`,
+        ],
+        data: { id: r.exploration?.id, verdict },
       };
     }
     case 'adopt':
     case 'park': {
-      const p = need();
-      const e = exploration(p, needId(), 'briefed');
       const option = sub === 'adopt' ? (flag(rest, '--option') ?? null) : null;
-      p.store.recordDecision({
-        target: e.id,
-        gate: 'gate2_adopt',
-        verdict: sub,
-        reason: null,
-        option,
-        decidedBy: CLI_DECIDER,
-      });
+      const r = await decide(
+        need(),
+        { target: needId(), gate: 'gate2_adopt', verdict: sub, option },
+        now,
+      );
       return {
         lines: [
-          `${e.id}: ${sub === 'adopt' ? 'adopted' : 'parked'}${option ? ` (option ${option})` : ''}`,
+          `${r.exploration?.id}: ${sub === 'adopt' ? 'adopted' : 'parked'}${option ? ` (option ${option})` : ''}`,
         ],
-        data: { id: e.id, verdict: sub, option },
+        data: { id: r.exploration?.id, verdict: sub, option },
       };
     }
     case 'dig-deeper': {
-      const p = need();
-      const e = exploration(p, needId(), 'briefed');
-      const file = await p.file(e.initiativeId);
-      if (!file)
-        throw invalid(
-          `initiative ${e.initiativeId} has no valid file`,
-          'Fix the file, then retry.',
-        );
-      const next = p.digDeeper({ explorationId: e.id, decidedBy: CLI_DECIDER, file, now });
+      const r = await decide(
+        need(),
+        { target: needId(), gate: 'gate2_adopt', verdict: 'dig_deeper' },
+        now,
+      );
+      const next = r.exploration;
       return {
         lines: [
-          `${e.id}: exploring again, budget $${next.budgetUsd.toFixed(2)}, until ${next.deadline}`,
+          `${next?.id}: exploring again, budget $${next?.budgetUsd.toFixed(2)}, until ${next?.deadline}`,
         ],
-        data: { id: e.id, verdict: 'dig_deeper', exploration: next },
+        data: { id: next?.id, verdict: 'dig_deeper', exploration: next },
       };
     }
     case 'keep':
     case 'stop': {
-      const p = need();
-      const row = agentInitiative(p, needId());
-      p.store.recordDecision({
-        target: row.id,
-        gate: 'self_start',
-        verdict: sub,
-        reason: null,
-        option: null,
-        decidedBy: CLI_DECIDER,
-      });
+      const r = await decide(need(), { target: needId(), gate: 'self_start', verdict: sub }, now);
       return {
-        lines: [`${row.id}: ${sub === 'keep' ? 'kept (active)' : 'stopped'}`],
-        data: { id: row.id, verdict: sub },
+        lines: [`${r.initiative?.id}: ${sub === 'keep' ? 'kept (active)' : 'stopped'}`],
+        data: { id: r.initiative?.id, verdict: sub },
       };
     }
     default: {
-      const row = agentInitiative(need(), needId());
+      const r = await decide(
+        need(),
+        { target: needId(), gate: 'self_start', verdict: 'make_mine' },
+        now,
+      );
+      const row = r.initiative;
+      if (!row) throw invalid('make-mine returned no initiative');
       return {
         lines: [
           `Making ${row.id} yours rewrites its file: ask in chat ("make ${row.id} mine"), where you confirm the change.`,

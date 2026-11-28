@@ -40,6 +40,7 @@ import { evalRouter } from './eval';
 import { evolverRouter } from './evolver';
 import { executionRouter } from './execution';
 import { goalsRouter } from './goals';
+import { constitutionRouter, initiativesRouter } from './initiatives';
 import { kanbanRouter } from './kanban';
 import { keysRouter } from './keys';
 import { learningRouter } from './learning';
@@ -137,6 +138,8 @@ export const apiRouter = {
   outbox: outboxRouter,
   learning: learningRouter,
   amendments: amendmentsRouter,
+  initiatives: initiativesRouter,
+  constitution: constitutionRouter,
   channels: channelsRouter,
   a2a: a2aRouter,
   namedSecrets: namedSecretsRouter,

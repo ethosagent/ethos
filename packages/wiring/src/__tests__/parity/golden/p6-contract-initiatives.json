@@ -1,0 +1,1293 @@
+{
+  "initiatives.activity": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "initiativeId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 200,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "initiativeId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "windows": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "costUsd": {
+                "type": "number"
+              },
+              "endReason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ended": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "explorationId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "findings": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "survey",
+                  "scan",
+                  "window",
+                  "brief"
+                ],
+                "type": "string"
+              },
+              "reads": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "started": {
+                "type": "string"
+              },
+              "tools": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "explorationId",
+              "kind",
+              "started",
+              "ended",
+              "tools",
+              "reads",
+              "findings",
+              "costUsd",
+              "endReason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "windows"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.decide": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "gate": {
+              "const": "gate1_explore",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "target": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "approve",
+                "reject",
+                "snooze"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "target",
+            "gate",
+            "verdict"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "gate": {
+              "const": "gate2_adopt",
+              "type": "string"
+            },
+            "option": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "target": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "adopt",
+                "dig_deeper",
+                "park"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "target",
+            "gate",
+            "verdict"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "gate": {
+              "const": "self_start",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "target": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "keep",
+                "make_mine",
+                "stop"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "target",
+            "gate",
+            "verdict"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "chatLink": {
+          "type": "string"
+        },
+        "exploration": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "idea",
+                "proposed",
+                "exploring",
+                "rejected",
+                "stalled",
+                "briefed",
+                "adopted",
+                "parked"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "state"
+          ],
+          "type": "object"
+        },
+        "initiative": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "active",
+                "self_started",
+                "paused",
+                "review",
+                "ended",
+                "stopped"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "state"
+          ],
+          "type": "object"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.exploringNow": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "current": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "costSoFarUsd": {
+                  "type": "number"
+                },
+                "explorationId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "initiativeId": {
+                  "type": "string"
+                },
+                "initiativeTitle": {
+                  "type": "string"
+                },
+                "question": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "readOnly": {
+                  "const": true,
+                  "type": "boolean"
+                },
+                "started": {
+                  "type": "string"
+                },
+                "windowId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "windowId",
+                "initiativeId",
+                "initiativeTitle",
+                "explorationId",
+                "question",
+                "started",
+                "costSoFarUsd",
+                "readOnly"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "current"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.get": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "explorations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "briefMd": {
+                "type": "string"
+              },
+              "budgetUsd": {
+                "type": "number"
+              },
+              "deadline": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "question": {
+                "type": "string"
+              },
+              "recommendedOption": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "spentUsd": {
+                "type": "number"
+              },
+              "state": {
+                "enum": [
+                  "idea",
+                  "proposed",
+                  "exploring",
+                  "rejected",
+                  "stalled",
+                  "briefed",
+                  "adopted",
+                  "parked"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "question",
+              "state",
+              "budgetUsd",
+              "spentUsd",
+              "deadline"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "guidance": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "mapsTo": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "mapped",
+                  "unreachable",
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "status",
+              "mapsTo"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "initiative": {
+          "additionalProperties": false,
+          "properties": {
+            "autonomy": {
+              "additionalProperties": false,
+              "properties": {
+                "ask_above_usd": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "mode": {
+                  "enum": [
+                    "ask",
+                    "free_under",
+                    "free"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "type": "object"
+            },
+            "budget": {
+              "additionalProperties": false,
+              "properties": {
+                "max_open_explorations": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usd_per_day": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "usd_per_exploration": {
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "usd_per_day",
+                "usd_per_exploration",
+                "max_open_explorations"
+              ],
+              "type": "object"
+            },
+            "created_in": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "delivery": {
+              "additionalProperties": false,
+              "properties": {
+                "digest_time": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "owner_channel": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "owner_channel",
+                "digest_time"
+              ],
+              "type": "object"
+            },
+            "exclude": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "guidance": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "maps_to": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "status": {
+                    "enum": [
+                      "mapped",
+                      "unreachable",
+                      "refused"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "notes": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "origin": {
+              "enum": [
+                "human",
+                "agent"
+              ],
+              "type": "string"
+            },
+            "outcome": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "parent_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "sources": {
+              "items": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "sessions",
+                      "kanban",
+                      "memory",
+                      "web",
+                      "slack_read"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "repo": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "repo"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "state": {
+              "enum": [
+                "active",
+                "self_started",
+                "paused",
+                "review",
+                "ended",
+                "stopped"
+              ],
+              "type": "string"
+            },
+            "timeline": {
+              "additionalProperties": false,
+              "properties": {
+                "default_days": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "ends_on": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "explore_windows": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "review_on": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "window_minutes": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "explore_windows",
+                "window_minutes",
+                "default_days",
+                "review_on"
+              ],
+              "type": "object"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "version": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "origin",
+            "created_in",
+            "state",
+            "title",
+            "outcome",
+            "sources",
+            "exclude",
+            "guidance",
+            "autonomy",
+            "budget",
+            "timeline",
+            "delivery"
+          ],
+          "type": "object"
+        },
+        "personalityId": {
+          "type": "string"
+        },
+        "versions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "savedAt": {
+                "type": "string"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "yaml": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "initiative",
+        "guidance",
+        "yaml",
+        "versions",
+        "explorations"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "origin": {
+          "enum": [
+            "human",
+            "agent"
+          ],
+          "type": "string"
+        },
+        "personalityId": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "active",
+            "self_started",
+            "paused",
+            "review",
+            "ended",
+            "stopped"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "invalidReason": {
+                "type": "string"
+              },
+              "openExplorations": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "origin": {
+                "enum": [
+                  "human",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              "personalityId": {
+                "type": "string"
+              },
+              "spendTodayUsd": {
+                "type": "number"
+              },
+              "state": {
+                "enum": [
+                  "active",
+                  "self_started",
+                  "paused",
+                  "review",
+                  "ended",
+                  "stopped"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "personalityId",
+              "origin",
+              "state",
+              "title",
+              "version",
+              "spendTodayUsd",
+              "openExplorations"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.metrics": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sinceDays": {
+          "exclusiveMinimum": 0,
+          "maximum": 365,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "gate1": {
+          "additionalProperties": false,
+          "properties": {
+            "approved": {
+              "type": "number"
+            },
+            "asked": {
+              "type": "number"
+            },
+            "rate": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "asked",
+            "approved",
+            "rate"
+          ],
+          "type": "object"
+        },
+        "gate2": {
+          "additionalProperties": false,
+          "properties": {
+            "adopted": {
+              "type": "number"
+            },
+            "briefs": {
+              "type": "number"
+            },
+            "rate": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "briefs",
+            "adopted",
+            "rate"
+          ],
+          "type": "object"
+        },
+        "selfStart": {
+          "additionalProperties": false,
+          "properties": {
+            "kept": {
+              "type": "number"
+            },
+            "started": {
+              "type": "number"
+            },
+            "stopped": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "started",
+            "kept",
+            "stopped"
+          ],
+          "type": "object"
+        },
+        "since": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "since",
+        "gate1",
+        "gate2",
+        "selfStart"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.settings": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ceilings": {
+          "additionalProperties": false,
+          "properties": {
+            "maxUsdPerDay": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "maxUsdPerDayPerPersonality": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "guidance": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "mapsTo": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "mapped",
+                  "unreachable",
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "status",
+              "mapsTo"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "settings": {
+          "additionalProperties": false,
+          "properties": {
+            "dailyBudgetUsd": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "defaultAutonomy": {
+              "additionalProperties": false,
+              "properties": {
+                "askAboveUsd": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "mode": {
+                  "enum": [
+                    "ask",
+                    "free_under",
+                    "free"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "type": "object"
+            },
+            "delivery": {
+              "additionalProperties": false,
+              "properties": {
+                "digestTime": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "ownerChannel": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ownerChannel",
+                "digestTime"
+              ],
+              "type": "object"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "selfStart": {
+              "type": "boolean"
+            },
+            "standingGuidance": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "selfStart",
+            "dailyBudgetUsd",
+            "standingGuidance"
+          ],
+          "type": "object"
+        },
+        "status": {
+          "enum": [
+            "missing",
+            "loaded",
+            "invalid"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "settings",
+        "status",
+        "ceilings",
+        "guidance"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "initiatives.settingsSave": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "settings": {
+          "additionalProperties": false,
+          "properties": {
+            "dailyBudgetUsd": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "defaultAutonomy": {
+              "additionalProperties": false,
+              "properties": {
+                "askAboveUsd": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "mode": {
+                  "enum": [
+                    "ask",
+                    "free_under",
+                    "free"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "type": "object"
+            },
+            "delivery": {
+              "additionalProperties": false,
+              "properties": {
+                "digestTime": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "ownerChannel": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ownerChannel",
+                "digestTime"
+              ],
+              "type": "object"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "selfStart": {
+              "type": "boolean"
+            },
+            "standingGuidance": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "selfStart",
+            "dailyBudgetUsd",
+            "standingGuidance"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "personalityId",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "clamps": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "saved": {
+          "additionalProperties": false,
+          "properties": {
+            "dailyBudgetUsd": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "defaultAutonomy": {
+              "additionalProperties": false,
+              "properties": {
+                "askAboveUsd": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "mode": {
+                  "enum": [
+                    "ask",
+                    "free_under",
+                    "free"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "type": "object"
+            },
+            "delivery": {
+              "additionalProperties": false,
+              "properties": {
+                "digestTime": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "ownerChannel": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ownerChannel",
+                "digestTime"
+              ],
+              "type": "object"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "selfStart": {
+              "type": "boolean"
+            },
+            "standingGuidance": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "selfStart",
+            "dailyBudgetUsd",
+            "standingGuidance"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "ok",
+        "saved",
+        "clamps"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

@@ -64,6 +64,7 @@ import { SessionsRepository } from './features/sessions/repository';
 import { SessionsService } from './features/sessions/service';
 import { buildShareFeature } from './features/share/wire';
 import { builtinRouteModules } from './lib/builtin-route-modules';
+import { buildInitiativesService } from './lib/initiatives-service';
 import { lateDelegate, lateFn } from './lib/late-slot';
 import { createPendingLoop } from './lib/pending-loop';
 import { buildPlatformServices } from './lib/platform-services';
@@ -314,6 +315,8 @@ export interface CreateWebApiOptions {
    * answer `NOT_CONFIGURED`.
    */
   amendments?: AmendmentReader;
+  /** The loop's initiative enablement cache; see lib/initiatives-service.ts. */
+  initiativeEnablement?: Pick<import('@ethosagent/wiring').InitiativeEnablement, 'reload'>;
   /**
    * Auto-deny window for a pending approval, in ms. Omitted → the
    * `ApprovalsService` default (10 minutes); `0` disables the timeout so a
@@ -1007,6 +1010,11 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   // Self-amendments, read-only (D30): resolved per call, so the reader an
   // onboarding boot installs through `bindAgentLoop` is picked up.
   const amendmentsService = new AmendmentsService(() => bound.amendments ?? opts.amendments);
+  const initiativesService = buildInitiativesService(opts, storage);
+  const readConfigYaml = async () => {
+    const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+    return src === null ? null : parseConfigYaml(src);
+  };
   // `gateway.private_chats` as it stands on disk, read per call: a cron job's
   // audience stamp at create, and which sessions an Expression draft may quote.
   const readPrivateChats = async () => {
@@ -1052,10 +1060,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     // The operator's `decisions.*`, so each personality's decision sites are
     // resolved server-side for the Edit → Config notes (plan
     // decision-provider-personality §9). Same reader as `decisionsService`.
-    readDecisions: async () => {
-      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
-      return src === null ? undefined : parseConfigYaml(src).decisions;
-    },
+    readDecisions: async () => (await readConfigYaml())?.decisions,
   });
   // Connected wake satellites. Constructed BEFORE `ConfigService` because the
   // Settings write path pushes to it: eng-review D5 makes a Settings save the
@@ -1234,10 +1239,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     // A provider write's orphaned vault entries go through the same cleanup a
     // Settings save uses, rather than a second copy of it.
     deleteOrphanedSecrets: (refs) => configService.deleteOrphanedSecrets(refs),
-    readConfig: async () => {
-      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
-      return src === null ? null : parseConfigYaml(src);
-    },
+    readConfig: readConfigYaml,
     config: configRepo,
     personalities: {
       refresh: async () => {
@@ -1264,10 +1266,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   // the same `parseConfigYaml` reader the registry uses above, and writes
   // `decisions.provider` through `configRepo.transform`.
   const decisionsService = new DecisionsService({
-    readConfig: async () => {
-      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
-      return src === null ? null : parseConfigYaml(src);
-    },
+    readConfig: readConfigYaml,
     config: configRepo,
     secrets,
     // Each provider's `usedBy`: reloaded from disk first, so a personality
@@ -2183,6 +2182,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       outbox: outboxService,
       learning: learningService,
       amendments: amendmentsService,
+      initiatives: initiativesService,
       calls: callsService,
       observedChats: observedChatsService,
       toolRegistry: opts.toolRegistry,

@@ -42,6 +42,7 @@ import { createXSearchTool } from '@ethosagent/tools-x-search';
 import {
   type AgentSafety,
   type Constitution,
+  type DecisionRow,
   EthosError,
   type GoalStore,
   type InitiativeLedgerPort,
@@ -51,6 +52,7 @@ import {
   type MemoryProvider,
   type PersonalityConfig,
   type PersonalityRegistry,
+  type QuestionRow,
   SecretNotFoundError,
   type SecretRef,
   type SecretsResolver,
@@ -301,6 +303,10 @@ export interface LazyInitiativeStore {
   ready(): Promise<boolean>;
   /** An initiative's windows, oldest first; the scheduled tick reads them to see what already ran. */
   windows(initiativeId: string): WindowRow[];
+  /** An initiative's clarify questions, oldest first; the owner digest lists the unanswered ones. */
+  questions(initiativeId: string): QuestionRow[];
+  /** Decisions on a personality's initiatives since an ISO time; the digest tells owner-approved from automatic starts. */
+  decisionsSince(personalityId: string, sinceIso: string): DecisionRow[];
   /**
    * The daily cap `budget(...).capUsd` reports, per initiative: the YAML's `usd_per_day` clamped
    * by settings and the constitution. Set by the run loader on every load (so a lowered limit
@@ -380,6 +386,8 @@ export function createLazyInitiativeStore(deps: {
     recall,
     ready: async () => opened !== undefined || (await deps.storage.exists(path)),
     windows: (id) => open().windows(id),
+    questions: (id) => open().questions(id),
+    decisionsSince: (pid, since) => open().decisionsSince(pid, since),
     setCap: (id, usd) => void caps.set(id, usd),
     setExplorationCap: (id, usd) => void explorationCaps.set(id, usd),
     readSources: {},

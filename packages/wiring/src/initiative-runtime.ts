@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import {
   BRIEF_RESERVE_SHARE,
+  composeDigest,
   effectiveEnabled,
   type InitiativeRunner,
   type InitiativeSettings,
@@ -8,10 +9,18 @@ import {
   loadInitiativeSettings,
   PER_CALL_RESERVE_USD,
   planDay,
+  renderDigestMarkdown,
   SCAN_CAP_USD,
   slotsOnDay,
 } from '@ethosagent/initiative-runner';
-import type { Constitution, InitiativeRow, Logger, Storage, WindowKind } from '@ethosagent/types';
+import {
+  type Constitution,
+  digestIsEmpty,
+  type InitiativeRow,
+  type Logger,
+  type Storage,
+  type WindowKind,
+} from '@ethosagent/types';
 import type { DisposerStack } from './disposer-stack';
 import {
   createInitiativeLoader,
@@ -23,10 +32,37 @@ import {
 
 const DAY_MS = 86_400_000;
 const SWITCHED_OFF_FILE = '.switched-off.json';
+const DIGEST_SENT_FILE = '.digest-sent.json';
+
+/** What the digest send needs from the gateway: `Gateway.notifyTracked`, which holds it for quiet hours. */
+export type DigestNotify = (
+  target: { platform: string; chatId: string },
+  text: string,
+) => Promise<boolean | 'held'>;
+
+/** `delivery.ownerChannel` is `<platform>:<chatId>`. A bare platform names no chat, so nothing is sent. */
+function parseOwnerChannel(raw: string): { platform: string; chatId: string } | null {
+  const at = raw.indexOf(':');
+  if (at <= 0 || at === raw.length - 1) return null;
+  return { platform: raw.slice(0, at), chatId: raw.slice(at + 1) };
+}
+
+/** `HH:MM` (UTC, like the rest of the tick) to minutes since midnight; null when malformed. */
+function digestMinutes(raw: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
+  if (!m) return null;
+  const [h, min] = [Number(m[1]), Number(m[2])];
+  return h < 24 && min < 60 ? h * 60 + min : null;
+}
 
 export type InitiativeRuntimeDeps = Parameters<typeof createInitiativeRunnerFor>[0] & {
   /** Re-reads settings and the constitution so chat tool visibility follows a toggle. */
   enablement?: Pick<InitiativeEnablement, 'reload'>;
+  /**
+   * Sends the owner digest (`Gateway.notifyTracked`). Absent: no digest. The recipient is only ever
+   * `delivery.ownerChannel` from the personality's settings; no model output reaches it.
+   */
+  notify?: DigestNotify;
 };
 
 export interface InitiativeTickReport {
@@ -40,6 +76,8 @@ export interface InitiativeTickReport {
   paused: string[];
   /** Initiatives this tick resumed after their personality was switched back on. */
   resumed: string[];
+  /** Personalities whose digest this tick handed to `notify` (sent or held for quiet hours). */
+  digests: string[];
   /** Why the tick did nothing at all. */
   skipped?: 'busy' | 'disposed' | 'no-ledger';
 }
@@ -149,6 +187,78 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
     if (changed) await writeMarker(personalityId, marker);
   }
 
+  const digestPath = (personalityId: string): string =>
+    join(dataDir, 'personalities', personalityId, 'initiatives', DIGEST_SENT_FILE);
+
+  async function readDigestSent(
+    personalityId: string,
+  ): Promise<{ day: string; at: string } | null> {
+    try {
+      const raw = await storage.read(digestPath(personalityId));
+      const v: unknown = raw === null ? null : JSON.parse(raw);
+      if (typeof v === 'object' && v !== null && 'day' in v && 'at' in v) {
+        const { day, at } = v;
+        if (typeof day === 'string' && typeof at === 'string') return { day, at };
+      }
+    } catch (err) {
+      onError(err);
+    }
+    return null;
+  }
+
+  /**
+   * The morning digest, once per personality per UTC day at or after `delivery.digestTime`.
+   * Idempotent across ticks through `.digest-sent.json` (Storage, written after the hand-off). A
+   * `'held'` result (quiet hours, `Gateway.notifyTracked`) counts as handed off: the gateway owes
+   * it. `false` leaves the day open, so the next tick retries; limitation: the delivery ledger may
+   * also redeliver that first attempt. Pinned by initiative-digest.test.ts.
+   */
+  async function maybeDigest(
+    personalityId: string,
+    settings: InitiativeSettings,
+    now: Date,
+    report: InitiativeTickReport,
+  ): Promise<void> {
+    const { notify } = deps;
+    const delivery = settings.delivery;
+    if (!notify || !delivery) return;
+    const due = digestMinutes(delivery.digestTime);
+    const target = parseOwnerChannel(delivery.ownerChannel);
+    if (due === null || target === null) {
+      onError(
+        new Error(`digest for "${personalityId}": delivery.ownerChannel/digestTime not usable`),
+      );
+      return;
+    }
+    if (now.getUTCHours() * 60 + now.getUTCMinutes() < due) return;
+    const day = now.toISOString().slice(0, 10);
+    const sent = await readDigestSent(personalityId);
+    if (sent?.day === day) return;
+    const usdPerExploration = new Map<string, number>();
+    for (const row of store.list({ personalityId })) {
+      const loaded = await load(row.id);
+      if (loaded) usdPerExploration.set(row.id, loaded.file.budget.usd_per_exploration);
+    }
+    const digest = composeDigest(ledger, {
+      personalityId,
+      now,
+      since: sent ? new Date(sent.at) : new Date(now.getTime() - DAY_MS),
+      selfStart: settings.selfStart,
+      usdPerExploration,
+    });
+    if (!digestIsEmpty(digest)) {
+      const result = await notify(target, renderDigestMarkdown(digest));
+      if (result === false) {
+        onError(new Error(`digest for "${personalityId}" was not delivered; retrying next tick`));
+        return;
+      }
+      report.digests.push(personalityId);
+    }
+    const path = digestPath(personalityId);
+    await storage.mkdir(join(path, '..'));
+    await storage.writeAtomic(path, JSON.stringify({ day, at: now.toISOString() }));
+  }
+
   async function tickInitiative(
     row: InitiativeRow,
     settings: InitiativeSettings,
@@ -238,6 +348,11 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       const on = effectiveEnabled(settings, constitution);
       await applySwitch(id, on, report);
       if (!on) continue;
+      try {
+        await maybeDigest(id, settings, now, report);
+      } catch (err) {
+        onError(err);
+      }
       for (const row of store.list({ personalityId: id, states: ['active', 'self_started'] })) {
         if (disposed) return;
         await tickInitiative(row, settings, now, since, report);
@@ -248,7 +363,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
   return {
     runner,
     async tick(now = new Date()) {
-      const report: InitiativeTickReport = { ran: [], paused: [], resumed: [] };
+      const report: InitiativeTickReport = { ran: [], paused: [], resumed: [], digests: [] };
       if (disposed) return { ...report, skipped: 'disposed' };
       if (busy) return { ...report, skipped: 'busy' };
       busy = true;

@@ -34,6 +34,13 @@ export {
 } from './config-service';
 export { createKeyedLock, type KeyedLock, totalsRemainingUsd } from './day-caps';
 export { digDeeper } from './dig-deeper';
+export {
+  composeDigest,
+  type DigestInput,
+  type DigestSource,
+  renderBriefMarkdown,
+  renderDigestMarkdown,
+} from './digest';
 export { type GuidanceLevel, mapGuidance, mergeGuidance } from './guidance';
 export {
   INITIATIVE_INDEX_HEADER,
@@ -69,8 +76,19 @@ export {
   type SelfStartDeps,
   type SelfStartStore,
 } from './self-start';
+export {
+  clampInitiativeSettings,
+  initiativeSettingsPath,
+  renderConstitutionWithInitiatives,
+  renderInitiativeSettings,
+  validateConstitutionInitiatives,
+  validateInitiativeSettings,
+} from './settings-io';
 export { nextSlotAfter, slotsOnDay } from './slots';
-export { checkSources, repoSourcePaths } from './sources';
+export {
+  checkSources,
+  repoSourcePaths,
+} from './sources';
 export {
   INITIATIVE_CHAT_TOOLS,
   INITIATIVE_LEDGER_TOOLS,

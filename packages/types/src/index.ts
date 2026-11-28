@@ -28,6 +28,7 @@ export * from './goal';
 export * from './hooks';
 export * from './id-validation';
 export * from './initiative';
+export * from './initiative-digest';
 export * from './injector';
 export * from './lease';
 export * from './llm';
