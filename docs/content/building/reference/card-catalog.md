@@ -1,19 +1,19 @@
 ---
 title: Card catalog
-description: "The nine UI card kinds — payload fields, caps, and an emit_card example for each, plus the composition rules and the web/desktop-only boundary."
+description: "The nine UI card kinds — payload fields, caps, and an emit_card example for each, plus the composition rules and the surface boundary."
 kind: reference
 audience: developer
 slug: card-catalog
-updated: 2026-08-11
+updated: 2026-11-28
 ---
 
-A card is a typed, versioned block of structured output that the web and desktop surfaces render natively. Nine kinds exist. Eight are produced by the `emit_card` [tool](../../getting-started/glossary.md#tool) (a function the model can call); the ninth, `canvas`, is produced only by `render_ui`.
+A card is a typed, versioned block of structured output that the web and desktop surfaces render natively, and that Telegram draws as a formatted chat message. Nine kinds exist. Eight are produced by the `emit_card` [tool](../../getting-started/glossary.md#tool) (a function the model can call); the ninth, `canvas`, is produced only by `render_ui`.
 
 Payloads are data-shaped, never presentation-shaped. The model describes what the data *is* — a series, a set of rows, one record — and the client decides how it looks. No colors, no HTML, no chart specs, no URLs travel in a payload.
 
 ## Source {#source}
 
-Schemas: [`packages/web-contracts/src/cards.ts`](https://github.com/ethosagent/ethos/tree/main/packages/web-contracts/src/cards.ts). Tools: [`extensions/tools-ui/src/emit-card.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/tools-ui/src/emit-card.ts) and [`extensions/tools-ui/src/render-ui.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/tools-ui/src/render-ui.ts). Both tools carry the toolset `ui`.
+Schemas: [`packages/web-contracts/src/cards.ts`](https://github.com/ethosagent/ethos/tree/main/packages/web-contracts/src/cards.ts). Tools: [`extensions/tools-ui/src/emit-card.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/tools-ui/src/emit-card.ts) and [`extensions/tools-ui/src/render-ui.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/tools-ui/src/render-ui.ts). Both tools carry the toolset `ui`. Telegram: [`extensions/gateway/src/card-post.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/gateway/src/card-post.ts) posts the card, [`extensions/platform-telegram/src/cards/render.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/platform-telegram/src/cards/render.ts) renders it, and [`extensions/platform-telegram/src/store/card-actions.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/platform-telegram/src/store/card-actions.ts) holds its buttons.
 
 ## Envelope {#envelope}
 
@@ -23,9 +23,18 @@ The envelope is validated three times: at the tool (the model gets field-level i
 
 ## Surface boundary {#surface-boundary}
 
-Cards render on `web` and `desktop` only. Every channel adapter — Telegram, Discord, Slack, WhatsApp, email — drops the `ui` toolset before the model sees it, and both tools re-check `ctx.platform` as a backstop, returning `ok: false` with `Cards render on the web surface; answer in prose here.`
+| Surface | `emit_card` | `render_ui` (canvas) |
+|---|---|---|
+| `web`, `desktop` | Rendered by the web app. | Rendered in a sandboxed frame. |
+| Telegram | Rendered as chat messages ([mapping](./card-catalog-telegram.md)). | Refused. |
+| Every other channel (Discord, Slack, WhatsApp, email) and the CLI | Not offered. | Not offered. |
 
-This is the design, not a gap. Prose is the durable answer on every surface; cards are additive on the two surfaces that can draw them. A turn that emits no card is never blank.
+Two checks enforce the table:
+
+1. **The gate.** `Gateway.runTurn` passes `toolsetExclude` per adapter. An adapter that implements `CardCapableAdapter` (`postCard`, [`packages/types/src/platform.ts`](https://github.com/ethosagent/ethos/tree/main/packages/types/src/platform.ts)) keeps `emit_card` and loses only `CANVAS_EXCLUDED_TOOLS`; any other adapter loses both `CHANNEL_EXCLUDED_TOOLS` ([`extensions/gateway/src/gateway-pure.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/gateway/src/gateway-pure.ts)). The model never sees a tool it cannot use. Pinned by `extensions/gateway/src/__tests__/card-post.test.ts`.
+2. **The backstop.** `CARD_PLATFORMS` (`web`, `desktop`, `telegram`) and `CANVAS_PLATFORMS` (`web`, `desktop`) in [`extensions/tools-ui/src/ui-platform.ts`](https://github.com/ethosagent/ethos/tree/main/extensions/tools-ui/src/ui-platform.ts). Both tools and the guidance injector read the turn's surface through `surfaceOf`: the channel in `origin` (`telegram:<chatId>`) for a channel turn, else the loop's `platform`. A tool called off its surface returns `ok: false` with `Cards render on the web surface; answer in prose here.`
+
+Prose is the durable answer on every surface; cards are additive. A turn that emits no card is never blank, and a card that fails to post never costs the answer.
 
 ## Composition rules {#composition-rules}
 
@@ -38,6 +47,8 @@ A [personality](../../getting-started/glossary.md#personality) (a directory of f
 5. Reach for `render_ui` only for shapes the eight card kinds cannot express.
 
 The injector also lists the personality's own Canvas templates, scanned once at composition time from `<personality-dir>/ui/*.html`.
+
+On a Telegram turn the injector omits rule 5 and the template list, says that charts and wide tables arrive as text summaries, and asks the model to name the options in prose too. The text is built once per surface, so the prompt prefix stays byte-stable.
 
 ## text {#text}
 
@@ -148,7 +159,7 @@ Series beyond four, or points beyond 200, are rejected at the tool rather than t
 
 ## recommend_actions {#recommend-actions}
 
-For the one to three follow-ups that genuinely advance the conversation. Rendered as pills that inject their `prompt` into the composer. Emit it last in a turn, or not at all.
+For the one to three follow-ups that genuinely advance the conversation. Rendered as pills that inject their `prompt` into the composer on the web, and as inline-keyboard buttons that send it on Telegram ([Buttons](./card-catalog-telegram.md#buttons)). Emit it last in a turn, or not at all.
 
 | Field | Type | Required | Constraints |
 |---|---|---|---|
@@ -182,7 +193,7 @@ See [Author a Canvas template](../how-to/author-a-canvas-template.md) for the fu
 
 | `ToolResult.code` | When |
 |---|---|
-| `not_available` | The platform cannot draw cards; or template mode was used with no personality context, an unresolvable personality directory, no `ScopedStorage`, a missing or empty template file, or a template outside the personality's [`fs_reach`](../../getting-started/glossary.md#fs-reach) (the declared filesystem allowlist). |
+| `not_available` | The surface cannot draw cards (`render_ui` on Telegram included); or template mode was used with no personality context, an unresolvable personality directory, no `ScopedStorage`, a missing or empty template file, or a template outside the personality's [`fs_reach`](../../getting-started/glossary.md#fs-reach) (the declared filesystem allowlist). |
 | `input_invalid` | Unknown `kind`; payload failed schema validation (`field` carries the zod issue path); both or neither of `html`/`template`; a `template` name containing anything but letters, digits, hyphens, underscores; `html`, `data`, or `libraries` over cap. |
 | `execution_failed` | The template file exists and is in reach but could not be read. |
 
@@ -192,3 +203,4 @@ See [Author a Canvas template](../how-to/author-a-canvas-template.md) for the fu
 - [Tool interface](./tool-interface.md) — the `Tool` and `ToolResult` shapes these tools implement.
 - [Interactive charts in chat](../../using/how-to/interactive-charts-in-chat.md) — the fenced-chart path, which predates cards and still works.
 - [The audience boundary](../explanation/audience-boundary.md) — why surfaces differ in what they show.
+- [Cards on Telegram](./card-catalog-telegram.md) — the per-kind mapping, posting rules and button behaviour.
