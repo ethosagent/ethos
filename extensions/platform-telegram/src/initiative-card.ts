@@ -157,3 +157,19 @@ export function digestCard(d: InitiativeDigest): InitiativeCard {
   }
   return { text: lines.join('\n').trimEnd(), rows };
 }
+
+/**
+ * The messages that carry the digest as button cards: the whole digest when it fits one Telegram
+ * message, otherwise the digest without its briefs followed by one `briefCard` each. Null when no
+ * card can carry it (a piece is still over the limit, or nothing in it has a button), so the
+ * caller sends the Markdown text instead.
+ */
+export function digestPieces(d: InitiativeDigest, maxChars: number): InitiativeCard[] | null {
+  const whole = digestCard(d);
+  const pieces =
+    whole.text.length <= maxChars
+      ? [whole]
+      : [digestCard({ ...d, briefs: [] }), ...d.briefs.slice(0, MAX_ITEMS).map(briefCard)];
+  if (pieces.some((p) => p.text.length > maxChars)) return null;
+  return pieces.some((p) => p.rows.length > 0) ? pieces : null;
+}

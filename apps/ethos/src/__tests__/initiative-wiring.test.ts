@@ -1,15 +1,28 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { type AgentLoop, DefaultHookRegistry } from '@ethosagent/core';
+import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
+import { Gateway } from '@ethosagent/gateway';
 import { InitiativeConfigService } from '@ethosagent/initiative-runner';
 import { FsStorage } from '@ethosagent/storage-fs';
+import {
+  type DeliveryResult,
+  type InitiativeActionVerb,
+  type InitiativeDigest,
+  initiativeActionId,
+  type OutboundMessage,
+  type PlatformAdapter,
+  parseInitiativeAction,
+} from '@ethosagent/types';
 import {
   createInitiativeCliPort,
   initiativesDbPath,
   SQLiteInitiativeStore,
 } from '@ethosagent/wiring';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDigestNotify,
   createInitiativeTapHandler,
   type InitiativeTap,
   initiativePortFor,
@@ -217,5 +230,144 @@ describe('initiative buttons', () => {
       reply: async () => {},
     } as never);
     expect(taps).toEqual(['telegram']);
+  });
+});
+
+const DIGEST = (explorationId: string): InitiativeDigest => ({
+  personalityId: 'pm',
+  generatedAt: '2026-11-28T08:00:00.000Z',
+  since: '2026-11-27T08:00:00.000Z',
+  ownWork: { windows: 0, spentUsd: 0, explorations: [] },
+  needsYes: [{ explorationId, question: 'Which channel converts?', estimateUsd: 1 }],
+  agentInitiatives: [],
+  briefs: [],
+  questions: [],
+  suggestions: [],
+});
+
+describe('digest delivery', () => {
+  it('forwards the digest and the owner channel to the tracked send, as the one bot there is', async () => {
+    const calls: unknown[][] = [];
+    const notify = createDigestNotify({
+      listAdapters: () => [{ id: 'telegram:bot1' }, { id: 'telegram:bot1' }],
+      notifyTracked: async (...args) => {
+        calls.push(args);
+        return true;
+      },
+    });
+    const digest = DIGEST('EXP-0001');
+    await expect(notify({ platform: 'telegram', chatId: '42' }, 'md', digest)).resolves.toBe(true);
+    expect(calls).toEqual([
+      [{ platform: 'telegram', chatId: '42', botKey: 'bot1' }, 'md', { initiativeDigest: digest }],
+    ]);
+  });
+
+  it('refuses the send when more than one bot serves the owner platform', async () => {
+    const notifyTracked = vi.fn(async () => true as const);
+    const notify = createDigestNotify({
+      listAdapters: () => [{ id: 'telegram:bot1' }, { id: 'telegram:bot2' }],
+      notifyTracked,
+    });
+    await expect(
+      notify({ platform: 'telegram', chatId: '42' }, 'md', DIGEST('EXP-0001')),
+    ).resolves.toBe(false);
+    expect(notifyTracked).not.toHaveBeenCalled();
+  });
+
+  // A card-capable adapter as the gateway sees one: it renders the buttons from the digest (the
+  // real `digestCard` / `digestBlocks` ids are pinned in the platform packages) and routes a tap
+  // through `onInitiativeAction`, exactly as `wireInitiativeAdapters` expects.
+  function cardAdapter() {
+    const delivered: Array<{ chatId: string; buttons: string[]; text: string }> = [];
+    const texts: OutboundMessage[] = [];
+    let tapHandler: ((e: never) => unknown) | undefined;
+    const adapter = {
+      id: 'telegram:bot1',
+      displayName: 'Telegram',
+      capabilities: { platform: 'telegram' },
+      canSendTyping: false,
+      canEditMessage: false,
+      canReact: false,
+      canSendFiles: false,
+      maxMessageLength: 4096,
+      start: async () => {},
+      stop: async () => {},
+      onMessage: () => {},
+      health: async () => ({ ok: true }),
+      send: async (_c: string, m: OutboundMessage): Promise<DeliveryResult> => {
+        texts.push(m);
+        return { ok: true };
+      },
+      sendInitiativeDigest: async (
+        chatId: string,
+        d: InitiativeDigest,
+        fallback: { text: string },
+      ): Promise<DeliveryResult> => {
+        const verbs: InitiativeActionVerb[] = ['approve', 'reject'];
+        delivered.push({
+          chatId,
+          text: fallback.text,
+          buttons: d.needsYes.flatMap((p) =>
+            verbs.map((v) => initiativeActionId(v, p.explorationId)),
+          ),
+        });
+        return { ok: true, messageId: '7' };
+      },
+      onInitiativeAction: (h: (e: never) => unknown) => {
+        tapHandler = h;
+      },
+    };
+    const tapAs = async (data: string, userId: string) => {
+      const parsed = parseInitiativeAction(data);
+      const answers: string[] = [];
+      await tapHandler?.({
+        ...parsed,
+        userId,
+        answer: async (t?: string) => void answers.push(t ?? ''),
+        reply: async () => true,
+      } as never);
+      return answers;
+    };
+    return { adapter, delivered, texts, tapAs };
+  }
+
+  it('a delivered button runs the owner-only tap handler: owner records, non-owner is refused', async () => {
+    const { proposed } = await seed();
+    const fake = cardAdapter();
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'bot1',
+          loop: {
+            run: async function* () {
+              yield { type: 'done' as const, text: '', turnCount: 1 };
+            },
+            hooks: new DefaultHookRegistry(),
+          } as unknown as AgentLoop,
+          binding: { type: 'personality' as const, name: 'default' },
+        },
+      ],
+      deliveryLedger: new SQLiteDeliveryLedger(':memory:'),
+      adapters: new Map([['telegram', fake.adapter as unknown as PlatformAdapter]]),
+      clarifySweepIntervalMs: 0,
+    });
+    const wired = wireInitiativeAdapters(handler(), [fake.adapter]);
+    expect(wired).toBe(1);
+
+    const notify = createDigestNotify(gateway);
+    await expect(
+      notify({ platform: 'telegram', chatId: '42' }, 'md fallback', DIGEST(proposed)),
+    ).resolves.toBe(true);
+    expect(fake.texts).toEqual([]);
+    expect(fake.delivered).toHaveLength(1);
+    expect(fake.delivered[0]?.text).toBe('md fallback');
+    const [approve] = fake.delivered[0]?.buttons ?? [];
+    expect(approve).toBe(`init:approve:${proposed}`);
+
+    expect(await fake.tapAs(approve ?? '', '999')).toEqual(['Only the owner can decide this.']);
+    expect(await state(proposed)).toBe('proposed');
+
+    expect(await fake.tapAs(approve ?? '', '42')).toEqual(['Approved. It starts exploring.']);
+    expect(await state(proposed)).not.toBe('proposed');
   });
 });

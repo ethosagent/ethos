@@ -59,12 +59,12 @@ Once per UTC day, at or after the personality's `delivery.digestTime`, the tick 
 | Rule | Detail |
 |---|---|
 | Recipient | `<platform>:<chatId>` from `settings.yaml`. Nothing a model wrote picks it. |
-| Format | Text-only Markdown (`renderDigestMarkdown`). Each item carries its `ethos initiatives` command. |
-| Transport | `Gateway.notifyTracked`: it rides the delivery ledger and holds the notice for quiet hours. |
+| Format | Markdown (`renderDigestMarkdown`), with each item's `ethos initiatives` command. On Slack and Telegram the same digest also goes out as a button card (`digestBlocks`, `digestCard`). The Markdown is the ledger's content and the fallback. |
+| Transport | `Gateway.notifyTracked`: it rides the delivery ledger and holds the notice for quiet hours. A card-capable adapter (`sendInitiativeDigest`) renders the buttons inside that one tracked send; any other adapter gets the Markdown. |
 | Duplicates | `.digest-sent.json` under the personality's `initiatives/` folder records the day, written before the hand-off. A refused send restores the marker so the next tick retries. |
 | Several bots | If more than one bot serves the owner's platform, the send is refused (`createDigestNotify` returns `false`) rather than going out as the wrong bot. |
 
-No code sends the Telegram or Slack button cards (`digestCard`, `digestBlocks`, `briefCard`) today. The tap handler below works for cards sent by something else.
+Telegram sends one card for the digest, or the digest without its briefs plus one `briefCard` each when it is over 4096 characters. If a card cannot be built or carries no button, the Markdown text goes out instead. A notice held for quiet hours, and a ledger redelivery, carry only the Markdown: they arrive without buttons. Pinned by `extensions/gateway/src/__tests__/initiative-digest-delivery.test.ts`, `extensions/platform-telegram/src/__tests__/initiative-digest-send.test.ts` and `extensions/platform-slack/src/__tests__/initiative-digest-send.test.ts`. The buttons are answered by the tap handler below.
 
 ## Channel taps {#taps}
 

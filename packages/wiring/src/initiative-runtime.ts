@@ -16,6 +16,7 @@ import {
 import {
   type Constitution,
   digestIsEmpty,
+  type InitiativeDigest,
   type InitiativeRow,
   type Logger,
   type Storage,
@@ -38,6 +39,8 @@ const DIGEST_SENT_FILE = '.digest-sent.json';
 export type DigestNotify = (
   target: { platform: string; chatId: string },
   text: string,
+  /** The digest behind `text`, so a card-capable adapter can render its buttons. Text stays the fallback. */
+  digest?: InitiativeDigest,
 ) => Promise<boolean | 'held'>;
 
 /** `delivery.ownerChannel` is `<platform>:<chatId>`. A bare platform names no chat, so nothing is sent. */
@@ -264,7 +267,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
     let result: boolean | 'held' | undefined;
     let thrown: unknown;
     try {
-      result = await notify(target, renderDigestMarkdown(digest));
+      result = await notify(target, renderDigestMarkdown(digest), digest);
     } catch (err) {
       thrown = err;
     }

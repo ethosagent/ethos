@@ -50,6 +50,7 @@ import type {
   ClarifyResponse,
   DeliveryResult,
   InboundMessage,
+  InitiativeDigest,
   OutboundMessage,
   PersonalityVoiceConfig,
   PlatformAdapter,
@@ -149,6 +150,7 @@ import {
   transcriptTimestamp,
   type WakeReview,
 } from './gateway-pure';
+import { isInitiativeCardAdapter } from './initiative-card';
 import { activeLaneJobSummary, parseJobCommand, runJobCommand, stopJobByRef } from './job-commands';
 import { LaneManager } from './lane-manager';
 import { LaneSessionFiles } from './lane-sessions';
@@ -4794,8 +4796,9 @@ export class Gateway {
       inboundRef?: string;
     },
     message: OutboundMessage,
+    card?: InitiativeDigest,
   ): Promise<boolean> {
-    return (await this.sendTrackedDetailed(target, message)).confirmed;
+    return (await this.sendTrackedDetailed(target, message, card)).confirmed;
   }
 
   /**
@@ -4820,6 +4823,7 @@ export class Gateway {
       inboundRef?: string;
     },
     message: OutboundMessage,
+    card?: InitiativeDigest,
   ): Promise<{ confirmed: boolean; obligationId: string | null }> {
     const binding = this.deliveryBinding(target.botKey, target.platform, target.inboundRef);
     const obligationId = await beginDelivery(binding, {
@@ -4835,7 +4839,16 @@ export class Gateway {
     // sweep does not redeliver a send that outlasts its age grace.
     let result: DeliveryResult;
     try {
-      result = await target.adapter.send(target.chatId, message).catch(
+      // An owner digest goes out as a button card on an adapter that renders one, with the same
+      // text the obligation holds as its fallback; everything else is the plain send.
+      const attempt =
+        card && isInitiativeCardAdapter(target.adapter)
+          ? target.adapter.sendInitiativeDigest(target.chatId, card, {
+              text: message.text,
+              ...(message.threadId ? { threadId: message.threadId } : {}),
+            })
+          : target.adapter.send(target.chatId, message);
+      result = await attempt.catch(
         (err: unknown): DeliveryResult => ({
           ok: false,
           error: err instanceof Error ? err.message : String(err),
@@ -4910,6 +4923,11 @@ export class Gateway {
       answersInbound?: boolean;
     },
     text: string,
+    /**
+     * The owner digest behind `text`. A card-capable adapter renders its buttons; a held notice
+     * (quiet hours) and a ledger redelivery carry only `text`. Not a recipient: that stays `target`.
+     */
+    extra?: { initiativeDigest?: InitiativeDigest },
   ): Promise<boolean | 'held'> {
     const refuse = (cause: string): false => {
       this.observability?.recordSafetyBlock({
@@ -4961,6 +4979,7 @@ export class Gateway {
         sessionKey,
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
+      extra?.initiativeDigest,
     );
   }
 

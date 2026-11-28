@@ -16,6 +16,7 @@ import type {
   AttachmentCache,
   DeliveryResult,
   InboundMessage,
+  InitiativeDigest,
   Logger,
   OutboundMessage,
   PlatformAdapter,
@@ -34,7 +35,7 @@ import {
   type RoomModeDefault,
 } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
-import type { InitiativeActionEvent } from './initiative-card';
+import { digestPieces, type InitiativeActionEvent } from './initiative-card';
 import type {
   OutboxCardBody,
   OutboxCardInput,
@@ -1872,6 +1873,48 @@ export class TelegramAdapter
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * The owner digest as inline-keyboard cards (`init:` buttons), called by `Gateway.notifyTracked`
+   * (extensions/gateway/src/initiative-card.ts) inside the delivery ledger's send. Any failure to
+   * build the card sends `fallback.text` through {@link send}; once one card has landed a later
+   * failure is reported partial-delivered, like a chunked reply.
+   */
+  async sendInitiativeDigest(
+    chatId: string,
+    digest: InitiativeDigest,
+    fallback: { text: string; threadId?: string },
+  ): Promise<DeliveryResult> {
+    let pieces: ReturnType<typeof digestPieces> = null;
+    try {
+      pieces = digestPieces(digest, this.maxMessageLength);
+    } catch (err) {
+      this.logger?.warn(
+        `[telegram] initiative card build failed, sending text: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!pieces) return this.send(chatId, fallback);
+    const threadOpt = fallback.threadId ? { message_thread_id: Number(fallback.threadId) } : {};
+    const ids: string[] = [];
+    for (const piece of pieces) {
+      try {
+        const { InlineKeyboard } = grammy();
+        const kb = new InlineKeyboard();
+        piece.rows.forEach((row, r) => {
+          for (const btn of row) kb.text(btn.label, btn.data);
+          if (r < piece.rows.length - 1) kb.row();
+        });
+        const sent = await this.bot.api.sendMessage(Number(chatId), piece.text, {
+          ...(piece.rows.length > 0 ? { reply_markup: kb } : {}),
+          ...threadOpt,
+        });
+        ids.push(String(sent.message_id));
+      } catch (err) {
+        return ids.length > 0 ? telegramPartial(ids, pieces.length, err) : telegramFailure(err);
+      }
+    }
+    return { ok: true, messageId: ids[0] };
   }
 
   /**

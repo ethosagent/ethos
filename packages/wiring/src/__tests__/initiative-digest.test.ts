@@ -167,6 +167,20 @@ describe('initiative digest', () => {
     expect(sent).toHaveLength(2);
   });
 
+  it('hands the composed digest to notify beside the text, for the button card', async () => {
+    const seen: Array<{ personalityId: string; needsYes: number } | undefined> = [];
+    const { runtime, save } = await setup(async (_target, _text, digest) => {
+      seen.push(
+        digest && { personalityId: digest.personalityId, needsYes: digest.needsYes.length },
+      );
+      return true;
+    });
+    await save('product-manager', 'activation');
+    writeDelivery('product-manager', 'telegram:42');
+    await runtime.tick(DUE);
+    expect(seen).toEqual([{ personalityId: 'product-manager', needsYes: 1 }]);
+  });
+
   it('quiet hours hold delivery', async () => {
     let calls = 0;
     const { runtime, save } = await setup(async () => {

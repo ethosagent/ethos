@@ -63,7 +63,7 @@ These are limits, not guarantees. Each has no enforcer unless one is named.
 | Stopped-topic match is narrow | A draft is refused as a repeat of a stopped initiative only by id or by identical normalised title. A reworded draft passes. |
 | Lexical path checks | `checkSources` folds `~` and `..` but does not resolve symlinks. A symlink inside a readable root that points outside it is not caught. |
 | Shallow history | `initiatives.get` returns only the current version in `versions`. |
-| Digest has no buttons | The digest goes out as text through `notifyTracked`, which has no blocks path. The button builders (`digestCard`, `digestBlocks`) exist, but nothing in the repo sends them. Taps work only on cards sent by something else. Each digest line carries the CLI command instead. |
+| Held digests have no buttons | On Slack and Telegram the digest goes out with buttons. A digest held for quiet hours, or redelivered by the delivery ledger after a refused send, goes out as Markdown only, and each line carries the CLI command instead. Other platforms always get Markdown. |
 | Taps leave the message alone | A tap records the decision and answers. It does not edit the original message to remove its buttons. |
 | TUI strip follows one personality | The "exploring now" strip shows the personality the TUI launched with. `/personality` switches are not followed. |
 | GET side effects | A GET can unsubscribe or trigger a magic link on a badly built site. |

@@ -1,5 +1,5 @@
 import { ethosDir } from '@ethosagent/config';
-import type { InitiativeActionVerb, Storage } from '@ethosagent/types';
+import type { InitiativeActionVerb, InitiativeDigest, Storage } from '@ethosagent/types';
 import {
   createInitiativeCliPort,
   type DecideGate,
@@ -202,6 +202,7 @@ export interface DigestGateway {
   notifyTracked(
     target: { platform: string; chatId: string; botKey?: string },
     text: string,
+    extra?: { initiativeDigest?: InitiativeDigest },
   ): Promise<boolean | 'held'>;
   listAdapters(): ReadonlyArray<{ id: string }>;
 }
@@ -210,13 +211,15 @@ export interface DigestGateway {
  * The digest sender: `Gateway.notifyTracked`, which rides the delivery ledger and holds the notice
  * for quiet hours (extensions/gateway/src/__tests__/notify-tracked.test.ts, U11). The recipient is
  * the `<platform>:<chatId>` from the personality's `delivery.ownerChannel`; nothing a model wrote
- * reaches it. Limitation: with more than one bot on the platform the bot is ambiguous, so the
- * send is refused (returns false) rather than going out as the wrong bot. The digest is text only
- * (notifyTracked has no blocks path), so the buttons of `digestCard` / `digestBlocks` are not sent;
- * the text carries the CLI command for each action.
+ * reaches it. With more than one bot on the platform the bot is ambiguous, so the send is refused
+ * (returns false) rather than going out as the wrong bot (pinned by initiative-wiring.test.ts).
+ * The digest rides along so a card-capable adapter (Slack, Telegram) renders `digestBlocks` /
+ * `digestCard` with the `init:` buttons that `createInitiativeTapHandler` answers; the Markdown
+ * text, one CLI command per action, is the ledger's content and the fallback. Limitation: a notice
+ * held for quiet hours and a ledger redelivery carry only that text, so they arrive without buttons.
  */
 export function createDigestNotify(gateway: DigestGateway): DigestNotify {
-  return async (target, text) => {
+  return async (target, text, digest) => {
     const ids = [
       ...new Set(
         gateway
@@ -229,7 +232,11 @@ export function createDigestNotify(gateway: DigestGateway): DigestNotify {
     if (only === undefined || ids.length > 1) return false;
     const colon = only.indexOf(':');
     const botKey = colon > 0 ? only.slice(colon + 1) : undefined;
-    return gateway.notifyTracked({ ...target, ...(botKey ? { botKey } : {}) }, text);
+    return gateway.notifyTracked(
+      { ...target, ...(botKey ? { botKey } : {}) },
+      text,
+      digest ? { initiativeDigest: digest } : undefined,
+    );
   };
 }
 

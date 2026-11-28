@@ -21,6 +21,7 @@ import type {
   AttachmentCache,
   DeliveryResult,
   InboundMessage,
+  InitiativeDigest,
   Logger,
   OutboundMessage,
   PlatformAdapter,
@@ -44,6 +45,7 @@ import {
   CLARIFY_CHOICE_ACTION_ID,
   CLARIFY_MODAL_CALLBACK_ID,
 } from './blocks/clarify';
+import { digestBlocks } from './blocks/initiative';
 import { plaintextFallback } from './blocks/shared';
 import { chunkText, reflowChunks } from './chunking';
 import {
@@ -309,6 +311,9 @@ const LONG_REPLY_SUFFIX = '\n\n*full answer attached*';
 const LONG_REPLY_FILENAME = 'answer.md';
 /** Default long-reply threshold, as a multiple of `maxMessageLength`. */
 const LONG_REPLY_CHUNK_MULTIPLE = 3;
+/** Slack's cap on blocks per message, and the alt `text` kept beside them. */
+const SLACK_MAX_BLOCKS = 50;
+const SLACK_ALT_TEXT_MAX = 3000;
 
 /**
  * The lead message for a long answer: the text up to the first chunk boundary
@@ -1159,6 +1164,41 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
           error: `partial: ${posted.length} of ${total} chunks delivered; ${error}`,
         };
       }
+      return slackFailure(err);
+    }
+  }
+
+  /**
+   * The owner digest as Block Kit with `init:` buttons, called by `Gateway.notifyTracked`
+   * (extensions/gateway/src/initiative-card.ts) inside the delivery ledger's send. `fallback.text`
+   * is the message's text (notification and screen-reader alt) and is what goes out through
+   * {@link send} when the blocks cannot be built or exceed Slack's 50-block cap.
+   */
+  async sendInitiativeDigest(
+    chatId: string,
+    digest: InitiativeDigest,
+    fallback: { text: string; threadId?: string },
+  ): Promise<DeliveryResult> {
+    let blocks: ReturnType<typeof digestBlocks> | null = null;
+    try {
+      const built = digestBlocks(digest);
+      blocks = built.length <= SLACK_MAX_BLOCKS ? built : null;
+    } catch (err) {
+      this.logger.warn(
+        `[slack] initiative blocks build failed, sending text: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!blocks) return this.send(chatId, fallback);
+    try {
+      const res = await this.client.chat.postMessage({
+        channel: chatId,
+        text: toNativeMarkdown(fallback.text).slice(0, SLACK_ALT_TEXT_MAX),
+        blocks,
+        ...(fallback.threadId ? { thread_ts: fallback.threadId } : {}),
+        link_names: false,
+      });
+      return { ok: true, ...(res.ts ? { messageId: res.ts } : {}) };
+    } catch (err) {
       return slackFailure(err);
     }
   }
