@@ -343,20 +343,24 @@ const PERMANENT_SLACK_ERRORS = new Set([
  * every transport failure are left to the gateway's backoff.
  */
 function isPermanentSlackError(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null || !('data' in err)) return false;
+  const code = slackErrorCode(err);
+  return code !== undefined && PERMANENT_SLACK_ERRORS.has(code);
+}
+
+/** The Web API error code (`data.error`) a failed call carries, if any. */
+function slackErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null || !('data' in err)) return undefined;
   const data = err.data;
-  if (typeof data !== 'object' || data === null || !('error' in data)) return false;
-  return typeof data.error === 'string' && PERMANENT_SLACK_ERRORS.has(data.error);
+  if (typeof data !== 'object' || data === null || !('error' in data)) return undefined;
+  return typeof data.error === 'string' ? data.error : undefined;
 }
 
 /** Web API codes meaning Slack rejected the request body itself, so a retry of it cannot succeed. */
 const REFUSED_SLACK_SHAPES = new Set(['invalid_blocks', 'msg_too_long', 'invalid_arguments']);
 
 function isRefusedSlackShape(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null || !('data' in err)) return false;
-  const data = err.data;
-  if (typeof data !== 'object' || data === null || !('error' in data)) return false;
-  return typeof data.error === 'string' && REFUSED_SLACK_SHAPES.has(data.error);
+  const code = slackErrorCode(err);
+  return code !== undefined && REFUSED_SLACK_SHAPES.has(code);
 }
 
 /**
