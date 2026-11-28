@@ -15,6 +15,7 @@
 // 'ambiguous column is reported, not guessed').
 
 import type { AttrSpec, FactAuthor, GraphBundle, WorldSchema } from '@ethosagent/types';
+import type { EntityRef } from '../proposal-payload';
 
 // ---------------------------------------------------------------- parser
 
@@ -83,10 +84,6 @@ const toCsv = (rows: string[][]): string =>
 
 // ---------------------------------------------------------------- import
 
-export interface EntityRef {
-  type: string;
-  name: string;
-}
 export interface EntityDraft extends EntityRef {
   sourceRef: string;
   author: FactAuthor;
