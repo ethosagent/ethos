@@ -130,9 +130,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     const abort = new AbortController();
     const guard = createWindowGuard(
       {
-        // The YAML is the cap (the store's `capUsd` comes from an injected `capFor`, which the
-        // lazy wiring store does not have); the store supplies what the day already spent.
-        dayRemainingUsd: Math.max(0, file.budget.usd_per_day - budget.spentUsd),
+        // One source: the store's cap (`capFor`, bound by wiring to the clamped `usd_per_day`).
+        dayRemainingUsd: Math.max(0, budget.capUsd - budget.spentUsd),
         explorationRemainingUsd,
         perCallReserveUsd: PER_CALL_RESERVE_USD,
       },

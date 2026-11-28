@@ -14,7 +14,12 @@ export {
   parseInitiativeFile,
   type SourceEntry,
 } from './config-schema';
-export { InitiativeConfigService, type InitiativeConfigServiceDeps } from './config-service';
+export {
+  InitiativeConfigService,
+  type InitiativeConfigServiceDeps,
+  MAX_SELF_STARTED_DEFAULT,
+  SELF_START_POOL_USD_DEFAULT,
+} from './config-service';
 export { type GuidanceLevel, mapGuidance, mergeGuidance } from './guidance';
 export {
   INITIATIVE_INDEX_HEADER,

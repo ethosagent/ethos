@@ -2007,7 +2007,7 @@ export async function buildAgentLoop(
   const initiativeRunner = createInitiativeRunnerFor({
     storage: wiringCtx.storage,
     dataDir,
-    store: initiativeLedger.store,
+    ledger: initiativeLedger,
     personalities,
     llm,
     safety,

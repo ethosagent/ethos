@@ -65,7 +65,7 @@ function fakeStore(opts: { seedIdeas?: string[] } = {}) {
     getExploration: (id) => explorations.find((e) => e.id === id) ?? null,
     explorations: () => [...explorations],
     ideas: () => [...ideas],
-    budget: () => ({ spentUsd: 0, capUsd: 0, explorationsOpen: 0 }),
+    budget: () => ({ spentUsd: 0, capUsd: dayCap, explorationsOpen: 0 }),
     get: () => null,
   };
   const propose = (q: { ideaId: string | null; question: string; estimateUsd: number }) => {
@@ -166,11 +166,16 @@ function build(
   });
 }
 
-const ownedWithDayCap = (usdPerDay: number) => async () => ({
-  personalityId: 'product-manager',
-  file: { ...FILE, budget: { ...FILE.budget, usd_per_day: usdPerDay } },
-  sourcePaths: [],
-});
+// The store's cap, as wiring binds it: the loader sets it from the clamped usd_per_day.
+let dayCap = 0;
+const ownedWithDayCap = (usdPerDay: number) => async () => {
+  dayCap = usdPerDay;
+  return {
+    personalityId: 'product-manager',
+    file: { ...FILE, budget: { ...FILE.budget, usd_per_day: usdPerDay } },
+    sourcePaths: [] as string[],
+  };
+};
 const owned = ownedWithDayCap(3);
 
 afterEach(() => vi.restoreAllMocks());

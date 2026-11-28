@@ -176,7 +176,7 @@ describe('initiative survey through the wiring factory (manual-run stand-in)', (
     const runner = createInitiativeRunnerFor({
       storage,
       dataDir,
-      store: ledger.store,
+      ledger,
       personalities,
       llm,
       safety: createTestSafety(),
@@ -199,6 +199,8 @@ describe('initiative survey through the wiring factory (manual-run stand-in)', (
 
     // The ledger holds the window with the same numbers, charged to the day.
     expect(ledger.store.budget(INITIATIVE_ID, '2026-11-28').spentUsd).toBeCloseTo(0.24, 5);
+    // The cap is the store's, bound by the run loader to the clamped usd_per_day.
+    expect(ledger.store.budget(INITIATIVE_ID, '2026-11-28').capUsd).toBe(3);
     expect(ledger.store.explorations(INITIATIVE_ID)).toHaveLength(3);
   }, 30_000);
 });

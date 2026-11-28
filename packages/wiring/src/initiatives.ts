@@ -1,5 +1,5 @@
 import type { ToolSettingsMap } from '@ethosagent/config';
-import { loadConstitution } from '@ethosagent/constitution';
+import { clampInitiativeBudgets, loadConstitution } from '@ethosagent/constitution';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   assertReadOnlyCapabilities,
@@ -12,6 +12,7 @@ import {
   readOnlyCapabilityBackends,
   repoSourcePaths,
   runToolNames,
+  SELF_START_POOL_USD_DEFAULT,
 } from '@ethosagent/initiative-runner';
 import { initiativesDbPath, SQLiteInitiativeStore } from '@ethosagent/initiative-store';
 import type { KanbanStore } from '@ethosagent/kanban-store';
@@ -49,7 +50,9 @@ import {
   type MemoryProvider,
   type PersonalityConfig,
   type PersonalityRegistry,
+  SecretNotFoundError,
   type SecretRef,
+  type SecretsResolver,
   type SessionStore,
   type Storage,
   type Tool,
@@ -180,29 +183,32 @@ export function buildReadOnlyRegistry(input: {
   factories: InitiativeToolFactories;
   /** Backs each read tool's `scopedFs` (readOnlyCapabilityBackends); reach is `sourcePaths` only. */
   storage: Storage;
-  /** Refs the read tools may resolve, and how; absent means no tool resolves a secret. */
-  secrets?: { allowedRefs: readonly SecretRef[]; backend: (ref: SecretRef) => Promise<string> };
+  /**
+   * How a ref resolves; absent means no tool resolves a secret. The refs allowed are NOT passed in:
+   * they are the union of `capabilities.secrets` of the tools this run registers, so a ref no run
+   * read tool declares is refused (`ScopedSecretsImpl`, pinned by `initiative-secrets.test.ts`).
+   */
+  secretsBackend?: (ref: SecretRef) => Promise<string>;
   /** The Ethos state dir; derives the read deny floor and state-dir exclusion, as build-infrastructure does. */
   dataDir: string;
 }): DefaultToolRegistry {
   const allowed = new Set(runToolNames(input.personality.toolset));
+  const run = [
+    ...input.factories.read.flatMap((make) => make()),
+    ...input.factories.ledger(input.ledger, input.initiativeId),
+    ...(input.recall ? input.factories.recall(input.recall, input.personality.id) : []),
+  ].filter((tool) => allowed.has(tool.name));
+  const allowedRefs = [...new Set(run.flatMap((tool) => tool.capabilities.secrets ?? []))];
   const registry = new DefaultToolRegistry(
     readOnlyCapabilityBackends({
       storage: input.storage,
       sourcePaths: input.sourcePaths,
-      ...(input.secrets ? { secrets: input.secrets } : {}),
+      ...(input.secretsBackend ? { secrets: { allowedRefs, backend: input.secretsBackend } } : {}),
       alwaysDenyPaths: defaultAlwaysDeny([input.dataDir]),
       stateDirs: [input.dataDir],
     }),
   );
-  const candidates = [
-    ...input.factories.read.flatMap((make) => make()),
-    ...input.factories.ledger(input.ledger, input.initiativeId),
-    ...(input.recall ? input.factories.recall(input.recall, input.personality.id) : []),
-  ];
-  for (const tool of candidates) {
-    if (allowed.has(tool.name)) registry.register(withSourceReach(tool, input.sourcePaths));
-  }
+  for (const tool of run) registry.register(withSourceReach(tool, input.sourcePaths));
   assertReadOnlyCapabilities(registry.getAvailable(), (name) => ({
     pluginId: registry.getPluginId(name),
   }));
@@ -283,6 +289,15 @@ export interface LazyInitiativeStore {
   recall: InitiativeRecallPort;
   /** True when the ledger exists (already opened, or the file is on disk). Never creates it. */
   ready(): Promise<boolean>;
+  /**
+   * The daily cap `budget(...).capUsd` reports, per initiative: the YAML's `usd_per_day` clamped
+   * by settings and the constitution. Set by the run loader on every load (so a lowered limit
+   * applies at the next window). An initiative never loaded in this process reports 0, which a
+   * run treats as no money (fail closed). No effect when the caller injected its own `capFor`.
+   */
+  setCap(initiativeId: string, usdPerDay: number): void;
+  /** Stores a run's read tools may use besides the ledger; compose fills them when the host has them. */
+  readSources: { kanbanStore?: KanbanStore; teamMemory?: MemoryProvider };
   /** A no-op until the db has been opened. */
   close(): void;
 }
@@ -299,9 +314,11 @@ export function createLazyInitiativeStore(deps: {
   capFor?: (initiativeId: string) => number;
 }): LazyInitiativeStore {
   const path = initiativesDbPath(deps.dataDir);
+  const caps = new Map<string, number>();
+  const capFor = deps.capFor ?? ((id: string) => caps.get(id) ?? 0);
   let opened: SQLiteInitiativeStore | undefined;
   const open = (): SQLiteInitiativeStore => {
-    opened ??= new SQLiteInitiativeStore(path, deps.capFor ? { capFor: deps.capFor } : {});
+    opened ??= new SQLiteInitiativeStore(path, { capFor });
     return opened;
   };
   const ledger: InitiativeLedgerPort = {
@@ -340,6 +357,8 @@ export function createLazyInitiativeStore(deps: {
     ledger,
     recall,
     ready: async () => opened !== undefined || (await deps.storage.exists(path)),
+    setCap: (id, usd) => void caps.set(id, usd),
+    readSources: {},
     close: () => opened?.close(),
   };
 }
@@ -353,18 +372,26 @@ export function createLazyInitiativeStore(deps: {
  * `repo` sources are re-checked against `readableRoots`, so a constitution that narrowed them
  * since the save applies to the next run.
  *
- * Limitation: no `secrets` are passed to the registry, so a read tool that needs a stored
- * credential (a search backend key) answers with its own "not configured" error in a run.
+ * Secrets: the host's resolver backs the registry, but only for refs the run's read tools
+ * declare (`buildReadOnlyRegistry`). Limitation: no env-variable fallback beyond what the host's
+ * resolver already merges.
+ *
+ * The daily cap has one source: the loader clamps `usd_per_day` (settings, constitution, and for
+ * agent-origin the self-start pool), hands it to `ledger.setCap`, and the runner reads
+ * `store.budget().capUsd`.
  */
 export function createInitiativeRunnerFor(deps: {
   storage: Storage;
   dataDir: string;
-  store: InitiativeStore;
+  /** The compose-time ledger: its store, its cap binding and the stores read tools may use. */
+  ledger: LazyInitiativeStore;
   personalities: PersonalityRegistry;
   llm: LLMProvider;
   safety: AgentSafety;
-  /** Read-tool construction inputs: the loop's own search config, memory, session and goals. */
-  config: Pick<InitiativeToolDeps, 'webSearchBackend' | 'searxngUrl' | 'toolSettings'>;
+  /** Read-tool construction inputs: the loop's own search config and secrets, memory, session and goals. */
+  config: Pick<InitiativeToolDeps, 'webSearchBackend' | 'searxngUrl' | 'toolSettings'> & {
+    secretsResolver?: SecretsResolver;
+  };
   toolsConfig: InitiativeToolDeps['toolsConfig'];
   memory: MemoryProvider;
   session: SessionStore;
@@ -375,6 +402,16 @@ export function createInitiativeRunnerFor(deps: {
   clock?: () => Date;
   log?: { warn(message: string): void };
 }): InitiativeRunner {
+  const store = deps.ledger.store;
+  const { kanbanStore, teamMemory } = deps.ledger.readSources;
+  const resolver = deps.config.secretsResolver;
+  const secretsBackend = resolver
+    ? async (ref: SecretRef): Promise<string> => {
+        const value = await resolver.get(ref);
+        if (value === null) throw new SecretNotFoundError(ref);
+        return value;
+      }
+    : undefined;
   const factories =
     deps.factories ??
     defaultInitiativeToolFactories({
@@ -383,12 +420,14 @@ export function createInitiativeRunnerFor(deps: {
       memory: deps.memory,
       session: deps.session,
       ...(deps.goalStore ? { goalStore: deps.goalStore } : {}),
+      ...(kanbanStore ? { kanbanStore } : {}),
+      ...(teamMemory ? { teamMemory } : {}),
       ...(deps.config.webSearchBackend ? { webSearchBackend: deps.config.webSearchBackend } : {}),
       ...(deps.config.searxngUrl ? { searxngUrl: deps.config.searxngUrl } : {}),
       ...(deps.config.toolSettings ? { toolSettings: deps.config.toolSettings } : {}),
     });
   return createInitiativeRunner({
-    store: deps.store,
+    store,
     llm: deps.llm,
     safety: deps.safety,
     personalities: deps.personalities,
@@ -397,7 +436,7 @@ export function createInitiativeRunnerFor(deps: {
     onError: (err) =>
       deps.log?.warn(`initiative run failed: ${err instanceof Error ? err.message : String(err)}`),
     load: async (id) => {
-      const row = deps.store.getInitiative(id);
+      const row = store.getInitiative(id);
       if (!row) return null;
       const raw = await deps.storage.read(row.configPath);
       if (raw === null) return null;
@@ -421,9 +460,24 @@ export function createInitiativeRunnerFor(deps: {
           action: 'Narrow the sources or widen readableRoots in Settings.',
         });
       }
+      const settings = (await loadInitiativeSettings(deps.storage, deps.dataDir, row.personalityId))
+        .settings;
+      const { usdPerDay } = clampInitiativeBudgets(
+        {
+          settings: { dailyBudgetUsd: settings.dailyBudgetUsd },
+          initiative: {
+            usdPerDay: parsed.file.budget.usd_per_day,
+            usdPerExploration: parsed.file.budget.usd_per_exploration,
+          },
+        },
+        constitution.initiatives,
+      );
+      const pool = constitution.initiatives?.selfStartPoolUsdPerDay ?? SELF_START_POOL_USD_DEFAULT;
+      const capUsd = parsed.file.origin === 'agent' ? Math.min(usdPerDay, pool) : usdPerDay;
+      deps.ledger.setCap(id, capUsd);
       return {
         personalityId: row.personalityId,
-        file: parsed.file,
+        file: { ...parsed.file, budget: { ...parsed.file.budget, usd_per_day: capUsd } },
         sourcePaths: repoSourcePaths(parsed.file.sources),
       };
     },
@@ -432,13 +486,14 @@ export function createInitiativeRunnerFor(deps: {
       if (!personality) throw new Error(`personality "${personalityId}" is not registered`);
       return buildReadOnlyRegistry({
         personality,
-        ledger: deps.store,
-        recall: deps.store,
+        ledger: store,
+        recall: store,
         initiativeId,
         sourcePaths,
         factories,
         storage: deps.storage,
         dataDir: deps.dataDir,
+        ...(secretsBackend ? { secretsBackend } : {}),
       });
     },
   });

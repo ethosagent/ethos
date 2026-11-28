@@ -27,8 +27,9 @@ type SaveInput = Parameters<InitiativeConfigPort['save']>[0];
 type SaveResult = Awaited<ReturnType<InitiativeConfigPort['save']>>;
 type Refusal = { ok: false; error: string };
 
-const MAX_SELF_STARTED_DEFAULT = 2;
-const SELF_START_POOL_USD_DEFAULT = 0.5;
+/** Constitution defaults for `maxSelfStarted` and `selfStartPoolUsdPerDay`. */
+export const MAX_SELF_STARTED_DEFAULT = 2;
+export const SELF_START_POOL_USD_DEFAULT = 0.5;
 const RESERVED_IDS: readonly string[] = ['settings'];
 
 export interface InitiativeConfigServiceDeps {

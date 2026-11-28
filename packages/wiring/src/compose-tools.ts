@@ -1666,12 +1666,11 @@ export async function composeAllTools(
       tools.register(tool);
   }
 
-  // Initiative engine, chat side. The ledger opens lazily (first initiative saved, first idea
-  // added): a user who never uses the feature gets no `initiatives.db` and spends $0. The index
-  // injector checks `ready()` and stays silent until the file exists. The chat tools are
-  // `alwaysInclude` and hidden per personality by `initiativeEnablement`
-  // (personality-tool-exclude.ts). YAML goes through `InitiativeConfigService`, the only writer.
+  // Initiative engine, chat side: the ledger opens lazily (`createLazyInitiativeStore`), so a
+  // user who never uses the feature gets no `initiatives.db` and spends $0. YAML goes through
+  // `InitiativeConfigService`, the only writer.
   const initiativeLedger = createLazyInitiativeStore({ storage: wiringCtx.storage, dataDir });
+  if (kanbanStore) initiativeLedger.readSources.kanbanStore = kanbanStore;
   disposers.push('initiative ledger', () => initiativeLedger.close());
   const initiativeEnablement = await createInitiativeEnablement({
     storage: wiringCtx.storage,
@@ -2153,6 +2152,7 @@ export async function composeAllTools(
       teamName: config.teamName,
       storage: wiringCtx.storage,
     });
+    initiativeLedger.readSources.teamMemory = teamMemory; // initiative runs read it too
 
     await seedTeamMemory(teamMemory, config.teamName);
 

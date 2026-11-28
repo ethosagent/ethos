@@ -177,12 +177,12 @@ register_anchors:
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 334, contains: "this.hitsDenyWhen(next, kind)" }
 
   G-INIT-RO:
-    - { path: packages/wiring/src/initiatives.ts, line: 172, contains: "export function buildReadOnlyRegistry" }
+    - { path: packages/wiring/src/initiatives.ts, line: 175, contains: "export function buildReadOnlyRegistry" }
     - { path: extensions/initiative-runner/src/capability-audit.ts, line: 28, contains: "export function assertReadOnlyCapabilities" }
     - { path: extensions/initiative-runner/src/tool-gate.ts, line: 10, contains: "export function createInitiativeToolGate" }
 
   G-INIT-CFG:
-    - { path: extensions/initiative-runner/src/config-service.ts, line: 134, contains: "async save(input: SaveInput)" }
+    - { path: extensions/initiative-runner/src/config-service.ts, line: 135, contains: "async save(input: SaveInput)" }
     - { path: extensions/initiative-runner/src/sources.ts, line: 52, contains: "export function checkSources" }
     - { path: packages/types/src/personality-definition.ts, line: 71, contains: "'initiatives/'" }
 
