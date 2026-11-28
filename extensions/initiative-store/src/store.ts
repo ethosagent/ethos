@@ -16,7 +16,6 @@ import {
   type IdeaRow,
   INITIATIVE_TRANSITIONS,
   type InitiativeLedgerPort,
-  type InitiativeOrigin,
   type InitiativeRow,
   type InitiativeState,
   type InitiativeStore,
@@ -27,6 +26,29 @@ import {
 } from '@ethosagent/types';
 import { selectDrafts, settleDraftRow } from './drafts';
 import { clampExplorationBudget, extendExplorationRow, reactionClockRow } from './lifecycle';
+import {
+  type BriefDbRow,
+  clip,
+  type DecisionDbRow,
+  EXPLORATION_COLS,
+  type ExplorationDbRow,
+  type FindingDbRow,
+  type IdeaDbRow,
+  INITIATIVE_COLS,
+  type InitiativeDbRow,
+  inClause,
+  type QuestionDbRow,
+  snippet,
+  toBrief,
+  toDecision,
+  toExploration,
+  toFinding,
+  toIdea,
+  toInitiative,
+  toQuestion,
+  toWindow,
+  type WindowDbRow,
+} from './rows';
 import { INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
 
 /** `<dataDir>/initiatives.db`. */
@@ -49,208 +71,6 @@ export interface SQLiteInitiativeStoreOptions {
 const DAY_MS = 86_400_000;
 /** States in which an exploration still occupies a slot against the open-exploration cap. */
 const OPEN_EXPLORATION_STATES = ['proposed', 'exploring', 'stalled'] as const;
-
-interface InitiativeDbRow {
-  id: string;
-  personality_id: string;
-  origin: string;
-  parent_id: string | null;
-  state: string;
-  config_path: string;
-  config_hash: string;
-  version: number;
-}
-
-interface IdeaDbRow {
-  id: string;
-  initiative_id: string;
-  origin: string;
-  text: string;
-  source_ref: string | null;
-  created_at: string;
-}
-
-interface ExplorationDbRow {
-  id: string;
-  initiative_id: string;
-  idea_id: string | null;
-  question: string;
-  state: string;
-  budget_usd: number;
-  spent_usd: number;
-  estimate_usd: number | null;
-  deadline: string;
-}
-
-interface WindowDbRow {
-  id: string;
-  initiative_id: string;
-  exploration_id: string | null;
-  kind: string;
-  started: string;
-  ended: string | null;
-  spent_usd: number;
-  tools_used: string;
-  reads: string;
-  checkpoint: string | null;
-  end_reason: string | null;
-}
-
-interface QuestionDbRow {
-  id: string;
-  initiative_id: string;
-  exploration_id: string | null;
-  text: string;
-  answer: string | null;
-  created_at: string;
-  answered_at: string | null;
-}
-
-const INITIATIVE_COLS =
-  'id, personality_id, origin, parent_id, state, config_path, config_hash, version';
-const EXPLORATION_COLS =
-  'id, initiative_id, idea_id, question, state, budget_usd, spent_usd, estimate_usd, deadline';
-
-function toInitiative(r: InitiativeDbRow): InitiativeRow {
-  return {
-    id: r.id,
-    personalityId: r.personality_id,
-    origin: r.origin as InitiativeOrigin,
-    parentId: r.parent_id,
-    state: r.state as InitiativeState,
-    configPath: r.config_path,
-    configHash: r.config_hash,
-    version: r.version,
-  };
-}
-
-function toIdea(r: IdeaDbRow): IdeaRow {
-  return {
-    id: r.id,
-    initiativeId: r.initiative_id,
-    origin: r.origin === 'human' ? 'human' : 'agent',
-    text: r.text,
-    sourceRef: r.source_ref,
-    createdAt: r.created_at,
-  };
-}
-
-function toExploration(r: ExplorationDbRow): ExplorationRow {
-  return {
-    id: r.id,
-    initiativeId: r.initiative_id,
-    ideaId: r.idea_id,
-    question: r.question,
-    state: r.state as ExplorationState,
-    budgetUsd: r.budget_usd,
-    spentUsd: r.spent_usd,
-    deadline: r.deadline,
-    estimateUsd: r.estimate_usd,
-  };
-}
-
-/** `?, ?, ?` placeholders for an SQL `IN (...)` over `values`. */
-function inClause(values: readonly unknown[]): string {
-  return values.map(() => '?').join(', ');
-}
-
-interface BriefDbRow {
-  id: string;
-  exploration_id: string;
-  version: number;
-  body_md: string;
-  recommended_option: string | null;
-  partial: number;
-}
-
-function toBrief(r: BriefDbRow): BriefRow {
-  return {
-    id: r.id,
-    explorationId: r.exploration_id,
-    version: r.version,
-    bodyMd: r.body_md,
-    recommendedOption: r.recommended_option,
-    partial: r.partial === 1,
-  };
-}
-
-interface FindingDbRow {
-  id: string;
-  exploration_id: string;
-  claim: string;
-  source_ref: string;
-  confidence: number;
-  created_at: string;
-}
-
-function toFinding(r: FindingDbRow): FindingRow {
-  return {
-    id: r.id,
-    explorationId: r.exploration_id,
-    claim: r.claim,
-    sourceRef: r.source_ref,
-    confidence: r.confidence,
-    createdAt: r.created_at,
-  };
-}
-
-interface DecisionDbRow {
-  id: string;
-  target: string;
-  gate: string;
-  verdict: string;
-  reason: string | null;
-  option: string | null;
-  decided_by: string;
-  at: string;
-}
-
-function toDecision(r: DecisionDbRow): DecisionRow {
-  return {
-    id: r.id,
-    target: r.target,
-    gate: r.gate as GateId,
-    verdict: r.verdict as InitiativeVerdict,
-    reason: r.reason,
-    option: r.option,
-    decidedBy: r.decided_by,
-    at: r.at,
-  };
-}
-
-/** A JSON text column that must hold a string array; anything else reads as empty. */
-function parseStrings(json: string): string[] {
-  const parsed: unknown = JSON.parse(json);
-  return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
-}
-
-function toWindow(r: WindowDbRow): WindowRow {
-  return {
-    id: r.id,
-    initiativeId: r.initiative_id,
-    explorationId: r.exploration_id,
-    kind: r.kind as WindowKind,
-    started: r.started,
-    ended: r.ended,
-    spentUsd: r.spent_usd,
-    toolsUsed: parseStrings(r.tools_used),
-    reads: parseStrings(r.reads),
-    checkpoint: r.checkpoint,
-    endReason: r.end_reason,
-  };
-}
-
-function toQuestion(r: QuestionDbRow): QuestionRow {
-  return {
-    id: r.id,
-    initiativeId: r.initiative_id,
-    explorationId: r.exploration_id,
-    text: r.text,
-    answer: r.answer,
-    createdAt: r.created_at,
-    answeredAt: r.answered_at,
-  };
-}
 
 /**
  * What a decision implies. `exploration` targets an exploration id (gate 1 and
@@ -286,20 +106,6 @@ const IMPLIED: Partial<
 };
 
 const INDEX_EXPLORATION_STATES = [...OPEN_EXPLORATION_STATES, 'briefed'] as const;
-
-function clip(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-}
-
-/** ~80 chars of `text` around the first case-insensitive match of `needle`. */
-function snippet(text: string, needle: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  const at = Math.max(0, flat.toLowerCase().indexOf(needle.toLowerCase()));
-  const start = Math.max(0, at - 30);
-  const end = Math.min(flat.length, at + needle.length + 50);
-  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
-}
 
 /**
  * SQLite initiative ledger (`<dataDir>/initiatives.db`). One file, STRICT
