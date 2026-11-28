@@ -94,6 +94,29 @@ describe('planDay', () => {
     expect(r).toMatchObject({ windowsToRun: [], skipped: 0 });
   });
 
+  it('fewer open explorations than slots: each slot runs, rotating through the open ones', () => {
+    const base = {
+      usdPerDay: 3,
+      windowsPerDay: 3,
+      scanReserveUsd: 0,
+      briefReserveShare: 0.15,
+      windowTimes: times,
+    };
+    const one = planDay({ ...base, open: [row('a')] });
+    expect(one.windowsToRun).toEqual([
+      { explorationId: 'a', at: times[0] },
+      { explorationId: 'a', at: times[1] },
+      { explorationId: 'a', at: times[2] },
+    ]);
+    expect(one.skipped).toBe(0);
+    expect(one.perWindowUsd).toBeCloseTo((3 - 0.45) / 3, 10);
+    const two = planDay({ ...base, open: [row('a'), row('b')] });
+    expect(two.windowsToRun.map((w) => w.explorationId)).toEqual(['a', 'b', 'a']);
+    // Budget still bounds it: pool 2.55, min 1.5 -> one slot only.
+    const poor = planDay({ ...base, open: [row('a')], minWindowUsd: 1.5 });
+    expect(poor.windowsToRun).toEqual([{ explorationId: 'a', at: times[0] }]);
+  });
+
   it('never schedules more windows than windowTimes', () => {
     const r = planDay({
       usdPerDay: 3,

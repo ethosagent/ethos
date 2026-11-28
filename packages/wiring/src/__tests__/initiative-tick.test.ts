@@ -268,7 +268,7 @@ describe('initiative tick', () => {
   it('a window runs only in the slot between the previous tick and now (planDay + since/now)', async () => {
     const { runtime, save, ledger, llm } = setup();
     await save('product-manager', 'activation');
-    const before = new Date('2026-11-29T05:55:00Z');
+    const before = new Date('2026-11-29T05:59:59.999Z');
     await runtime.tick(before); // survey; primes the loader's caps; first tick replays nothing
     const exp = ledger.store.propose({
       initiativeId: 'activation',
@@ -280,16 +280,15 @@ describe('initiative tick', () => {
     ledger.store.transitionExploration(exp.id, 'exploring', 'owner approved');
     const callsAfterSurvey = llm.calls;
 
-    // 'every 6h' is an interval, counted from the start of the UTC day: its slots are 05:59:59.999,
-    // 11:59:59.999, ... One open exploration gets one window and planDay gives it the day's first
-    // slot, which sits inside (05:55, 06:00].
+    // 'every 6h' is an interval counted from the start of the UTC day: its slots are exactly
+    // 00:00, 06:00, 12:00, 18:00 (slots.ts). The 06:00 slot sits inside (05:59:59.999, 06:00].
     const day2 = new Date('2026-11-29T06:00:00Z');
     const due = await runtime.tick(day2);
     expect(due.ran.map((r) => r.kind)).toEqual(['window']);
     expect(llm.calls).toBe(callsAfterSurvey + 1);
     expect(ledger.windows('activation').map((w) => w.kind)).toEqual(['survey', 'window']);
 
-    // The slot is behind `since` now; nothing else is due.
+    // The slot is behind `since` now; nothing else is due (it runs exactly once).
     const later = await runtime.tick(new Date('2026-11-29T06:05:00Z'));
     expect(later.ran).toEqual([]);
     expect(llm.calls).toBe(callsAfterSurvey + 1);

@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { nextRunForSchedule } from '@ethosagent/cron';
 import {
   BRIEF_RESERVE_SHARE,
   effectiveEnabled,
@@ -10,6 +9,7 @@ import {
   PER_CALL_RESERVE_USD,
   planDay,
   SCAN_CAP_USD,
+  slotsOnDay,
 } from '@ethosagent/initiative-runner';
 import type { Constitution, InitiativeRow, Logger, Storage, WindowKind } from '@ethosagent/types';
 import type { DisposerStack } from './disposer-stack';
@@ -22,7 +22,6 @@ import {
 } from './initiatives';
 
 const DAY_MS = 86_400_000;
-const MAX_TIMES_PER_SCHEDULE = 48;
 const SWITCHED_OFF_FILE = '.switched-off.json';
 
 export type InitiativeRuntimeDeps = Parameters<typeof createInitiativeRunnerFor>[0] & {
@@ -63,22 +62,6 @@ export interface InitiativeRuntime {
   tick(now?: Date): Promise<InitiativeTickReport>;
   /** Idempotent. A tick in flight finishes its current run and starts no other. */
   dispose(): void;
-}
-
-/** Every start time of `schedules` inside the UTC day of `now` (the day the ledger charges), sorted. */
-function timesOnDay(schedules: readonly string[], now: Date): string[] {
-  const dayStart = Math.floor(now.getTime() / DAY_MS) * DAY_MS;
-  const times = new Set<string>();
-  for (const schedule of schedules) {
-    let cursor = new Date(dayStart - 1);
-    for (let i = 0; i < MAX_TIMES_PER_SCHEDULE; i++) {
-      const next = nextRunForSchedule(schedule, cursor);
-      if (next === null || next.getTime() >= dayStart + DAY_MS) break;
-      times.add(next.toISOString());
-      cursor = next;
-    }
-  }
-  return [...times].sort();
 }
 
 /**
@@ -218,7 +201,10 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       await attempt('scan', () => runner.runScan(row.id));
     }
 
-    const times = timesOnDay(loaded.file.timeline.explore_windows, now);
+    const times = slotsOnDay(
+      loaded.file.timeline.explore_windows,
+      Math.floor(now.getTime() / DAY_MS) * DAY_MS,
+    );
     const open = store.explorations(row.id, ['exploring', 'stalled']);
     if (times.length === 0 || open.length === 0) return;
     const plan = planDay({

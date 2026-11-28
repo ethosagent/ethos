@@ -26,7 +26,10 @@ export interface DayPlan {
 
 /**
  * Pool = usdPerDay - scanReserveUsd - usdPerDay * briefReserveShare, floored at 0.
- * Window count = min(windowsPerDay, windowTimes, open, floor(pool / minWindowUsd)).
+ * Window count = min(windowsPerDay, windowTimes, floor(pool / minWindowUsd)); 0 when nothing is open.
+ * Every window slot runs: slot n goes to the n-th open exploration in rotation order, wrapping
+ * round, so one open exploration takes every slot the budget funds
+ * (pinned by budget.test.ts, 'fewer open explorations than slots').
  * Rotation: oldest `lastRunAt` first (never run first); ties keep the order of `open`,
  * which the store returns oldest-created first. skipped = open explorations given no window.
  */
@@ -35,7 +38,9 @@ export function planDay(i: PlanDayInput): DayPlan {
   const pool = Math.max(0, i.usdPerDay - i.scanReserveUsd - briefReserveUsd);
   const min = i.minWindowUsd ?? 0;
   const funded = pool <= 0 ? 0 : min > 0 ? Math.floor(pool / min) : Number.POSITIVE_INFINITY;
-  const count = Math.max(0, Math.min(i.windowsPerDay, i.windowTimes.length, i.open.length, funded));
+  const count = Math.max(0, Math.min(i.windowsPerDay, i.windowTimes.length, funded));
+  if (i.open.length === 0)
+    return { windowsToRun: [], skipped: 0, perWindowUsd: 0, briefReserveUsd };
 
   const stamp = (r: ExplorationRow): string => i.lastRunAt?.[r.id] ?? '';
   const ordered = i.open
@@ -48,13 +53,14 @@ export function planDay(i: PlanDayInput): DayPlan {
     })
     .map((e) => e.row);
 
-  const windowsToRun = ordered.slice(0, count).map((row, n) => ({
-    explorationId: row.id,
+  const windowsToRun = Array.from({ length: count }, (_, n) => ({
+    explorationId: (ordered[n % ordered.length] as ExplorationRow).id,
     at: i.windowTimes[n] as string,
   }));
+  const given = new Set(windowsToRun.map((w) => w.explorationId));
   return {
     windowsToRun,
-    skipped: i.open.length - windowsToRun.length,
+    skipped: i.open.length - given.size,
     perWindowUsd: count > 0 ? pool / count : 0,
     briefReserveUsd,
   };

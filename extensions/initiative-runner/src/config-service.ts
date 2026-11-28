@@ -22,6 +22,7 @@ import {
   type InitiativeSettings,
 } from './config-schema';
 import { mapGuidance } from './guidance';
+import { nextSlotAfter } from './slots';
 import { checkSources } from './sources';
 
 type SaveInput = Parameters<InitiativeConfigPort['save']>[0];
@@ -329,7 +330,7 @@ export class InitiativeConfigService implements InitiativeConfigPort {
     }));
 
     await this.persist({ doc, path, personalityId, input, before: existing });
-    return { ok: true, id, version: doc.version, clamps, guidance };
+    return { ok: true, id, version: doc.version, clamps, guidance, ...this.nextSurvey(doc) };
   }
 
   private async saveState(input: SaveInput): Promise<SaveResult> {
@@ -366,7 +367,20 @@ export class InitiativeConfigService implements InitiativeConfigPort {
       this.deps.store.transitionInitiative(target, to, `${op} by ${input.confirmedBy}`);
     const next: InitiativeFile = { ...doc, version: doc.version + 1, state: from };
     await this.persist({ doc: next, path: row.configPath, personalityId, input, before: doc });
-    return { ok: true, id: target, version: next.version, clamps: [], guidance: [] };
+    return {
+      ok: true,
+      id: target,
+      version: next.version,
+      clamps: [],
+      guidance: [],
+      ...this.nextSurvey(next),
+    };
+  }
+
+  /** `nextSurveyAt`: the next explore-window slot after now (slots.ts, the tick's own helper). */
+  private nextSurvey(doc: InitiativeFile): { nextSurveyAt?: string } {
+    const at = nextSlotAfter(doc.timeline.explore_windows, new Date(this.now()));
+    return at === null ? {} : { nextSurveyAt: at };
   }
 
   private async persist(a: {

@@ -116,6 +116,15 @@ const save = (
   });
 
 describe('InitiativeConfigService.save', () => {
+  it('fills nextSurveyAt with the next explore-window slot after now (injected clock)', async () => {
+    const { svc } = setup();
+    const r = await save(svc, draft());
+    // now = 1s after the epoch; 'every 2h' slots sit on the UTC day's even hours.
+    expect(r).toMatchObject({ ok: true, nextSurveyAt: '1970-01-01T02:00:00.000Z' });
+    const paused = await save(svc, ID, { op: 'pause' });
+    expect(paused).toMatchObject({ ok: true, nextSurveyAt: '1970-01-01T02:00:00.000Z' });
+  });
+
   it('creates the file, the row and the first version, then schedules', async () => {
     const { svc, storage, store, scheduled } = setup();
     const r = await save(svc, draft());

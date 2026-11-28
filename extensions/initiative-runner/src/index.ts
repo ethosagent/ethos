@@ -69,6 +69,7 @@ export {
   type SelfStartDeps,
   type SelfStartStore,
 } from './self-start';
+export { nextSlotAfter, slotsOnDay } from './slots';
 export { checkSources, repoSourcePaths } from './sources';
 export {
   INITIATIVE_CHAT_TOOLS,
