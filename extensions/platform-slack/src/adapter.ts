@@ -349,6 +349,16 @@ function isPermanentSlackError(err: unknown): boolean {
   return typeof data.error === 'string' && PERMANENT_SLACK_ERRORS.has(data.error);
 }
 
+/** Web API codes meaning Slack rejected the request body itself, so a retry of it cannot succeed. */
+const REFUSED_SLACK_SHAPES = new Set(['invalid_blocks', 'msg_too_long', 'invalid_arguments']);
+
+function isRefusedSlackShape(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('data' in err)) return false;
+  const data = err.data;
+  if (typeof data !== 'object' || data === null || !('error' in data)) return false;
+  return typeof data.error === 'string' && REFUSED_SLACK_SHAPES.has(data.error);
+}
+
 /**
  * Web API error codes that mean Slack refused the TOKEN — a mistyped, revoked
  * or expired bot or app token, or a deactivated workspace account. No retry
@@ -1172,7 +1182,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
    * The owner digest as Block Kit with `init:` buttons, called by `Gateway.notifyTracked`
    * (extensions/gateway/src/initiative-card.ts) inside the delivery ledger's send. `fallback.text`
    * is the message's text (notification and screen-reader alt) and is what goes out through
-   * {@link send} when the blocks cannot be built or exceed Slack's 50-block cap.
+   * {@link send} when the blocks cannot be built, exceed Slack's 50-block cap, or Slack refuses
+   * their shape (`invalid_blocks`, `msg_too_long`, `invalid_arguments`).
    */
   async sendInitiativeDigest(
     chatId: string,
@@ -1199,6 +1210,9 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       });
       return { ok: true, ...(res.ts ? { messageId: res.ts } : {}) };
     } catch (err) {
+      // Slack refused the request SHAPE (not a transient failure): the same blocks would be refused
+      // on every redelivery, so send the text once here. Pinned by initiative-digest-send.test.ts.
+      if (isRefusedSlackShape(err)) return this.send(chatId, fallback);
       return slackFailure(err);
     }
   }

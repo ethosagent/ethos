@@ -81,4 +81,35 @@ describe('SlackAdapter.sendInitiativeDigest', () => {
     const res = await adapter.sendInitiativeDigest('C1', digest(), { text: 'md' });
     expect(res.ok).toBe(false);
   });
+
+  const slackError = (code: string) =>
+    Object.assign(new Error(`An API error occurred: ${code}`), {
+      data: { ok: false, error: code },
+    });
+
+  it.each(['invalid_blocks', 'msg_too_long', 'invalid_arguments'])(
+    'Slack refusing the request shape (%s) falls back to exactly one text send',
+    async (code) => {
+      let calls = 0;
+      const { adapter, postMessage } = make(async () => {
+        if (++calls === 1) throw slackError(code);
+        return { ts: '3.3' };
+      });
+      const res = await adapter.sendInitiativeDigest('C1', digest(), { text: 'md fallback' });
+      expect(res).toEqual({ ok: true, messageId: '3.3' });
+      expect(postMessage).toHaveBeenCalledTimes(2);
+      const second = postMessage.mock.calls[1]?.[0] as { text: string; blocks?: unknown };
+      expect(second.blocks).toBeUndefined();
+      expect(second.text).toContain('md fallback');
+    },
+  );
+
+  it('a transient error does not fall back: the ledger sweep owns that retry', async () => {
+    const { adapter, postMessage } = make(async () => {
+      throw slackError('ratelimited');
+    });
+    const res = await adapter.sendInitiativeDigest('C1', digest(), { text: 'md' });
+    expect(res.ok).toBe(false);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+  });
 });
