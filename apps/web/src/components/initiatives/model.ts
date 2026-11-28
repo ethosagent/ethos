@@ -1,4 +1,3 @@
-import { accentFor, DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import type { InitiativeFileWire } from '@ethosagent/web-contracts';
 
 export type InitiativeFilter = 'all' | 'human' | 'agent' | 'paused';
@@ -20,11 +19,11 @@ export function matchesFilter(
 }
 
 /**
- * Agent-started badge hue. DESIGN.md bans purple/violet, so there is no
- * "agent" token; the closest existing identity hue is the coach magenta from
- * the personality accent table, resolved through design-tokens, never a raw hex.
+ * Agent-started badge colour: an outline in the neutral `--text-secondary` token (6.81:1 light,
+ * AA+ dark per DESIGN.md), not a personality accent. An identity hue on an origin badge reads as
+ * that personality's marker. Pinned by 'origin filter' in pages/__tests__/initiatives-page.test.ts.
  */
-export const AGENT_BADGE_ACCENT = accentFor(DEFAULT_TOKENS, 'coach');
+export const AGENT_BADGE_ACCENT = 'var(--text-secondary)';
 
 export interface FileRow {
   key: string;

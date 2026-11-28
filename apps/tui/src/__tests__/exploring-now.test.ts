@@ -7,12 +7,22 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
+import { FsStorage } from '@ethosagent/storage-fs';
+import { initiativesDbPath, SQLiteInitiativeStore } from '@ethosagent/wiring';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ExploringNowLine, ExploringNowStrip } from '../components/ExploringNowStrip';
-import { type ExploringNowSnapshot, setExploringNowSource } from '../exploring-now';
+import {
+  type ExploringNowSnapshot,
+  readExploringNow,
+  setExploringNowSource,
+} from '../exploring-now';
+import { startExploringNowFeed } from '../exploring-now-host';
 import { act, enableReactActEnvironment } from './helpers/ink-act';
 
 enableReactActEnvironment();
@@ -94,5 +104,69 @@ describe('exploring-now strip', () => {
     });
     expect(stdout.last()).toContain('Docs gaps');
     app.unmount();
+  });
+});
+
+describe('exploring-now host feed', () => {
+  const dirs: string[] = [];
+  const tmp = () => {
+    const d = mkdtempSync(join(tmpdir(), 'ethos-tui-explore-'));
+    dirs.push(d);
+    return d;
+  };
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const settle = () => act(async () => new Promise<void>((r) => setTimeout(r, 50)));
+
+  it('a missing initiatives.db gives a blank strip and is never created', async () => {
+    const dir = tmp();
+    const stop = startExploringNowFeed({
+      storage: new FsStorage(),
+      dataDir: dir,
+      personalityId: 'pm',
+    });
+    await settle();
+    expect(readExploringNow()).toBeNull();
+    expect(existsSync(initiativesDbPath(dir))).toBe(false);
+    const { stdout, app } = mount(createElement(ExploringNowLine));
+    await act(async () => {});
+    expect(stdout.last().trim()).toBe('');
+    app.unmount();
+    stop();
+  });
+
+  it('the host registers a source that reads the open window from the store', async () => {
+    const dir = tmp();
+    const store = new SQLiteInitiativeStore(initiativesDbPath(dir));
+    store.upsertInitiative({
+      id: 'grow',
+      personalityId: 'pm',
+      origin: 'human',
+      parentId: null,
+      state: 'active',
+      configPath: join(dir, 'none.yaml'),
+      configHash: 'h',
+      version: 1,
+    });
+    const windowId = store.openWindow({
+      initiativeId: 'grow',
+      explorationId: null,
+      kind: 'survey',
+    });
+    store.close();
+    const stop = startExploringNowFeed({
+      storage: new FsStorage(),
+      dataDir: dir,
+      personalityId: 'pm',
+    });
+    await settle();
+    expect(readExploringNow()).toMatchObject({
+      windowId,
+      initiativeId: 'grow',
+      readOnly: true,
+    });
+    stop();
+    expect(readExploringNow()).toBeNull();
   });
 });
