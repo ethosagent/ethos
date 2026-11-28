@@ -106,11 +106,7 @@ export class SkillsLibrary {
       personalityId === undefined ? this.skillsDir : this.personalitySkillsDir(personalityId);
     const dest = join(dir, `${skillId}.md`);
     try {
-      const [locked, versions] = await Promise.all([
-        this.history.isLocked(dest),
-        this.history.versions(dest),
-      ]);
-      return { locked, versionCount: versions.length };
+      return await this.history.summary(dest);
     } catch (err) {
       if (err instanceof BoundaryError) return { locked: false, versionCount: 0 };
       throw err;

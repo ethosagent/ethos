@@ -130,6 +130,8 @@ The file is unchanged and `ethos learning list` still shows the candidate.
 
 **`Version "…" is ambiguous; use more of its id.`** — The prefix matches more than one version. Use more characters.
 
+**`Invalid skillId: "Tidy"`.** — Skill ids are lowercase letters, digits, `_` and `-`, the same rule as every other id. A file named `Tidy.md` loads as a skill but has no history or lock; rename it to `tidy.md`.
+
 **An edit you made in an editor shows as `external`, not as your name.** — Ethos cannot see who edited a file outside it. It records the new bytes as `external` the next time anyone runs `history` or writes the skill.
 
 **A shell tool changed a locked skill.** — The lock stops agent-authored content that goes through the learning inbox. A personality with a shell tool on local execution can still edit the file directly. Ethos records that edit as `external` the next time anyone looks; it does not prevent it.

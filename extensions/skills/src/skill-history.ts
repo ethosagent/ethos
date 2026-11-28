@@ -34,8 +34,10 @@
 //     never went live; the next write's drift capture records the real live bytes
 //     as `external`.
 //   - `writeHuman` trusts its caller. The lock holds because agent-authored bytes
-//     reach a skill only through `promote()`; `__tests__/skill-writers.test.ts`
-//     pins the writer set.
+//     reach a skill only through `promote()`. `__tests__/skill-writers.test.ts` is a
+//     TEXT scan that flags a Storage mutation naming a skill path outside this file;
+//     a path built elsewhere and passed in as a bare variable is not caught, so it
+//     narrows the writer set rather than proving it.
 
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
@@ -95,8 +97,6 @@ interface LockRecord {
   changedAt: string;
   changedBy: string;
 }
-
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export class SkillHistory {
   private readonly storage: Storage;
@@ -171,6 +171,25 @@ export class SkillHistory {
       }
     }
     return this.write(target, bytes, { source: 'restore', actor, restoredFrom: versionId });
+  }
+
+  /**
+   * What a listing shows beside a skill: its lock and how many versions it has
+   * or is about to have. Unlike `versions()` it never writes, so listing skills
+   * does not create `.history/` or record baselines. An outside edit not yet
+   * captured counts as one more version, which is what `versions()` would then show.
+   */
+  async summary(dest: string): Promise<{ locked: boolean; versionCount: number }> {
+    const target = this.resolve(dest);
+    const rows = await this.readRows(target);
+    const live = await this.storage.read(target.live);
+    const liveHash = live === null ? null : sha256Hex(live);
+    const head = rows.at(-1);
+    const pending = head === undefined ? live !== null : head.hash !== liveHash;
+    return {
+      locked: await this.readLock(target),
+      versionCount: rows.length + (pending ? 1 : 0),
+    };
   }
 
   async isLocked(dest: string): Promise<boolean> {
@@ -311,7 +330,11 @@ export class SkillHistory {
     const dir = dirname(dest);
     const file = basename(dest);
     const stem = file.endsWith('.md') ? file.slice(0, -3) : '';
-    if (!ID_RE.test(stem)) throw new BoundaryError('write', dest, allowed, 'not a skill file');
+    try {
+      assertSafeId(stem, 'skillId');
+    } catch {
+      throw new BoundaryError('write', dest, allowed, 'not a skill file');
+    }
     if (dir !== join(this.dataDir, 'skills')) {
       const prefix = join(this.dataDir, 'personalities');
       const rel = dir.startsWith(`${prefix}/`) ? dir.slice(prefix.length + 1).split('/') : [];
@@ -361,7 +384,6 @@ function toVersion(v: unknown): SkillVersion | null {
   if (typeof versionId !== 'string' || typeof at !== 'string' || typeof actor !== 'string') {
     return null;
   }
-  if (!SKILL_VERSION_SOURCES.some((s) => s === source)) return null;
   if (hash !== null && typeof hash !== 'string') return null;
   const knownSource = SKILL_VERSION_SOURCES.find((s) => s === source);
   if (knownSource === undefined) return null;

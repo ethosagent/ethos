@@ -92,14 +92,17 @@ export async function runSkillsHistoryCommand(
         return await restore(deps, history, dest, id, words[1], json);
       case 'lock':
       case 'unlock':
-        return await setLock(deps, history, dest, id, verb === 'lock', json);
+        return await setLock(deps, history, dest, id, personalityId, verb === 'lock', json);
       default:
         return fail(deps, json, 'INVALID_INPUT', `Unknown skills verb: ${verb}`);
     }
   } catch (err) {
     if (err instanceof CliRefusal) return fail(deps, json, err.code, err.message);
-    if (err instanceof BoundaryError || err instanceof IdValidationError) {
-      return fail(deps, json, 'INVALID_INPUT', `Invalid skill id or personality: ${id}`);
+    if (err instanceof IdValidationError) {
+      return fail(deps, json, 'INVALID_INPUT', `Invalid ${err.kind}: "${err.id}"`);
+    }
+    if (err instanceof BoundaryError) {
+      return fail(deps, json, 'INVALID_INPUT', `Invalid skill id: "${id}"`);
     }
     if (err instanceof EthosError) return fail(deps, json, 'NOT_FOUND', err.cause);
     throw err;
@@ -182,11 +185,12 @@ async function setLock(
   history: SkillHistory,
   dest: string,
   id: string,
+  personalityId: string | undefined,
   locked: boolean,
   json: boolean,
 ): Promise<number> {
   if (!(await deps.storage.exists(dest))) {
-    throw new CliRefusal('NOT_FOUND', notFoundText(id, undefined));
+    throw new CliRefusal('NOT_FOUND', notFoundText(id, personalityId));
   }
   await history.setLock(dest, locked, 'cli');
   if (json) {
@@ -204,6 +208,7 @@ async function setLock(
 // --- helpers -----------------------------------------------------------------
 
 function destinationOf(dataDir: string, id: string, personalityId: string | undefined): string {
+  assertSafeId(id, 'skillId');
   if (personalityId === undefined) return join(dataDir, 'skills', `${id}.md`);
   assertSafeId(personalityId, 'personalityId');
   return join(dataDir, 'personalities', personalityId, 'skills', `${id}.md`);

@@ -1,6 +1,6 @@
 ---
 title: "CLI: skill history and lock commands"
-description: "ethos skills history, diff, restore, lock and release: a version timeline and a per-skill lock for flat skill files."
+description: "ethos skills history, diff, restore, lock and unlock: a version timeline and a per-skill lock for flat skill files."
 kind: reference
 audience: user
 updated: 2026-11-28

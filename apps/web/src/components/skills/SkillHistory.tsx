@@ -183,7 +183,7 @@ export function SkillHistoryDrawer({
     queryFn: () => rpc.skills.history(input),
     enabled: open,
   });
-  // Newest first reads like a log; the diff below always runs older -> newer.
+  // Newest first reads like a log. The diff runs From -> To exactly as picked, so picking a newer From shows the change reversed.
   const rows = useMemo(
     () => [...(historyQuery.data?.versions ?? [])].reverse(),
     [historyQuery.data],

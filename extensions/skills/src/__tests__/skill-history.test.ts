@@ -134,6 +134,7 @@ describe('SkillHistory', () => {
       join(DATA, 'skills', 'tidy.txt'),
       join(DATA, 'skills', '.hidden.md'),
       join(DATA, 'skills', '..md'),
+      join(DATA, 'skills', 'Tidy.md'),
       join(DATA, 'personalities', 'Bad Id', 'skills', 'tidy.md'),
       join(DATA, 'personalities', 'coach', 'memory', 'tidy.md'),
       '/etc/passwd',
@@ -185,6 +186,43 @@ describe('SkillHistory', () => {
 
     it('returns an empty timeline for a skill that never existed', async () => {
       expect(await history.versions(DEST)).toEqual([]);
+    });
+  });
+
+  describe('summary — a read that never writes', () => {
+    const treeSize = async () => Object.keys(await snapshotTree(storage)).length;
+
+    it('reports nothing for a skill that never existed, and writes nothing', async () => {
+      expect(await history.summary(DEST)).toEqual({ locked: false, versionCount: 0 });
+      expect(await storage.exists(join(DATA, 'skills', '.history'))).toBe(false);
+    });
+
+    it('counts the baseline an outside file will get, without recording it', async () => {
+      await storage.write(DEST, 'by hand\n');
+      expect(await history.summary(DEST)).toEqual({ locked: false, versionCount: 1 });
+      expect(await storage.exists(join(DATA, 'skills', '.history'))).toBe(false);
+    });
+
+    it('counts recorded rows plus one pending outside edit, and matches versions() afterwards', async () => {
+      await history.writeHuman(DEST, 'v1\n', { source: 'web-edit', actor: 'web' });
+      expect(await history.summary(DEST)).toEqual({ locked: false, versionCount: 1 });
+      await storage.write(DEST, 'edited\n');
+      const before = await snapshotTree(storage);
+      expect(await history.summary(DEST)).toEqual({ locked: false, versionCount: 2 });
+      expect(await snapshotTree(storage)).toEqual(before);
+      expect((await history.versions(DEST)).length).toBe(2);
+    });
+
+    it('reports the lock', async () => {
+      await history.setLock(DEST, true, 'cli');
+      expect((await history.summary(DEST)).locked).toBe(true);
+    });
+
+    it('does not touch storage for a listing', async () => {
+      await storage.write(DEST, 'by hand\n');
+      const n = await treeSize();
+      await history.summary(DEST);
+      expect(await treeSize()).toBe(n);
     });
   });
 

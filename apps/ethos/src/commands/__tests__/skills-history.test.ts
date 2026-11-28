@@ -68,6 +68,21 @@ describe('ethos skills history', () => {
     expect(plain(err)).toContain('ghost');
   });
 
+  it('an uppercase id is refused like every other surface, naming the token', async () => {
+    expect(await run(['history', 'Tidy'])).toBe(1);
+    expect(plain(err)).toContain('Tidy');
+  });
+
+  it('a bad --personality is refused and named', async () => {
+    expect(await run(['history', 'tidy', '--personality', '../x'])).toBe(1);
+    expect(plain(err)).toContain('../x');
+  });
+
+  it('a missing personality skill says which personality', async () => {
+    expect(await run(['lock', 'ghost', '--personality', 'coach'])).toBe(1);
+    expect(plain(err)).toContain('coach');
+  });
+
   it('an unsafe id is refused before touching storage', async () => {
     expect(await run(['history', '../etc'])).toBe(1);
     expect(plain(err)).toMatch(/invalid/i);

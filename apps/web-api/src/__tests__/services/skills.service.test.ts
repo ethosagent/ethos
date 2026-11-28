@@ -160,6 +160,27 @@ describe('SkillsService — history and lock', () => {
     });
   });
 
+  it('listing writes nothing: no .history appears for hand-written skills', async () => {
+    const { storage, service } = await fresh();
+    await storage.write(join(DATA, 'skills', 'by-hand.md'), 'hand written');
+    await storage.mkdir(join(DATA, 'personalities', 'coach', 'skills'));
+    await storage.write(join(DATA, 'personalities', 'coach', 'skills', 'mine.md'), 'mine');
+    const { skills } = await service.list();
+    expect(skills[0]).toMatchObject({ id: 'by-hand', versionCount: 1, locked: false });
+    const lib = new SkillsLibrary({ dataDir: DATA, storage });
+    expect(await lib.historySummary('mine', 'coach')).toEqual({ locked: false, versionCount: 1 });
+    expect(await storage.exists(join(DATA, 'skills', '.history'))).toBe(false);
+    expect(await storage.exists(join(DATA, 'personalities', 'coach', 'skills', '.history'))).toBe(
+      false,
+    );
+  });
+
+  it('an uppercase id is refused on every path, like assertSafeId', async () => {
+    const { service } = await fresh();
+    await expect(service.history({ id: 'Tidy' })).rejects.toThrow(/Invalid skillId/);
+    await expect(service.setLock({ id: 'Tidy', locked: true })).rejects.toThrow(/Invalid skillId/);
+  });
+
   it('rejects an unsafe id before touching storage', async () => {
     const { service } = await fresh();
     await expect(service.history({ id: '../etc' })).rejects.toThrow(/Invalid skillId/);
