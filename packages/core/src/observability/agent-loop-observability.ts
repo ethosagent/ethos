@@ -48,6 +48,8 @@ export interface AgentLoopObservability {
       from: string;
       to: string;
       reason: string;
+      /** The cleaned `reason` arg the model gave `think_deeper`; absent when empty. */
+      detail?: string;
       personalityId: string;
     },
   ): void;

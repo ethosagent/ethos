@@ -29,6 +29,7 @@ import {
 import { routeTurnModel } from '../model-route';
 import { rejectCutOffToolCalls } from '../output-cap';
 import { isContextOverflowError } from '../overflow';
+import type { TierEscalationRef } from '../tier-escalation';
 import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
@@ -212,7 +213,7 @@ export function turnToolDefinitions(
 export async function* streamStep(
   deps: StreamStepDeps,
   ctx: StreamStepContext,
-  pendingTierEscalation: { value?: string },
+  pendingTierEscalation: TierEscalationRef,
 ): AsyncGenerator<AgentEvent, StreamStepResult> {
   // Compute tool definitions once for hooks, LLM call, and dump store — so
   // observability measures exactly what was sent.
@@ -308,8 +309,10 @@ export async function* streamStep(
   let iterProviderEntry = ctx.providerEntry;
   let iterEffort = ctx.effort;
   if (pendingTierEscalation.value) {
-    const tier = pendingTierEscalation.value as ModelTierName;
+    const tier: ModelTierName = pendingTierEscalation.value;
+    const escalationReasonText = pendingTierEscalation.reason ?? '';
     pendingTierEscalation.value = undefined;
+    pendingTierEscalation.reason = undefined;
     const escalated = resolveTurnModel({
       personality: ctx.personality,
       role: tier,
@@ -337,8 +340,24 @@ export async function* streamStep(
         from: ctx.activeTier,
         to: tier,
         reason: 'tool_escalation',
+        ...(escalationReasonText ? { detail: escalationReasonText } : {}),
         personalityId: ctx.personality.id,
       });
+      // Tell the user only when the served model really changes (a `/tier deep`
+      // turn escalating to deep serves the same model). Pinned by
+      // `tier_escalation event` in `__tests__/model-tier.test.ts`.
+      const servedBefore = ctx.modelOverride ?? deps.llm.model;
+      const servedAfter = route.modelOverride ?? deps.llm.model;
+      if (servedAfter !== servedBefore) {
+        yield {
+          type: 'tier_escalation',
+          from: ctx.activeTier,
+          to: tier,
+          model: servedAfter,
+          reason: escalationReasonText,
+          ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+        };
+      }
     }
   }
 

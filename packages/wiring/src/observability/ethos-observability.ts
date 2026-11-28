@@ -585,6 +585,7 @@ export class EthosObservability {
       from: string;
       to: string;
       reason: string;
+      detail?: string;
       personalityId: string;
     },
   ): void {
@@ -592,6 +593,7 @@ export class EthosObservability {
       from: opts.from,
       to: opts.to,
       reason: opts.reason,
+      ...(opts.detail !== undefined ? { detail: opts.detail } : {}),
       personalityId: opts.personalityId,
     });
   }

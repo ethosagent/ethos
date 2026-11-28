@@ -47,6 +47,7 @@ import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { steerVisionFor } from './agent-loop/steer';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
+import type { TierEscalationRef } from './agent-loop/tier-escalation';
 import { isToolPermitted } from './agent-loop/tool-permitted';
 import type { LoopDeps } from './agent-loop/turn-context';
 import { TurnDecisions, withDecisionEvents } from './agent-loop/turn-decisions';
@@ -461,6 +462,8 @@ export class AgentLoop {
   private readonly checkApprovalPosture: () => void;
   /** Per-session accumulated spend in USD. Keyed by sessionKey. Reset via resetSessionCost(). */
   private readonly sessionCosts = new Map<string, number>();
+  /** Per-session `think_deeper` count (cap: tier-escalation.ts); reset with `sessionCosts`. */
+  private readonly sessionEscalations = new Map<string, number>();
   /** FW-28 — per-session mtime registry. Keyed by sessionKey → (absPath → record). */
   private readonly sessionReadMtimes = new Map<
     string,
@@ -569,9 +572,10 @@ export class AgentLoop {
     return this.sessionCosts.get(sessionKey) ?? 0;
   }
 
-  /** Resets the session spend counter — call after /new or /personality switch. */
+  /** Resets the session spend and escalation counters — call after /new or /personality switch. */
   resetSessionCost(sessionKey: string): void {
     this.sessionCosts.delete(sessionKey);
+    this.sessionEscalations.delete(sessionKey);
   }
 
   /** Fold spend incurred OUTSIDE a turn into a session's budget — the realtime
@@ -759,7 +763,7 @@ export class AgentLoop {
       opts,
     );
 
-    const tierEscalationRef: { value?: string } = {};
+    const tierEscalationRef: TierEscalationRef = { perTurn: 0 };
     const { serverCompaction } = setup; // item 7 (D32) — one compactor per turn
 
     // Watcher tap. Dangerous mode neutralizes halts for this run (consumer-side).
@@ -994,6 +998,7 @@ export class AgentLoop {
           mcpPolicy: this.mcpPolicy,
           onToolMetric: this.onToolMetric,
           sessionCosts: this.sessionCosts,
+          sessionEscalations: this.sessionEscalations,
           turnUsage,
           storage: this.storage,
           dataDir: this.dataDir,
