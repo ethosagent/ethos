@@ -1,11 +1,7 @@
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
-import {
-  type InitiativeRunner,
-  loadInitiativeSettings,
-  type RunReport,
-} from '@ethosagent/initiative-runner';
+import type { InitiativeRunner, RunReport } from '@ethosagent/initiative-runner';
 import { EthosError } from '@ethosagent/types';
-import { createInitiativeCliPort } from '@ethosagent/wiring';
+import { createInitiativeCliPort, loadInitiativeSettings } from '@ethosagent/wiring';
 import { type Say, sayFor, splitJson, writeJson } from '../json-output';
 import { MANAGE_COMMANDS, runManageCommand } from '../lib/initiatives-manage';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';

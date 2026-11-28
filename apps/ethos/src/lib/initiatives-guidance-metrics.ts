@@ -1,5 +1,4 @@
-import { mapGuidance } from '@ethosagent/initiative-runner';
-import type { InitiativeCliPort } from '@ethosagent/wiring';
+import { type InitiativeCliPort, mapGuidance } from '@ethosagent/wiring';
 
 export interface GuidanceMetrics {
   total: number;
