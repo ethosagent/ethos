@@ -6,6 +6,23 @@ export {
   resolveAccess,
 } from './access';
 export {
+  type BuildIO,
+  type BuildReply,
+  type BuildRequest,
+  type EstimateResult,
+  type RunResult,
+  type SaveResult,
+  type WorldBuildDeps,
+  WorldBuildError,
+  WorldBuildService,
+} from './build/build';
+export {
+  type CompleteFn,
+  type CompleteReply,
+  type CompleteRequest,
+  redactForExtraction,
+} from './build/extract';
+export {
   type BuildChunk,
   type BuildChunkKind,
   type BuildInput,

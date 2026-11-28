@@ -57,6 +57,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_pending_fp ON proposals(world, f
 CREATE TABLE IF NOT EXISTS proposal_tombstones (
   world TEXT NOT NULL, fingerprint TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (world, fingerprint)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS builds (
+  id TEXT PRIMARY KEY, world TEXT NOT NULL, personality_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('estimated','staged','saved','discarded','failed')),
+  estimate_usd REAL, spent_usd REAL NOT NULL DEFAULT 0, summary_json TEXT,
+  watermark_json TEXT, created_at TEXT NOT NULL, decided_at TEXT
+) STRICT;
+CREATE TABLE IF NOT EXISTS build_items (
+  build_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('fact','schema','duplicate','conflict')),
+  payload_json TEXT NOT NULL, sure INTEGER NOT NULL, source_ref TEXT NOT NULL, PRIMARY KEY (build_id, seq)
+) STRICT;
 `;
 
 export interface ServiceStoreOptions {
@@ -85,6 +95,51 @@ export interface LoadErrorsRow {
   at: string;
   errors: SchemaIssue[];
 }
+
+export type BuildStatus = 'estimated' | 'staged' | 'saved' | 'discarded' | 'failed';
+export type BuildItemKind = 'fact' | 'schema' | 'duplicate' | 'conflict';
+
+export interface BuildRow {
+  id: string;
+  world: WorldId;
+  personalityId: string;
+  status: BuildStatus;
+  estimateUsd: number | null;
+  spentUsd: number;
+  /** Parsed `summary_json`; `null` when unset or unreadable. */
+  summary: unknown;
+  /** Parsed `watermark_json`; `null` when unset or unreadable. */
+  watermark: unknown;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+export interface BuildItemInput {
+  kind: BuildItemKind;
+  payload: unknown;
+  sure: boolean;
+  sourceRef: string;
+}
+
+export interface BuildItemRow extends BuildItemInput {
+  seq: number;
+}
+
+interface BuildDbRow {
+  id: string;
+  world: string;
+  personality_id: string;
+  status: BuildStatus;
+  estimate_usd: number | null;
+  spent_usd: number;
+  summary_json: string | null;
+  watermark_json: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+const BUILD_COLS =
+  'id, world, personality_id, status, estimate_usd, spent_usd, summary_json, watermark_json, created_at, decided_at';
 
 export type ProposalKind = 'assert' | 'close' | 'retire' | 'schema' | 'merge_entity';
 
@@ -430,6 +485,152 @@ export class SQLiteWorldServiceStore {
       .prepare(`SELECT COUNT(*) AS n FROM proposals WHERE world = ? AND status = 'pending'`)
       .get(world) as { n: number };
     return r.n;
+  }
+
+  // ---- first builds (plan world-model 5.2) -----------------------------------
+  // Staging only: nothing here touches a graph backend. WorldBuildService
+  // (build/build.ts) is the sole caller.
+
+  private parseJson(text: string | null): unknown {
+    if (text === null) return null;
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      this.onError(err);
+      return null;
+    }
+  }
+
+  private toBuild(r: BuildDbRow): BuildRow {
+    return {
+      id: r.id,
+      world: r.world as WorldId,
+      personalityId: r.personality_id,
+      status: r.status,
+      estimateUsd: r.estimate_usd,
+      spentUsd: r.spent_usd,
+      summary: this.parseJson(r.summary_json),
+      watermark: this.parseJson(r.watermark_json),
+      createdAt: r.created_at,
+      decidedAt: r.decided_at,
+    };
+  }
+
+  insertBuild(row: {
+    world: WorldId;
+    personalityId: string;
+    estimateUsd: number;
+    summary: unknown;
+    watermark: unknown;
+  }): string {
+    const id = `build-${randomBytes(6).toString('hex')}`;
+    this.db
+      .prepare(
+        `INSERT INTO builds (id, world, personality_id, status, estimate_usd, spent_usd, summary_json, watermark_json, created_at)
+         VALUES (?, ?, ?, 'estimated', ?, 0, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        row.world,
+        row.personalityId,
+        row.estimateUsd,
+        JSON.stringify(row.summary),
+        JSON.stringify(row.watermark),
+        this.nowIso(),
+      );
+    return id;
+  }
+
+  getBuild(id: string): BuildRow | null {
+    const r = this.db.prepare(`SELECT ${BUILD_COLS} FROM builds WHERE id = ?`).get(id) as
+      | BuildDbRow
+      | undefined;
+    return r ? this.toBuild(r) : null;
+  }
+
+  updateBuild(
+    id: string,
+    patch: {
+      status?: BuildStatus;
+      spentUsd?: number;
+      summary?: unknown;
+      watermark?: unknown;
+      decided?: boolean;
+    },
+  ): void {
+    const sets: string[] = [];
+    const args: Array<string | number> = [];
+    if (patch.status !== undefined) {
+      sets.push('status = ?');
+      args.push(patch.status);
+    }
+    if (patch.spentUsd !== undefined) {
+      sets.push('spent_usd = ?');
+      args.push(patch.spentUsd);
+    }
+    if (patch.summary !== undefined) {
+      sets.push('summary_json = ?');
+      args.push(JSON.stringify(patch.summary));
+    }
+    if (patch.watermark !== undefined) {
+      sets.push('watermark_json = ?');
+      args.push(JSON.stringify(patch.watermark));
+    }
+    if (patch.decided) {
+      sets.push('decided_at = ?');
+      args.push(this.nowIso());
+    }
+    if (sets.length === 0) return;
+    this.db.prepare(`UPDATE builds SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
+  }
+
+  /** Replaces any items already staged for the build, so a re-run never doubles them. */
+  replaceBuildItems(buildId: string, items: BuildItemInput[]): void {
+    const del = this.db.prepare('DELETE FROM build_items WHERE build_id = ?');
+    const ins = this.db.prepare(
+      `INSERT INTO build_items (build_id, seq, kind, payload_json, sure, source_ref) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    this.db.transaction(() => {
+      del.run(buildId);
+      for (const [seq, it] of items.entries()) {
+        ins.run(buildId, seq, it.kind, JSON.stringify(it.payload), it.sure ? 1 : 0, it.sourceRef);
+      }
+    })();
+  }
+
+  listBuildItems(buildId: string): BuildItemRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT rowid AS rowid, seq, kind, payload_json, sure, source_ref FROM build_items
+         WHERE build_id = ? ORDER BY seq, rowid`,
+      )
+      .all(buildId) as Array<{
+      rowid: number;
+      seq: number;
+      kind: BuildItemKind;
+      payload_json: string;
+      sure: number;
+      source_ref: string;
+    }>;
+    return rows.map((r) => ({
+      seq: r.seq,
+      kind: r.kind,
+      payload: this.parseJson(r.payload_json),
+      sure: r.sure === 1,
+      sourceRef: r.source_ref,
+    }));
+  }
+
+  /** The watermark of the newest build this personality SAVED into `world`; `null` before the first. */
+  lastSavedWatermark(world: WorldId, personalityId: string): unknown {
+    const r = this.db
+      .prepare(
+        `SELECT rowid AS rowid, watermark_json FROM builds
+         WHERE world = ? AND personality_id = ? AND status = 'saved' AND watermark_json IS NOT NULL
+         ORDER BY decided_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(world, personalityId) as { rowid: number; watermark_json: string } | undefined;
+    return r ? this.parseJson(r.watermark_json) : null;
   }
 
   /** Pending rows older than `ttlDays` become `expired`. */
