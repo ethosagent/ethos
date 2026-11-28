@@ -66,18 +66,12 @@ import { type EnvelopeMeta, registerMessageEvents } from './events/messages';
 import { toNativeMarkdown } from './format';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
 import { extractSlackFiles } from './inbound-files';
-import {
-  type ApprovalActionPayload,
-  handleApprovalAction,
-  handleApprovalNoteSubmission,
-} from './interactions/actions';
+import { handleApprovalNoteSubmission } from './interactions/actions';
 import { registerButtonActions } from './interactions/buttons';
 import {
   type ClarifyActionEvent,
-  type ClarifyActionPayload,
   type ClarifyModalSubmissionEvent,
   type ClarifyModalSubmissionPayload,
-  handleClarifyAction,
   handleClarifyModalSubmission,
 } from './interactions/clarify';
 import type { InitiativeActionEvent } from './interactions/initiative';

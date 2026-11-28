@@ -119,11 +119,7 @@ export function composeDigest(src: DigestSource, input: DigestInput): Initiative
         });
       }
       if (e.state !== 'briefed') continue;
-      const briefs = (detail?.briefs ?? []).filter((b) => b.explorationId === e.id);
-      const latest = briefs.reduce<(typeof briefs)[number] | undefined>(
-        (a, b) => (!a || b.version > a.version ? b : a),
-        undefined,
-      );
+      const latest = latestBrief(detail?.briefs ?? [], e.id);
       if (!latest) continue;
       const brief: DigestBrief = {
         explorationId: e.id,
@@ -159,6 +155,18 @@ export function composeDigest(src: DigestSource, input: DigestInput): Initiative
     }
   }
   return digest;
+}
+
+/** The highest-version brief of one exploration, or undefined when it has none. */
+function latestBrief<B extends { explorationId: string; version: number }>(
+  briefs: readonly B[],
+  explorationId: string,
+): B | undefined {
+  let best: B | undefined;
+  for (const b of briefs) {
+    if (b.explorationId === explorationId && (!best || b.version > best.version)) best = b;
+  }
+  return best;
 }
 
 /**

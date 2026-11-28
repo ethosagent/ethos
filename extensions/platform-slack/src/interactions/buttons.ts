@@ -20,6 +20,20 @@ export interface ButtonHandlers {
   initiative(): ((event: InitiativeActionEvent) => void | Promise<void>) | undefined;
 }
 
+/**
+ * `ack()` is the one call we can't reason about: a Bolt/Slack API change could make it throw
+ * synchronously, not just reject. Wrap the invocation itself so a bad ack can never escape the
+ * handler and poison Bolt's event loop; the decision proceeds regardless.
+ */
+async function ackBestEffort(ack: unknown): Promise<void> {
+  if (typeof ack !== 'function') return;
+  try {
+    await (ack as () => Promise<void>)();
+  } catch {
+    // best-effort ack
+  }
+}
+
 export function registerButtonActions(app: App, client: App['client'], h: ButtonHandlers): void {
   // Approval-card button clicks. Bolt delivers `block_actions` events here;
   // we parse the raw payload down to the fields `handleApprovalAction`
@@ -35,17 +49,7 @@ export function registerButtonActions(app: App, client: App['client'], h: Button
       body?: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
       action?: { action_id?: string; value?: string };
     };
-    if (typeof evt.ack === 'function') {
-      // `ack()` is the one call we can't reason about — a Bolt/Slack API
-      // change could make it throw synchronously, not just reject. Wrap the
-      // invocation itself, not only the returned promise, so a bad ack can
-      // never escape this handler and poison Bolt's event loop.
-      try {
-        await (evt.ack as () => Promise<void>)();
-      } catch {
-        // best-effort ack — proceed with the decision regardless
-      }
-    }
+    await ackBestEffort(evt.ack);
     const handler = h.approval();
     if (!handler) return;
     const body = evt.body;
@@ -71,13 +75,7 @@ export function registerButtonActions(app: App, client: App['client'], h: Button
       body?: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
       action?: { action_id?: string };
     };
-    if (typeof evt.ack === 'function') {
-      try {
-        await (evt.ack as () => Promise<void>)();
-      } catch {
-        // best-effort ack — proceed regardless
-      }
-    }
+    await ackBestEffort(evt.ack);
     const handler = h.initiative();
     const body = evt.body;
     if (!handler || typeof body !== 'object' || body === null) return;
@@ -127,13 +125,7 @@ export function registerButtonActions(app: App, client: App['client'], h: Button
       };
       action?: { action_id?: string; value?: string };
     };
-    if (typeof evt.ack === 'function') {
-      try {
-        await (evt.ack as () => Promise<void>)();
-      } catch {
-        // best-effort ack — proceed regardless
-      }
-    }
+    await ackBestEffort(evt.ack);
     const handler = h.clarify();
     if (!handler) return;
     const body = evt.body;

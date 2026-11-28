@@ -12,8 +12,10 @@ export interface InitiativeActionEvent {
   userId: string;
   channelId: string;
   messageTs: string;
-  /** A message only the tapping user sees (the result, the brief as Markdown, the chat hand-off). */
-  /** Resolves true when the message was posted, false when it was not. */
+  /**
+   * Posts a message only the tapping user sees (the result, the brief as Markdown, the chat
+   * hand-off). Resolves true when it was posted, false when it was not.
+   */
   reply: (text: string) => Promise<boolean>;
 }
 

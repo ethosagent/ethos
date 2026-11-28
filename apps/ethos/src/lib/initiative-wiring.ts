@@ -9,6 +9,7 @@ import {
   renderBriefMarkdown,
 } from '@ethosagent/wiring';
 import { getStorage } from '../wiring';
+import { latestBrief } from './initiative-briefs';
 import { setInitiativeDigestNotify } from './initiative-tick';
 
 // The app layer's half of the channel buttons on the initiative digest and options brief
@@ -99,9 +100,7 @@ async function apply(
   if (tap.verb === 'copy_md') {
     const e = port.store.getExploration(tap.target);
     const detail = e ? port.store.get(e.initiativeId) : null;
-    const brief = (detail?.briefs ?? [])
-      .filter((b) => b.explorationId === tap.target)
-      .sort((a, b) => b.version - a.version)[0];
+    const brief = latestBrief(detail?.briefs ?? [], tap.target);
     if (!e || !brief) {
       await tap.say(`${tap.target} has no brief yet.`);
       return;
@@ -129,9 +128,10 @@ async function apply(
   // Adopt takes the option the brief recommends: the button carries only the exploration id.
   const option =
     tap.verb === 'adopt'
-      ? (port.store.get(port.store.getExploration(tap.target)?.initiativeId ?? '')?.briefs ?? [])
-          .filter((b) => b.explorationId === tap.target)
-          .sort((a, b) => b.version - a.version)[0]?.recommendedOption
+      ? latestBrief(
+          port.store.get(port.store.getExploration(tap.target)?.initiativeId ?? '')?.briefs ?? [],
+          tap.target,
+        )?.recommendedOption
       : undefined;
   const result = await decideInitiative(
     port,

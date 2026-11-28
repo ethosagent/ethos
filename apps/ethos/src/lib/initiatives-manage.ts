@@ -6,6 +6,7 @@ import {
   type InitiativeDecision,
   renderBriefMarkdown,
 } from '@ethosagent/wiring';
+import { latestBrief } from './initiative-briefs';
 import { guidanceMetrics } from './initiatives-guidance-metrics';
 
 // `ethos initiatives` subcommands other than `run`: read the ledger, pause/resume through
@@ -179,13 +180,7 @@ export async function runManageCommand(
           cause: `exploration ${id} does not exist`,
           action: 'Check the id with "ethos initiatives show <initiative-id>".',
         });
-      const briefs = (p.store.get(e.initiativeId)?.briefs ?? []).filter(
-        (b) => b.explorationId === e.id,
-      );
-      const brief = briefs.reduce<(typeof briefs)[number] | undefined>(
-        (a, b) => (!a || b.version > a.version ? b : a),
-        undefined,
-      );
+      const brief = latestBrief(p.store.get(e.initiativeId)?.briefs ?? [], e.id);
       if (!brief)
         throw invalid(
           `${e.id} has no brief yet (it is ${e.state})`,
