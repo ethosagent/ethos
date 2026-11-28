@@ -127,6 +127,12 @@ export {
   worldSchemaPath,
 } from './schema-service';
 export {
+  parseWatchlist,
+  type SeedResult,
+  seedWatchlist,
+  type WatchlistEntry,
+} from './seed-watchlist';
+export {
   type Caller,
   type ImportOutcome,
   type SchemaRequestOutcome,

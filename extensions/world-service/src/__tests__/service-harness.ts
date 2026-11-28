@@ -53,7 +53,7 @@ export interface ServiceHarness {
 }
 
 export async function serviceHarness(
-  opts: { mountAcme?: boolean; schemaFor?: WorldId[] } = {},
+  opts: { mountAcme?: boolean; schemaFor?: WorldId[]; schemaText?: string } = {},
 ): Promise<ServiceHarness> {
   const dir = mkdtempSync(join(tmpdir(), 'world-service-svc-'));
   const storage = new InMemoryStorage();
@@ -82,7 +82,7 @@ export async function serviceHarness(
   }
   for (const w of opts.schemaFor ?? [PRIVATE, ACME]) {
     await storage.mkdir(dirname(worldSchemaPath(dir, w)));
-    await storage.write(worldSchemaPath(dir, w), SCHEMA);
+    await storage.write(worldSchemaPath(dir, w), opts.schemaText ?? SCHEMA);
     await schema.load(w);
   }
   const errors: unknown[] = [];
