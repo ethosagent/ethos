@@ -57,6 +57,7 @@ describe('ACTIVITY_EVENT_TYPES', () => {
       'halt',
       'cron.fired',
       'decision',
+      'tier_escalation',
     ] as const) {
       expect(ACTIVITY_EVENT_TYPES.has(type)).toBe(true);
     }

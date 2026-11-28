@@ -4286,6 +4286,11 @@ export class Gateway {
           // not the draft, not the final. Explicit, not left to the
           // translator's `default`. Pinned by `__tests__/streaming-integration.test.ts`.
           if (event.type === 'decision') continue;
+          // Audience boundary (think-deeper-tier-switch, Open decision 2): a
+          // `tier_escalation` carries the model's own reason, which can reveal
+          // what the user asked in a shared room. Never a channel message.
+          // Pinned by `__tests__/streaming-integration.test.ts`.
+          if (event.type === 'tier_escalation') continue;
           // Past the terminal event: the tail is drained, not rendered. The
           // answer is already on its way, and anything the tail yields (a
           // turn-end compaction notice) would land after the final.

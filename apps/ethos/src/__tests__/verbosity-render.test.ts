@@ -120,6 +120,37 @@ describe('FW-10 verbosity projection', () => {
     });
   });
 
+  describe('tier_escalation (think-deeper-tier-switch)', () => {
+    const escalation: AgentEvent = {
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    };
+
+    it('hides the line in quiet', () => {
+      expect(projectEvent(escalation, 'quiet')).toEqual([]);
+    });
+
+    it.each(['default', 'verbose', 'debug'] as const)(
+      'shows "Escalated to deep: <reason>" at %s',
+      (level) => {
+        const lines = projectEvent(escalation, level);
+        expect(lines[0]).toEqual({
+          text: 'Escalated to deep: race condition',
+          kind: 'tier_escalation',
+        });
+      },
+    );
+
+    it('drops the colon when the model gave no reason', () => {
+      expect(projectEvent({ ...escalation, reason: '' } as AgentEvent, 'default')[0]?.text).toBe(
+        'Escalated to deep',
+      );
+    });
+  });
+
   describe('verbose', () => {
     it('lifts the audience boundary — internal progress surfaces', () => {
       const lines = projectEvent(ev.progress('terminal', 'phase 2', 'internal'), 'verbose');

@@ -1460,6 +1460,10 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       if (event.type === 'decision' && event.phase === 'settled' && state.verbosity !== 'quiet') {
         clearSpinner();
       }
+      // An escalation prints a line, so the spinner's line is wiped first.
+      if (event.type === 'tier_escalation' && state.verbosity !== 'quiet') {
+        clearSpinner();
+      }
       if (event.type === 'tool_end' && !internalToolEvent) {
         toolDurations.push(event.durationMs);
       }
@@ -1747,6 +1751,15 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       // streamed text already is the answer.
       const answer = lines.find((line) => line.kind === 'text');
       if (answer) out(stripAnsiEscapes(answer.text));
+      break;
+    }
+
+    case 'tier_escalation': {
+      // think-deeper-tier-switch — dim, one line; `projectEvent` hides it in quiet.
+      const note = lines.find((line) => line.kind === 'tier_escalation');
+      if (!note) break;
+      if (ctx.hasText) out('\n');
+      out(`${c.dim}${stripAnsiEscapes(note.text)}${c.reset}\n`);
       break;
     }
 

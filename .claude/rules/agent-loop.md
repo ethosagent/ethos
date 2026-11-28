@@ -19,9 +19,9 @@ type AgentEvent =
   | { type: 'tool_end';       toolCallId: string; toolName: string; ok: boolean; durationMs: number; error?: string }  // error set only when ok: false
   | { type: 'usage';          inputTokens: number; outputTokens: number; estimatedCostUsd: number }
   | { type: 'halt';           kind: 'budget' | 'watcher'; rule: string; toolName?: string; count?: number; message: string }  // early safety stop; a normal done still follows
-  | { type: 'error';          error: string; code: string }
-  | { type: 'done';           text: string; turnCount: number }
+  | { type: 'error'; error: string; code: string } | { type: 'done'; text: string; turnCount: number }
   | { type: 'decision';       id: string; phase: 'started' | 'settled'; site: 'injection' | 'approver' | 'router'; mode: 'on' | 'shadow'; personalityId: string; … }  // a decision site ran (decision-provider-personality §15.2); may arrive after done — web/desktop/CLI only, never a channel
+  | { type: 'tier_escalation'; from: ModelTierName; to: ModelTierName; model: string; reason: string; traceId?: string }  // a think_deeper took effect: the NEXT call runs on `to`'s model (think-deeper-tier-switch); web/desktop/CLI/TUI only, never a channel
 Hook registry
 Three execution models — pick based on what the hook does:
 

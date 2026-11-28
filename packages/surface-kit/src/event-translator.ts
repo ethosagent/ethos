@@ -190,6 +190,12 @@ export function createEventTranslator(options: EventTranslatorOptions = {}): Eve
           // translator, so it is ignored HERE, explicitly, not left to
           // `default`. Pinned by `__tests__/event-translator.test.ts`.
           break;
+        case 'tier_escalation':
+          // Audience boundary (think-deeper-tier-switch, Open decision 2): the
+          // model's reason can reveal what the user asked, so a channel never
+          // shows an escalation. Ignored HERE, explicitly, not left to
+          // `default`. Pinned by `__tests__/event-translator.test.ts`.
+          break;
         default:
           // Forward-compat: AgentEvent may grow new variants in any release.
           // Unknown/irrelevant types are a no-op by design — do NOT add an

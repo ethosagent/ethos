@@ -302,6 +302,42 @@ describe('gateway decision events (audience boundary, §15.4)', () => {
   });
 });
 
+// think-deeper-tier-switch (Open decision 2) — a model's escalation reason can
+// reveal what the user asked, so no channel shows a `tier_escalation`, in the
+// draft or in the final, DM or group.
+describe('gateway tier_escalation events (audience boundary)', () => {
+  const escalation: AgentEvent = {
+    type: 'tier_escalation',
+    from: 'default',
+    to: 'deep',
+    model: 'ESCALATION-MODEL-MARKER',
+    reason: 'ESCALATION-REASON-MARKER',
+  };
+  const turn = (): AgentEvent[] => [
+    { type: 'text_delta', text: 'the answer' },
+    escalation,
+    { type: 'done', text: 'the answer', turnCount: 1 },
+  ];
+  const bodies = (adapter: ReturnType<typeof editAdapter>) =>
+    [...adapter.sends.map((m) => m.text), ...adapter.edits.map((e) => e.text)].join('\n');
+
+  it('streaming (DM) path never carries the escalation', async () => {
+    const adapter = editAdapter();
+    await gatewayWith(loopYielding(turn())).handleMessage(msg(), adapter);
+
+    expect(bodies(adapter)).not.toMatch(/MARKER/);
+    expect(adapter.edits.at(-1)?.text ?? adapter.sends.at(-1)?.text).toBe('the answer');
+  });
+
+  it('non-streaming (group) path sends text only', async () => {
+    const adapter = editAdapter();
+    await gatewayWith(loopYielding(turn())).handleMessage(msg({ isDm: false }), adapter);
+
+    expect(adapter.sends[0]?.text).toBe('the answer');
+    expect(bodies(adapter)).not.toMatch(/MARKER/);
+  });
+});
+
 describe('gateway outbound media (W3.2 sendTo convention)', () => {
   function gwForSend(adapter: PlatformAdapter) {
     const loop = loopYielding([{ type: 'done', text: '', turnCount: 1 }]);

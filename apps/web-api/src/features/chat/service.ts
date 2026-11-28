@@ -815,6 +815,11 @@ export class ChatService {
     // it carries summaries only (K13). A late shadow row can arrive after
     // `done`; the bridge drains the loop to exhaustion, so it still lands here.
     bridge.on('decision', (decision) => this.append(sessionId, { type: 'decision', ...decision }));
+    // think-deeper-tier-switch — the next call runs on the deep model. Web and
+    // desktop chat render it as a trail row; it never reaches a channel.
+    bridge.on('tier_escalation', (escalation) =>
+      this.append(sessionId, { type: 'tier_escalation', ...escalation }),
+    );
     // A1 (ux-feedback plan) — an early safety stop (budget or watcher). The
     // bridge forwards the event whole; put it on the stream so the client can
     // mark the reply partial. A normal `done` still follows.

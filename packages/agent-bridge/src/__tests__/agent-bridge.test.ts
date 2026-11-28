@@ -428,6 +428,31 @@ describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () 
 
     expect(seen).toEqual([settled]);
   });
+
+  it('forwards tier_escalation without its type tag', async () => {
+    const escalation = {
+      from: 'default' as const,
+      to: 'deep' as const,
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    };
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          { type: 'tier_escalation', ...escalation },
+          { type: 'text_delta', text: 'hi' },
+          { type: 'done', text: 'hi', turnCount: 1 },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const seen: unknown[] = [];
+    bridge.on('tier_escalation', (e) => seen.push(e));
+    await bridge.send('hi', {});
+
+    expect(seen).toEqual([escalation]);
+  });
 });
 
 // ux-feedback plan A2/C2/C5 — the bridge is the seam nearest the user's Stop

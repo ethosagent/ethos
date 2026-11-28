@@ -174,6 +174,9 @@ interface BridgeEventMap {
    *  turn. Forwarded whole (it carries summaries only, K13); a late shadow row
    *  can arrive after `done`, which is why `runTurn` drains to exhaustion. */
   decision: [decision: Omit<Extract<AgentEvent, { type: 'decision' }>, 'type'>];
+  /** think-deeper-tier-switch — the NEXT LLM call runs on a different tier's
+   *  model (a `think_deeper` that resolved). Forwarded whole; one call only. */
+  tier_escalation: [escalation: Omit<Extract<AgentEvent, { type: 'tier_escalation' }>, 'type'>];
   /** A tool call is waiting for this surface's Allow / Deny — relayed from the
    *  `BridgeApprovalSource` set with `setApprovalSource`. Not an AgentEvent. */
   approval_request: [request: BridgeApprovalRequest];
@@ -521,6 +524,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
           case 'decision': {
             const { type: _type, ...decision } = event;
             this.emit('decision', decision);
+            break;
+          }
+          case 'tier_escalation': {
+            const { type: _type, ...escalation } = event;
+            this.emit('tier_escalation', escalation);
             break;
           }
         }
