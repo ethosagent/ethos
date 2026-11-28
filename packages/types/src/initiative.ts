@@ -34,7 +34,9 @@ export type DraftStatus = 'pending' | 'materialised' | 'refused';
 /**
  * Allowed moves. Spec "Initiative lifecycle". `paused -> self_started` exists so a switch-off and
  * switch-on gives an agent-origin initiative back to the pool it left; the table cannot see origin,
- * so only `resumeState` (packages/wiring/src/initiative-runtime.ts) may ask for it, for agent rows.
+ * so `SQLiteInitiativeStore.moveInitiative` (extensions/initiative-store/src/store.ts) refuses it for a
+ * human-origin row (pinned by store-decisions.test.ts), and `resumeState`
+ * (packages/wiring/src/initiative-runtime.ts) asks for it only for agent rows.
  */
 export const INITIATIVE_TRANSITIONS: Readonly<
   Record<'start' | InitiativeState, readonly InitiativeState[]>

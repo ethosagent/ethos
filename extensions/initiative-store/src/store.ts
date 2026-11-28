@@ -355,8 +355,13 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   }
 
   private moveInitiative(id: string, to: InitiativeState, why: string): void {
-    const from = this.requireInitiative(id).state;
-    if (!canTransition(INITIATIVE_TRANSITIONS, from, to)) {
+    const row = this.requireInitiative(id);
+    const from = row.state;
+    // The table cannot see origin: only an agent-origin row goes back to the pool it left.
+    if (
+      !canTransition(INITIATIVE_TRANSITIONS, from, to) ||
+      (from === 'paused' && to === 'self_started' && row.origin !== 'agent')
+    ) {
       throw new EthosError({
         code: 'INITIATIVE_ILLEGAL_TRANSITION',
         cause: `initiative ${id} cannot move ${from} -> ${to}`,

@@ -28,6 +28,24 @@ describe('SQLiteInitiativeStore: transitions', () => {
     store.close();
   });
 
+  it('paused -> self_started is for an agent-origin row only', () => {
+    const store = new SQLiteInitiativeStore(':memory:');
+    store.upsertInitiative(initiative({ id: 'human-1', origin: 'human' }));
+    store.upsertInitiative(initiative({ id: 'agent-1', origin: 'agent', state: 'self_started' }));
+    store.transitionInitiative('human-1', 'paused', 'switch-off');
+    store.transitionInitiative('agent-1', 'paused', 'switch-off');
+    expect(() => store.transitionInitiative('human-1', 'self_started', 'switch-on')).toThrowError(
+      expect.objectContaining({ code: 'INITIATIVE_ILLEGAL_TRANSITION' }),
+    );
+    expect(store.getInitiative('human-1')?.state).toBe('paused');
+    store.transitionInitiative('agent-1', 'self_started', 'switch-on');
+    expect(store.getInitiative('agent-1')?.state).toBe('self_started');
+    // The human row still resumes the normal way.
+    store.transitionInitiative('human-1', 'active', 'switch-on');
+    expect(store.getInitiative('human-1')?.state).toBe('active');
+    store.close();
+  });
+
   it('a missing target throws NOT_FOUND', () => {
     const { store } = seeded();
     expect(() => store.transitionExploration('EXP-9999', 'exploring', 'x')).toThrowError(
