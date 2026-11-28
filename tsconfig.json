@@ -183,6 +183,7 @@
       ],
       "@ethosagent/tools-messaging/compose": ["./extensions/tools-messaging/src/compose"],
       "@ethosagent/tools-interactive/compose": ["./extensions/tools-interactive/src/compose"],
+      "@ethosagent/tools-world/compose": ["./extensions/tools-world/src/compose"],
       "@ethosagent/tools-todo/compose": ["./extensions/tools-todo/src/compose"],
       "@ethosagent/tools-vision/compose": ["./extensions/tools-vision/src/compose"],
       "@ethosagent/tools-delegation/compose": ["./extensions/tools-delegation/src/compose"],

@@ -1,5 +1,6 @@
 import { decisionToolEnabled, type ResolvedDecisionsConfig } from '@ethosagent/config';
 import { PROPOSE_SELF_AMENDMENT_TOOL } from '@ethosagent/tools-personality-design';
+import { WORLD_TOOL_NAMES } from '@ethosagent/tools-world';
 import type { PersonalityConfig } from '@ethosagent/types';
 
 /**
@@ -18,15 +19,19 @@ import type { PersonalityConfig } from '@ethosagent/types';
  *     packages/wiring/src/__tests__/amendment-exclude.test.ts;
  *   - plan laptop-tool-node D18 — with `nodes.enabled`, the `node_*` tools are visible only to a
  *     personality whose toolset lists them (`opts.nodeTools`). Pinned by
- *     packages/wiring/src/__tests__/compose-tools-node.test.ts.
+ *     packages/wiring/src/__tests__/compose-tools-node.test.ts;
+ *   - plan world-model S1 — with `world.enabled`, the `world_*` tools are visible only to a
+ *     personality whose toolset lists them (`opts.worldTools`). Pinned by
+ *     packages/wiring/src/__tests__/worlds-wiring.test.ts.
  */
 export function buildPersonalityToolExclude(
   decisions: Pick<ResolvedDecisionsConfig, 'provider'> | undefined,
-  opts?: { nodeTools?: readonly string[] },
+  opts?: { nodeTools?: readonly string[]; worldTools?: boolean },
 ): (person: PersonalityConfig) => string[] {
   return (person) => [
     ...(decisions && !decisionToolEnabled(person.decisions, decisions) ? ['decide'] : []),
     ...(person.toolset?.includes(PROPOSE_SELF_AMENDMENT_TOOL) ? [] : [PROPOSE_SELF_AMENDMENT_TOOL]),
     ...(opts?.nodeTools ?? []).filter((n) => !person.toolset?.includes(n)),
+    ...(opts?.worldTools ? WORLD_TOOL_NAMES.filter((n) => !person.toolset?.includes(n)) : []),
   ];
 }

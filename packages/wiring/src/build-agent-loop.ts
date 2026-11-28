@@ -773,10 +773,10 @@ export async function buildAgentLoop(
         };
       })()
     : undefined;
-  const personalityToolExclude = buildPersonalityToolExclude(
-    decisions,
-    config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : undefined,
-  );
+  const personalityToolExclude = buildPersonalityToolExclude(decisions, {
+    ...(config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : {}),
+    ...(config.world?.enabled === true ? { worldTools: true } : {}),
+  });
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
   const tierRouter = decisionSites?.tierRouter;

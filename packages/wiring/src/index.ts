@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { deriveProviderKey } from '@ethosagent/config';
+import { deriveProviderKey, type EthosConfig } from '@ethosagent/config';
 import {
   type AgentLoop,
   ChainedProvider,
@@ -150,6 +150,8 @@ export interface WiringProviderConfig {
 export interface WiringConfig {
   /** Laptop tool nodes (mapped from EthosConfig.nodes; plan laptop-tool-node D18). */
   nodes?: { enabled?: boolean };
+  /** World model (mapped from EthosConfig.world; plan world-model 4.6). Off unless `enabled`. */
+  world?: EthosConfig['world'];
   provider: string;
   model: string;
   apiKey: string;
@@ -2524,3 +2526,4 @@ export {
 export * from './room-policy'; // per-room prompts and policy; also the `@ethosagent/wiring/room-policy` subpath
 export * from './share'; // share-links store + redacted snapshot builder (plan share-links)
 export * from './system-jobs';
+export { createWorldRuntime, type WorldRuntime, type WorldRuntimeDeps } from './worlds'; // world model runtime (plan world-model 4.6)

@@ -10,7 +10,7 @@ import { renderModelRegistry } from './model-registry-config';
 import { renderProviderChain } from './provider-chain';
 import { renderConfigLine } from './scalar';
 import { CURRENT_ETHOS_CONFIG_SCHEMA_VERSION } from './section-types';
-import { idleWatcherLines, shareLinksLines } from './serialize-sections';
+import { idleWatcherLines, shareLinksLines, worldLines } from './serialize-sections';
 import {
   REALTIME_ENTRY_FIELDS,
   STT_ENTRY_FIELDS,
@@ -886,6 +886,7 @@ export function serializeConfigLines(config: EthosConfig): string[] {
   }
   lines.push(...idleWatcherLines(config.idleWatcher));
   lines.push(...shareLinksLines(config.shareLinks));
+  lines.push(...worldLines(config.world));
   if (config.nodes?.enabled !== undefined) lines.push(`nodes.enabled: ${config.nodes.enabled}`);
   if (config.pauseClockCorrection) {
     const pcc = config.pauseClockCorrection;

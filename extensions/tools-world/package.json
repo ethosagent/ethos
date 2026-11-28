@@ -8,6 +8,10 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts",
       "production": "./dist/index.js"
+    },
+    "./compose": {
+      "import": "./src/compose.ts",
+      "types": "./src/compose.ts"
     }
   },
   "scripts": {

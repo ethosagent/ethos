@@ -148,6 +148,7 @@ export const KNOWN_KEY_PREFIXES: readonly string[] = [
   'voice.',
   'web.',
   'webhooks.',
+  'world.',
   'weeklyDigest.',
   'whatsapp.',
 ];

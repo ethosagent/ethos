@@ -31,6 +31,7 @@ import {
   platformId as whatsappId,
   platformPrompt as whatsappPrompt,
 } from '@ethosagent/platform-whatsapp/format';
+import { sanitize as sanitizeInjection } from '@ethosagent/safety-injection';
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
@@ -81,6 +82,7 @@ import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { buildCardTools, buildUiTools, createUiGuidanceInjector } from '@ethosagent/tools-ui';
 import { createVoiceTools } from '@ethosagent/tools-voice';
 import { compose as composeWatchers } from '@ethosagent/tools-watchers/compose';
+import { compose as composeWorld } from '@ethosagent/tools-world/compose';
 import { createXSearchTool } from '@ethosagent/tools-x-search';
 import type {
   Constitution,
@@ -143,6 +145,7 @@ import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 import type { WiringContext } from './types';
 import type { UsageMeter } from './usage-meter';
 import { resolveSipTrunkClient } from './voice-stack';
+import { createWorldRuntime } from './worlds';
 
 // ---------------------------------------------------------------------------
 // WEB_PROMPT — kept here since platformPrompts is also assembled here
@@ -2115,6 +2118,31 @@ export async function composeAllTools(
     const notifyQueue = new SQLiteNotifyQueue(join(dataDir, 'notify-queue.db'));
     disposers.push('notify queue', () => notifyQueue.close());
     injectors.push(createPendingNotifyInjector(notifyQueue, config.teamName));
+  }
+
+  // -------------------------------------------------------------------------
+  // World model (plan world-model 4.6). Off by default: nothing below runs, no store is
+  // opened, no tool is registered and no injector is pushed. This is the only place the
+  // world runtime is created; its store and provider handles close with this stage's
+  // DisposerStack. The tools get a port (never a provider) and reach the model only for a
+  // personality whose toolset.yaml lists them (build-agent-loop.ts `worldTools` exclude).
+  // -------------------------------------------------------------------------
+  if (config.world?.enabled === true) {
+    const worldRuntime = createWorldRuntime({
+      dataDir,
+      storage: wiringCtx.storage,
+      config: config.world,
+      providers: infra.worldProviders,
+      secrets: config.secretsResolver ?? NOOP_SECRETS,
+      logger: log,
+      // The same function AgentSafety.injection.sanitize is built from (build-agent-loop.ts).
+      sanitize: sanitizeInjection,
+    });
+    disposers.push('world runtime', () => worldRuntime.close());
+    for (const tool of composeWorld(wiringCtx, { port: worldRuntime.toolPort() }).tools) {
+      tools.register(tool);
+    }
+    injectors.push(worldRuntime.injector());
   }
 
   // -------------------------------------------------------------------------

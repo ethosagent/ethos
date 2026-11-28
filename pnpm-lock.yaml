@@ -3223,6 +3223,9 @@ importers:
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../../extensions/tools-web
+      '@ethosagent/tools-world':
+        specifier: workspace:*
+        version: link:../../extensions/tools-world
       '@ethosagent/tools-x-search':
         specifier: workspace:*
         version: link:../../extensions/tools-x-search
