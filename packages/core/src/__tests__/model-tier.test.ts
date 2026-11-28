@@ -793,7 +793,7 @@ describe('tier_escalation event', () => {
 // Task 3.1 — `checkEscalationCap` (agent-loop/tier-escalation.ts) rejects in the
 // prep loop of tool-processing.ts, before the tool runs.
 describe('escalation caps', () => {
-  const td = (reason: string): ScriptStep => ({ tool: 'think_deeper', args: { reason } });
+  const td = (reason: string): ScriptCall => ({ tool: 'think_deeper', args: { reason } });
 
   it('rejects the third think_deeper of a turn and stays on the turn model', async () => {
     const onComplete = vi.fn();

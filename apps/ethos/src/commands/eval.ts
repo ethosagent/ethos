@@ -501,13 +501,6 @@ export function parseScoredRecords(src: string): {
   return { results, escalationRecords };
 }
 
-/** The `escalation` member of the `ethos eval local --json` document. */
-export function escalationJson(
-  records: EscalationRecord[],
-): ReturnType<typeof summarizeEscalations> {
-  return summarizeEscalations(records);
-}
-
 /** Read the run's `tool.repair` events from the observability store. Degrades
  *  to an empty list (repair rate unavailable) if the store can't be opened. */
 function readRepairEvents(since: number): { events: RepairEvent[]; available: boolean } {
@@ -623,7 +616,7 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   const categories = aggregateByCategory(results);
   const { events, available } = readRepairEvents(runStart);
   const repair = summarizeRepairs(events);
-  const escalation = escalationJson(escalationRecords);
+  const escalation = summarizeEscalations(escalationRecords);
 
   if (json) {
     writeJson({

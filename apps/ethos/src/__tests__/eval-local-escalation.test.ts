@@ -1,9 +1,10 @@
 // think-deeper-tier-switch Task 4.2 — `ethos eval local --tier deep` parses and
 // `--json` gains an `escalation` block built from the scored records.
 
+import { summarizeEscalations } from '@ethosagent/eval-harness';
 import { EthosError } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { escalationJson, parseLocalArgs, parseScoredRecords } from '../commands/eval';
+import { parseLocalArgs, parseScoredRecords } from '../commands/eval';
 
 describe('parseLocalArgs --tier', () => {
   it('defaults to no tier override', () => {
@@ -47,10 +48,10 @@ describe('parseScoredRecords', () => {
   });
 });
 
-describe('escalationJson', () => {
+describe('escalation block', () => {
   it('is the summarizeEscalations block', () => {
     expect(
-      escalationJson([
+      summarizeEscalations([
         { escalations: 1, score: 1, costUsd: 0.2 },
         { escalations: 0, score: 1, costUsd: 0.1 },
       ]),
