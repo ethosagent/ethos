@@ -226,3 +226,43 @@ describe('skill_propose honours skill_evolution.evolve_existing', () => {
     expect(candidate?.op).toBe('rewrite');
   });
 });
+
+describe('skill_propose honours the per-skill lock (advisory, plan C1)', () => {
+  function toolFor(storage: InMemoryStorage, locked: string[] | undefined) {
+    return createSkillProposeTool({
+      learning: port(storage),
+      dataDir: DATA,
+      origin: 'fork',
+      target: (ctx) => ({
+        personalityId: ctx.personalityId ?? 'me',
+        scope: undefined,
+        ...(locked ? { isLocked: async (dest: string) => locked.includes(dest) } : {}),
+      }),
+      now: () => 1700000000000,
+    });
+  }
+
+  it('a targetFile of a locked skill is refused as not_available and submits nothing', async () => {
+    const storage = new InMemoryStorage();
+    const result = await toolFor(storage, [`${DATA}/skills/json.md`]).execute(
+      { content: '# body', reason: 'because', targetFile: 'json.md' },
+      makeCtx(),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_available' });
+    expect(result.ok === false && result.error).toContain('locked');
+    expect(await listCandidates(storage, DATA)).toEqual([]);
+  });
+
+  it('a rewrite of an unlocked skill and a create still submit', async () => {
+    const storage = new InMemoryStorage();
+    const tool = toolFor(storage, [`${DATA}/skills/other.md`]);
+    expect(
+      (await tool.execute({ content: '# b', reason: 'r', targetFile: 'json.md' }, makeCtx())).ok,
+    ).toBe(true);
+    expect((await tool.execute({ content: '# b', reason: 'r' }, makeCtx())).ok).toBe(true);
+    expect((await listCandidates(storage, DATA)).map((c) => c.op).sort()).toEqual([
+      'create',
+      'rewrite',
+    ]);
+  });
+});

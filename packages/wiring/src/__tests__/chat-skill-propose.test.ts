@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listCandidates } from '@ethosagent/learning-inbox';
+import { SkillHistory } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Tool, ToolContext } from '@ethosagent/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -118,5 +119,19 @@ describe('chat-turn skill_propose honours skill_evolution.evolve_existing', () =
     );
     expect(result.ok).toBe(true);
     expect((await candidatesFor(REWRITES)).map((c) => c.op)).toEqual(['rewrite']);
+  });
+
+  it('a locked skill refuses a targetFile rewrite up front (advisory) and submits nothing', async () => {
+    await new SkillHistory({ storage: new FsStorage(), dataDir }).setLock(
+      join(dataDir, 'skills', 'locked-one.md'),
+      true,
+      'test',
+    );
+    const result = await skillPropose.execute(
+      { content: '# body', reason: 'because', targetFile: 'locked-one.md' },
+      ctx(REWRITES),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_available' });
+    expect((await candidatesFor(REWRITES)).filter((c) => c.op === 'rewrite')).toHaveLength(1);
   });
 });

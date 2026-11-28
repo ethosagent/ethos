@@ -80,15 +80,16 @@ import {
   vetPromotedSkillWithScan,
 } from '@ethosagent/skills';
 import type { PendingSkillSummary, PendingSkillsPort } from '@ethosagent/tools-skills';
-import type {
-  LLMProvider,
-  PersonalityRegistry,
-  Session,
-  SessionFilter,
-  SessionStore,
-  Storage,
-  StoredMessage,
-  TurnAudience,
+import {
+  BoundaryError,
+  type LLMProvider,
+  type PersonalityRegistry,
+  type Session,
+  type SessionFilter,
+  type SessionStore,
+  type Storage,
+  type StoredMessage,
+  type TurnAudience,
 } from '@ethosagent/types';
 import type { WiringConfig } from './index';
 import { createReplayLoop, REPLAY_RUN_OPTIONS, shadowForCandidate } from './learning-replay';
@@ -245,6 +246,28 @@ export function learningPromoteDeps(ctx: PromoteContext): PromoteDeps {
     // The one writer of live skill bytes and the one lock check (SkillHistory).
     ...skillHistoryPromotePorts(new SkillHistory({ storage: ctx.storage, dataDir: ctx.dataDir })),
     expressions: ctx.expressions,
+  };
+}
+
+/**
+ * The advisory lock probe the proposal surfaces take (`skill_propose`'s
+ * `SkillProposeTarget.isLocked`, `SkillEvolver`'s `isLocked`): it saves a replay
+ * by refusing a rewrite of a locked skill up front. It is NOT the guarantee —
+ * `SkillHistory.writeAgentAuthored` behind `promote()` is — so a destination that
+ * is not a skill path answers "not locked" instead of throwing.
+ */
+export function skillLockProbe(ctx: {
+  storage: Storage;
+  dataDir: string;
+}): (destination: string) => Promise<boolean> {
+  const history = new SkillHistory({ storage: ctx.storage, dataDir: ctx.dataDir });
+  return async (destination) => {
+    try {
+      return await history.isLocked(destination);
+    } catch (err) {
+      if (err instanceof BoundaryError) return false;
+      throw err;
+    }
   };
 }
 

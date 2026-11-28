@@ -17,7 +17,12 @@ import {
   skillEvolutionEvolveOptions,
 } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
-import { learningSubmitPort, type UsageMeter, withUsageMeter } from '@ethosagent/wiring';
+import {
+  learningSubmitPort,
+  skillLockProbe,
+  type UsageMeter,
+  withUsageMeter,
+} from '@ethosagent/wiring';
 import { sayFor, writeJson, writeJsonError } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
@@ -358,6 +363,7 @@ async function evolveAfter(
     llm,
     storage,
     learning: learningSubmitPort({ storage, dataDir: dir }),
+    isLocked: skillLockProbe({ storage, dataDir: dir }),
     dataDir: dir,
     personalityId,
     // `scope`, `evolve_existing` and `model` from the personality the drafts belong to.

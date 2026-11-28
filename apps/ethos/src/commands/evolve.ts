@@ -18,6 +18,7 @@ import {
   learningSubmitPort,
   type PrivateChatSet,
   privateChatSetFrom,
+  skillLockProbe,
   turnWasShared,
 } from '@ethosagent/wiring';
 import { refuseJson, type Say, sayFor, writeJson, writeJsonError } from '../json-output';
@@ -450,6 +451,7 @@ export async function runAnalyze(
     llm,
     storage: getStorage(),
     learning: learningSubmitPort({ storage: getStorage(), dataDir: ethosDir() }),
+    isLocked: skillLockProbe({ storage: getStorage(), dataDir: ethosDir() }),
     dataDir: ethosDir(),
     personalityId,
     // `scope`, `evolve_existing` and `model` from the personality the drafts belong to.
