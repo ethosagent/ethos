@@ -241,6 +241,12 @@ export function buildSystemTaskHandlers(
       await runNightlyOnce(config);
       return { output: 'Nightly governed-learning pass completed' };
     },
+    // Cron grants nothing here: no prompt, no toolset. The tick reads each personality's
+    // own settings (packages/wiring/src/initiative-runtime.ts).
+    'initiative-tick': async () => {
+      const { runInitiativeTickOnce } = await import('./commands/initiative-tick');
+      return { output: await runInitiativeTickOnce(config) };
+    },
     'weekly-digest': async () => {
       const { runDigestOnce } = await import('./commands/digest');
       await runDigestOnce(config, { email: !!config.weeklyDigest?.recipients?.length });

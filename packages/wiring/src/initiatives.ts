@@ -57,6 +57,7 @@ import {
   type SessionStore,
   type Storage,
   type Tool,
+  type WindowRow,
 } from '@ethosagent/types';
 
 /**
@@ -233,9 +234,9 @@ export async function readInitiativeConstitution(
  * cached so `buildPersonalityToolExclude` (synchronous, called every turn) returns the same
  * answer on every turn. The cache changes only through `reload(id)`.
  *
- * Limitations (written down, not enforced): `reload` has no production caller until the
- * Phase 6 web-api `InitiativesService`, so until then a settings toggle applies at restart;
- * runs re-read settings each tick (Task 5.5). `isEnabled` is synchronous and storage is not,
+ * Limitations (written down, not enforced): `reload` is called by the scheduled tick
+ * (`createInitiativeRuntime`, every 5 minutes), so a settings toggle shows in chat within one
+ * tick; the Phase 6 web-api `InitiativesService` adds an immediate call. `isEnabled` is synchronous and storage is not,
  * so a personality absent from the cache (created after compose) cannot be resolved on its
  * first ask; it answers on (the settings default when no settings.yaml exists) until a
  * `reload(id)` reads its file. The kill switch is always honoured.
@@ -290,6 +291,8 @@ export interface LazyInitiativeStore {
   recall: InitiativeRecallPort;
   /** True when the ledger exists (already opened, or the file is on disk). Never creates it. */
   ready(): Promise<boolean>;
+  /** An initiative's windows, oldest first; the scheduled tick reads them to see what already ran. */
+  windows(initiativeId: string): WindowRow[];
   /**
    * The daily cap `budget(...).capUsd` reports, per initiative: the YAML's `usd_per_day` clamped
    * by settings and the constitution. Set by the run loader on every load (so a lowered limit
@@ -362,6 +365,7 @@ export function createLazyInitiativeStore(deps: {
     ledger,
     recall,
     ready: async () => opened !== undefined || (await deps.storage.exists(path)),
+    windows: (id) => open().windows(id),
     setCap: (id, usd) => void caps.set(id, usd),
     readSources: {},
     close: () => opened?.close(),
@@ -370,8 +374,8 @@ export function createLazyInitiativeStore(deps: {
 
 /**
  * The manual run surface (plan Task 5.1): one survey or one window now, through the same
- * read-only parts the L9 e2e test assembles. 5.5 adds `createInitiativeRuntime` (`tick`,
- * `dispose`) on top of this; the runner holds no handle, so it needs no dispose of its own.
+ * read-only parts the L9 e2e test assembles. `createInitiativeRuntime`
+ * (initiative-runtime.ts) drives it on a schedule; the runner holds no handle, so it needs no dispose.
  *
  * The YAML is re-read and re-validated at run time (O-4: a hand edit may have broken it) and its
  * `repo` sources are re-checked against `readableRoots`, so a constitution that narrowed them
@@ -455,52 +459,7 @@ export function createInitiativeRunnerFor(deps: {
     ...(deps.clock ? { clock: deps.clock } : {}),
     onError: (err) =>
       deps.log?.warn(`initiative run failed: ${err instanceof Error ? err.message : String(err)}`),
-    load: async (id) => {
-      const row = store.getInitiative(id);
-      if (!row) return null;
-      const raw = await deps.storage.read(row.configPath);
-      if (raw === null) return null;
-      const parsed = parseInitiativeFile(raw);
-      if (!parsed.ok) {
-        throw new EthosError({
-          code: 'CONFIG_INVALID',
-          cause: `initiative "${id}" is invalid: ${parsed.error}`,
-          action: 'Fix the file or ask the agent to redefine the initiative.',
-        });
-      }
-      const constitution = await readInitiativeConstitution(deps.storage, deps.dataDir);
-      const sources = checkSources(parsed.file.sources, {
-        readableRoots: constitution.initiatives?.readableRoots ?? [],
-        blocked: sensitiveDenyPaths([deps.dataDir]),
-      });
-      if (!sources.ok) {
-        throw new EthosError({
-          code: 'CONFIG_INVALID',
-          cause: `initiative "${id}" cannot run: ${sources.error}`,
-          action: 'Narrow the sources or widen readableRoots in Settings.',
-        });
-      }
-      const settings = (await loadInitiativeSettings(deps.storage, deps.dataDir, row.personalityId))
-        .settings;
-      const { usdPerDay } = clampInitiativeBudgets(
-        {
-          settings: { dailyBudgetUsd: settings.dailyBudgetUsd },
-          initiative: {
-            usdPerDay: parsed.file.budget.usd_per_day,
-            usdPerExploration: parsed.file.budget.usd_per_exploration,
-          },
-        },
-        constitution.initiatives,
-      );
-      const pool = constitution.initiatives?.selfStartPoolUsdPerDay ?? SELF_START_POOL_USD_DEFAULT;
-      const capUsd = parsed.file.origin === 'agent' ? Math.min(usdPerDay, pool) : usdPerDay;
-      deps.ledger.setCap(id, capUsd);
-      return {
-        personalityId: row.personalityId,
-        file: { ...parsed.file, budget: { ...parsed.file.budget, usd_per_day: capUsd } },
-        sourcePaths: repoSourcePaths(parsed.file.sources),
-      };
-    },
+    load: createInitiativeLoader(deps),
     buildRegistry: ({ initiativeId, personalityId, sourcePaths }) => {
       const personality = deps.personalities.get(personalityId);
       if (!personality) throw new Error(`personality "${personalityId}" is not registered`);
@@ -517,4 +476,63 @@ export function createInitiativeRunnerFor(deps: {
       });
     },
   });
+}
+
+/**
+ * Reads, validates and clamps one initiative for a run, and binds its daily cap on the ledger
+ * (`ledger.setCap`). Shared by the runner and the scheduled tick (`createInitiativeRuntime`), so
+ * both prime the same cap before anything asks the store for a budget.
+ */
+export function createInitiativeLoader(deps: {
+  storage: Storage;
+  dataDir: string;
+  ledger: LazyInitiativeStore;
+}): NonNullable<Parameters<typeof createInitiativeRunner>[0]['load']> {
+  const store = deps.ledger.store;
+  return async (id) => {
+    const row = store.getInitiative(id);
+    if (!row) return null;
+    const raw = await deps.storage.read(row.configPath);
+    if (raw === null) return null;
+    const parsed = parseInitiativeFile(raw);
+    if (!parsed.ok) {
+      throw new EthosError({
+        code: 'CONFIG_INVALID',
+        cause: `initiative "${id}" is invalid: ${parsed.error}`,
+        action: 'Fix the file or ask the agent to redefine the initiative.',
+      });
+    }
+    const constitution = await readInitiativeConstitution(deps.storage, deps.dataDir);
+    const sources = checkSources(parsed.file.sources, {
+      readableRoots: constitution.initiatives?.readableRoots ?? [],
+      blocked: sensitiveDenyPaths([deps.dataDir]),
+    });
+    if (!sources.ok) {
+      throw new EthosError({
+        code: 'CONFIG_INVALID',
+        cause: `initiative "${id}" cannot run: ${sources.error}`,
+        action: 'Narrow the sources or widen readableRoots in Settings.',
+      });
+    }
+    const settings = (await loadInitiativeSettings(deps.storage, deps.dataDir, row.personalityId))
+      .settings;
+    const { usdPerDay } = clampInitiativeBudgets(
+      {
+        settings: { dailyBudgetUsd: settings.dailyBudgetUsd },
+        initiative: {
+          usdPerDay: parsed.file.budget.usd_per_day,
+          usdPerExploration: parsed.file.budget.usd_per_exploration,
+        },
+      },
+      constitution.initiatives,
+    );
+    const pool = constitution.initiatives?.selfStartPoolUsdPerDay ?? SELF_START_POOL_USD_DEFAULT;
+    const capUsd = parsed.file.origin === 'agent' ? Math.min(usdPerDay, pool) : usdPerDay;
+    deps.ledger.setCap(id, capUsd);
+    return {
+      personalityId: row.personalityId,
+      file: { ...parsed.file, budget: { ...parsed.file.budget, usd_per_day: capUsd } },
+      sourcePaths: repoSourcePaths(parsed.file.sources),
+    };
+  };
 }
