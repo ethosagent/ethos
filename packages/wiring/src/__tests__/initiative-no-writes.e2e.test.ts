@@ -9,10 +9,9 @@
 // dependency, so the real SQLite ledger is not reachable from this package; the
 // `initiatives.db*` allowance is kept so the diff rule matches the plan.
 
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { DefaultPersonalityRegistry } from '@ethosagent/core';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import {
@@ -36,6 +35,7 @@ import type {
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
 import { buildReadOnlyRegistry, defaultInitiativeToolFactories } from '../initiatives';
+import { diffHashes, hashTree } from './initiative-e2e-helpers';
 
 /** In-memory ledger: records calls, touches no disk. */
 function fakeLedger(): InitiativeLedgerPort {
@@ -98,31 +98,6 @@ function fakeRecall(): InitiativeRecallPort {
           }
         : null,
   };
-}
-
-/** Every file under `roots`, keyed by path relative to `base`. */
-function hashTree(base: string, roots: string[]): Map<string, string> {
-  const out = new Map<string, string>();
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.isFile()) {
-        out.set(
-          relative(base, full),
-          createHash('sha256').update(readFileSync(full)).digest('hex'),
-        );
-      }
-    }
-  };
-  for (const root of roots) walk(root);
-  return out;
-}
-
-/** Paths added, removed or changed between two hashes. */
-function diffHashes(before: Map<string, string>, after: Map<string, string>): string[] {
-  const names = new Set([...before.keys(), ...after.keys()]);
-  return [...names].filter((n) => before.get(n) !== after.get(n)).sort();
 }
 
 const MEMORY_CANARY = 'canary-memory-fact-7731';
