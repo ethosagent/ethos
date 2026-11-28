@@ -42,4 +42,24 @@ describe('exploration window budget', () => {
     expect(r.spentUsd).toBeCloseTo(1.8, 10);
     // Without the reserve a fourth call would have run (1.8 leaves 0.2 of the day), ending at 2.4.
   });
+
+  it("a stalled exploration's brief run is not stopped by the per-window cap", async () => {
+    // The cap was sized for an exploring window; the brief spends the reserve kept for it.
+    const { file, ledger } = setup(3);
+    const stalled = ledger.seedExploration({
+      id: 'EXP-2',
+      initiativeId: file.id,
+      budgetUsd: 10,
+      state: 'stalled',
+    });
+    const turns = Array.from({ length: 12 }, () => [note(stalled.id)]);
+    const r = await harness({
+      ledger,
+      llm: scriptedLLM(turns, 0.2).llm,
+      files: { [file.id]: file },
+    }).runWindow(file.id, stalled.id, { capUsd: 0.3 });
+    expect(r.kind).toBe('brief');
+    expect(r.endReason).not.toBe('window');
+    expect(r.spentUsd).toBeGreaterThan(0.3);
+  });
 });

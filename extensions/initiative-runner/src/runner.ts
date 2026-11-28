@@ -285,7 +285,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         ...(kind === 'window'
           ? { briefReserveUsd: file.budget.usd_per_day * BRIEF_RESERVE_SHARE }
           : {}),
-        ...(input.capUsd !== undefined ? { windowCapUsd: input.capUsd } : {}),
+        // The cap is sized for an exploring window; a brief run spends the reserve kept for it.
+        ...(kind === 'window' && input.capUsd !== undefined ? { windowCapUsd: input.capUsd } : {}),
       },
       abort,
     );
