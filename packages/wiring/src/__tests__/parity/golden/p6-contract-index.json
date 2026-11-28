@@ -430,5 +430,28 @@
     "voice.ttsEntries",
     "voice.wakeRoutes.get",
     "voice.wakeRoutes.set"
+  ],
+  "worlds": [
+    "worlds.buildPreview",
+    "worlds.changes",
+    "worlds.config",
+    "worlds.configSave",
+    "worlds.decide",
+    "worlds.entity",
+    "worlds.export",
+    "worlds.factClose",
+    "worlds.factWrite",
+    "worlds.graph",
+    "worlds.import",
+    "worlds.linkify",
+    "worlds.list",
+    "worlds.mounts",
+    "worlds.mountsSave",
+    "worlds.promote",
+    "worlds.proposals",
+    "worlds.schema",
+    "worlds.schemaSave",
+    "worlds.shareCreate",
+    "worlds.tree"
   ]
 }
