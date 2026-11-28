@@ -98,6 +98,10 @@ export interface InitiativeRuntime {
    * constitution still needs a restart (plan O-3). Never throws: failures go to `log.warn`.
    */
   tick(now?: Date): Promise<InitiativeTickReport>;
+  /** The loop's enablement view: a settings service calls `reload` so a toggle applies at once. */
+  enablement: Pick<InitiativeEnablement, 'reload'> | undefined;
+  /** Late-binds the digest sender: the runtime is built before the gateway host has a gateway. */
+  setNotify(notify: DigestNotify | undefined): void;
   /** Idempotent. A tick in flight finishes its current run and starts no other. */
   dispose(): void;
 }
@@ -127,6 +131,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
   const store = ledger.store;
   const onError = (err: unknown): void =>
     deps.log?.warn(`initiative tick: ${err instanceof Error ? err.message : String(err)}`);
+  let notify = deps.notify;
   let busy = false;
   let disposed = false;
   let lastTickAt: Date | null = null;
@@ -208,10 +213,10 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
 
   /**
    * The morning digest, once per personality per UTC day at or after `delivery.digestTime`.
-   * Idempotent across ticks through `.digest-sent.json` (Storage, written after the hand-off). A
+   * Idempotent across ticks through `.digest-sent.json` (Storage, written before the hand-off). A
    * `'held'` result (quiet hours, `Gateway.notifyTracked`) counts as handed off: the gateway owes
-   * it. `false` leaves the day open, so the next tick retries; limitation: the delivery ledger may
-   * also redeliver that first attempt. Pinned by initiative-digest.test.ts.
+   * it. `false` restores the previous marker so the next tick retries; limitation: the delivery
+   * ledger may also redeliver that first attempt. Pinned by initiative-digest.test.ts.
    */
   async function maybeDigest(
     personalityId: string,
@@ -219,7 +224,6 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
     now: Date,
     report: InitiativeTickReport,
   ): Promise<void> {
-    const { notify } = deps;
     const delivery = settings.delivery;
     if (!notify || !delivery) return;
     const due = digestMinutes(delivery.digestTime);
@@ -239,24 +243,39 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       const loaded = await load(row.id);
       if (loaded) usdPerExploration.set(row.id, loaded.file.budget.usd_per_exploration);
     }
+    const digestSince = sent ? new Date(sent.at) : new Date(now.getTime() - DAY_MS);
     const digest = composeDigest(ledger, {
       personalityId,
       now,
-      since: sent ? new Date(sent.at) : new Date(now.getTime() - DAY_MS),
+      since: digestSince,
       selfStart: settings.selfStart,
       usdPerExploration,
     });
-    if (!digestIsEmpty(digest)) {
-      const result = await notify(target, renderDigestMarkdown(digest));
-      if (result === false) {
-        onError(new Error(`digest for "${personalityId}" was not delivered; retrying next tick`));
-        return;
-      }
-      report.digests.push(personalityId);
+    // The marker is written BEFORE the hand-off: if this write fails nothing is sent, and if the
+    // send then fails the previous marker is put back for a retry. A failing restore leaves the
+    // day marked, so a broken marker store costs a missed digest, never a resend every tick.
+    const write = async (m: { day: string; at: string }): Promise<void> => {
+      const path = digestPath(personalityId);
+      await storage.mkdir(join(path, '..'));
+      await storage.writeAtomic(path, JSON.stringify(m));
+    };
+    await write({ day, at: now.toISOString() });
+    if (digestIsEmpty(digest)) return;
+    let result: boolean | 'held' | undefined;
+    let thrown: unknown;
+    try {
+      result = await notify(target, renderDigestMarkdown(digest));
+    } catch (err) {
+      thrown = err;
     }
-    const path = digestPath(personalityId);
-    await storage.mkdir(join(path, '..'));
-    await storage.writeAtomic(path, JSON.stringify({ day, at: now.toISOString() }));
+    if (thrown !== undefined || result === false) {
+      onError(
+        thrown ?? new Error(`digest for "${personalityId}" was not delivered; retrying next tick`),
+      );
+      await write(sent ?? { day: '', at: digestSince.toISOString() });
+      return;
+    }
+    report.digests.push(personalityId);
   }
 
   async function tickInitiative(
@@ -327,11 +346,28 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       minWindowUsd: PER_CALL_RESERVE_USD,
       lastRunAt,
     });
+    // What ran before survives a restart: the newest window per exploration in the ledger.
+    const seeded: Record<string, string> = {};
+    for (const w of history) {
+      if (w.explorationId === null || (w.kind !== 'window' && w.kind !== 'brief')) continue;
+      if ((seeded[w.explorationId] ?? '') < w.started) seeded[w.explorationId] = w.started;
+    }
+    for (const [id, started] of Object.entries(seeded)) lastRunAt[id] ??= started;
+    // `planDay` caps how many windows the budget funds; each slot that is due goes to the
+    // exploration that ran longest ago (never run first), re-read after every run so two
+    // explorations alternate instead of the slot index picking one.
     for (const slot of plan.windowsToRun) {
       const at = Date.parse(slot.at);
       if (at <= since.getTime() || at > now.getTime() || left() < PER_CALL_RESERVE_USD) continue;
-      lastRunAt[slot.explorationId] = now.toISOString();
-      await attempt('window', () => runner.runWindow(row.id, slot.explorationId));
+      const next = open
+        .map((e, i) => ({ e, i }))
+        .sort((a, b) => {
+          const [sa, sb] = [lastRunAt[a.e.id] ?? '', lastRunAt[b.e.id] ?? ''];
+          return sa === sb ? a.i - b.i : sa < sb ? -1 : 1;
+        })[0]?.e;
+      if (!next) break;
+      lastRunAt[next.id] = now.toISOString();
+      await attempt('window', () => runner.runWindow(row.id, next.id));
     }
   }
 
@@ -384,6 +420,10 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
         busy = false;
       }
       return report;
+    },
+    enablement: deps.enablement,
+    setNotify(next) {
+      notify = next;
     },
     dispose() {
       disposed = true;

@@ -26,6 +26,7 @@ export {
   type InitiativeDecideResult,
   type InitiativeDecision,
 } from './initiative-decide';
+export type { DigestNotify } from './initiative-runtime';
 export {
   buildReadOnlyRegistry,
   defaultInitiativeToolFactories,

@@ -6,10 +6,19 @@
 // has no hook for it, so it is released at process exit).
 import { join } from 'node:path';
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
-import type { CreateAgentLoopResult } from '@ethosagent/wiring';
+import type { CreateAgentLoopResult, DigestNotify } from '@ethosagent/wiring';
 import { createAgentLoop, getStorage } from '../wiring';
 
 let runtime: Promise<CreateAgentLoopResult> | undefined;
+let digestNotify: DigestNotify | undefined;
+
+/**
+ * The gateway host calls this once it has a gateway (`bindInitiativeHost`); the tick hands it to
+ * the runtime, which sends the owner digest through it. A host with no gateway sends no digest.
+ */
+export function setInitiativeDigestNotify(notify: DigestNotify | undefined): void {
+  digestNotify = notify;
+}
 
 export async function runInitiativeTickOnce(config: EthosConfig): Promise<string> {
   if (!runtime) {
@@ -22,7 +31,8 @@ export async function runInitiativeTickOnce(config: EthosConfig): Promise<string
     });
   }
   const { initiativeRuntime } = await runtime;
+  initiativeRuntime.setNotify(digestNotify);
   const report = await initiativeRuntime.tick(new Date());
   if (report.skipped) return `Initiative tick skipped (${report.skipped})`;
-  return `Initiative tick: ${report.ran.length} run(s), ${report.paused.length} paused, ${report.resumed.length} resumed`;
+  return `Initiative tick: ${report.ran.length} run(s), ${report.paused.length} paused, ${report.resumed.length} resumed, ${report.digests.length} digest(s)`;
 }

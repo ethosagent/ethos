@@ -71,6 +71,7 @@ import {
   handleApprovalAction,
   handleApprovalNoteSubmission,
 } from './interactions/actions';
+import { registerButtonActions } from './interactions/buttons';
 import {
   type ClarifyActionEvent,
   type ClarifyActionPayload,
@@ -79,6 +80,7 @@ import {
   handleClarifyAction,
   handleClarifyModalSubmission,
 } from './interactions/clarify';
+import type { InitiativeActionEvent } from './interactions/initiative';
 import { createKeyedChain, createSlackRoomMetadata } from './room-metadata';
 import { deliverStamped, roomModeFields, stampRoomMetadata } from './room-mode';
 import { isSlackDm, type RawSlackFile, resolveChannelMode } from './routing/triage';
@@ -531,6 +533,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   /** Clarify-card button-click handler, wired by the Slack clarify surface. */
   private clarifyActionHandler?: (event: ClarifyActionEvent) => void;
+  /** Initiative digest / brief button handler, wired by the app's initiative wiring. */
+  private initiativeActionHandler?: (event: InitiativeActionEvent) => void | Promise<void>;
   /** Clarify-modal submission handler, wired by the Slack clarify surface. */
   private clarifyModalSubmitHandler?: (event: ClarifyModalSubmissionEvent) => void;
   /** Source of pending clarifies for the App Home "Waiting on you" section.
@@ -883,53 +887,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
     });
 
-    // Approval-card button clicks. Bolt delivers `block_actions` events here;
-    // we parse the raw payload down to the fields `handleApprovalAction`
-    // needs and let it route to the coordinator's decision handler. Registered
-    // unconditionally — a click with no handler wired is a harmless no-op.
-    //
-    // Slack is the one thing we don't control: a malformed payload or Bolt
-    // API drift must not throw inside the event loop. We defensively probe
-    // the shape before dereferencing, ack when we can, and bail otherwise.
-    const onApprovalButton = async (raw: unknown): Promise<void> => {
-      const evt = (raw ?? {}) as {
-        ack?: unknown;
-        body?: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
-        action?: { action_id?: string; value?: string };
-      };
-      if (typeof evt.ack === 'function') {
-        // `ack()` is the one call we can't reason about — a Bolt/Slack API
-        // change could make it throw synchronously, not just reject. Wrap the
-        // invocation itself, not only the returned promise, so a bad ack can
-        // never escape this handler and poison Bolt's event loop.
-        try {
-          await (evt.ack as () => Promise<void>)();
-        } catch {
-          // best-effort ack — proceed with the decision regardless
-        }
-      }
-      const handler = this.approvalDecisionHandler;
-      if (!handler) return;
-      const body = evt.body;
-      const action = evt.action;
-      if (
-        typeof body !== 'object' ||
-        body === null ||
-        typeof action !== 'object' ||
-        action === null
-      )
-        return;
-      const payload: ApprovalActionPayload = {
-        actionId: action.action_id ?? '',
-        approvalId: action.value ?? '',
-        userId: body.user?.id ?? '',
-        channelId: body.channel?.id ?? '',
-        messageTs: body.message?.ts ?? '',
-      };
-      await handleApprovalAction(payload, { onDecision: async (event) => handler(event) });
-    };
-    this.app.action(APPROVE_ACTION_ID, onApprovalButton);
-    this.app.action(DENY_ACTION_ID, onApprovalButton);
+    registerButtonActions(this.app, this.client, {
+      approval: () => this.approvalDecisionHandler,
+      clarify: () => this.clarifyActionHandler,
+      initiative: () => this.initiativeActionHandler,
+    });
 
     // "Deny with note…" opens a modal; it never decides. Opening is not
     // authorization: whose submission counts is decided by the coordinator's
@@ -997,64 +959,6 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         { onDecision: async (event) => handler(event) },
       );
     });
-
-    // Clarify-card button clicks. Bolt delivers `block_actions` events here
-    // for the choice/cancel/answer buttons; we narrow the raw payload to
-    // `ClarifyActionPayload` and let the pure handler route it. Same shape as
-    // the approval handler — defensively probe the payload before dereferencing
-    // and ack as the very first thing.
-    const onClarifyButton = async (raw: unknown): Promise<void> => {
-      const evt = (raw ?? {}) as {
-        ack?: unknown;
-        body?: {
-          user?: { id?: string };
-          channel?: { id?: string };
-          message?: { ts?: string };
-          trigger_id?: string;
-          /** Present for App Home / modal-triggered block_actions; absent for
-           *  channel-message clicks. We use it to detect the Home tab path. */
-          view?: { type?: string };
-        };
-        action?: { action_id?: string; value?: string };
-      };
-      if (typeof evt.ack === 'function') {
-        try {
-          await (evt.ack as () => Promise<void>)();
-        } catch {
-          // best-effort ack — proceed regardless
-        }
-      }
-      const handler = this.clarifyActionHandler;
-      if (!handler) return;
-      const body = evt.body;
-      const action = evt.action;
-      if (
-        typeof body !== 'object' ||
-        body === null ||
-        typeof action !== 'object' ||
-        action === null
-      )
-        return;
-      // App Home payloads omit `body.channel` and `body.message` entirely
-      // (the click happened on a view, not a channel message). Detect this
-      // so the surface can relax its channel/messageTs cross-tenant gate
-      // for Home — a Home view is per-user, so cross-message replay isn't
-      // a risk; the gate's purpose doesn't apply.
-      const fromHome = body.view?.type === 'home' || !body.channel;
-      const payload: ClarifyActionPayload = {
-        actionId: action.action_id ?? '',
-        value: action.value ?? '',
-        userId: body.user?.id ?? '',
-        channelId: body.channel?.id ?? '',
-        messageTs: body.message?.ts ?? '',
-        triggerId: body.trigger_id ?? '',
-        fromHome,
-      };
-      await handleClarifyAction(payload, { onAction: async (e) => handler(e) });
-    };
-    this.app.action(CLARIFY_CHOICE_ACTION_ID, onClarifyButton);
-    this.app.action(CLARIFY_CANCEL_ACTION_ID, onClarifyButton);
-    this.app.action(CLARIFY_ANSWER_ACTION_ID, onClarifyButton);
 
     // Free-form modal submission. Bolt delivers `view_submission` events
     // when the user clicks Submit on the clarify modal. Same defensive shape.
@@ -1653,6 +1557,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       // final regardless.
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /** Register the initiative digest / brief button handler (`init:<verb>:<target>` taps). */
+  onInitiativeAction(handler: (event: InitiativeActionEvent) => void | Promise<void>): void {
+    this.initiativeActionHandler = handler;
   }
 
   /** Register the approval-card button-click handler. The coordinator wires

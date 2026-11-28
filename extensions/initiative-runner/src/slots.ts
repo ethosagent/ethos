@@ -1,7 +1,8 @@
 import { nextRunForSchedule } from '@ethosagent/cron';
 
 const DAY_MS = 86_400_000;
-const MAX_SLOTS_PER_SCHEDULE = 48;
+/** One slot per minute is the finest cron granularity, so a full UTC day always fits. */
+const MAX_SLOTS_PER_SCHEDULE = 1440;
 
 /**
  * Every start time of `schedules` inside the UTC day beginning at `dayStartMs`, as sorted ISO

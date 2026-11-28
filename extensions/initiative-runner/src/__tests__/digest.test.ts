@@ -197,6 +197,18 @@ describe('digest', () => {
     ]);
   });
 
+  it('reads decisions from a 7-day window before since, not the epoch', () => {
+    const seen: string[] = [];
+    compose({
+      ...source(),
+      decisionsSince: (_p, since) => {
+        seen.push(since);
+        return [];
+      },
+    });
+    expect(seen).toEqual([new Date(SINCE.getTime() - 7 * 86_400_000).toISOString()]);
+  });
+
   it('includes unanswered questions and agent suggestions only while self-start is off', () => {
     const draft: DraftRow = {
       id: 'D-1',

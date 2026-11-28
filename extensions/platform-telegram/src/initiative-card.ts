@@ -13,6 +13,22 @@ import {
 } from '@ethosagent/types';
 import type { InlineButton } from './index';
 
+/** An owner tap on a digest or brief button, surfaced to the host's initiative wiring. */
+export interface InitiativeActionEvent {
+  verb: InitiativeActionVerb;
+  /** A ledger id (`EXP-0001` or an initiative id), parsed by `parseInitiativeAction`. */
+  target: string;
+  /** The tapping Telegram user. The wiring compares it to `channel_filter.telegram.ownerUserId`; the adapter enforces nothing. */
+  userId: string | undefined;
+  chatId: string;
+  messageId: string;
+  /** Dismiss the spinner with an optional toast. If the handler does not call it, the adapter does. */
+  answer: (text?: string) => Promise<void>;
+  /** A follow-up message in the same chat (the brief as Markdown, the chat hand-off). */
+  /** Resolves true when the message was sent, false when Telegram refused it (e.g. over 4096 chars). */
+  reply: (text: string) => Promise<boolean>;
+}
+
 export interface InitiativeCard {
   text: string;
   rows: InlineButton[][];
@@ -50,6 +66,8 @@ function briefLines(b: DigestBrief): string[] {
   ];
 }
 
+const BRIEF_BUTTONS = 4;
+
 function briefRows(b: DigestBrief): InlineButton[][] {
   const adopt = b.recommendedOption ? `Adopt ${b.recommendedOption.slice(0, 20)}` : 'Adopt';
   const dig = b.digDeeperUsd === null ? 'Dig deeper' : `Dig deeper (${usd(b.digDeeperUsd)})`;
@@ -59,9 +77,17 @@ function briefRows(b: DigestBrief): InlineButton[][] {
   ].filter((r) => r.length > 0);
 }
 
+/** The CLI fallback line when any of a brief's buttons did not fit in `callback_data`. */
+function briefFallback(b: DigestBrief, rows: InlineButton[][]): string[] {
+  return rows.flat().length < BRIEF_BUTTONS
+    ? [`Use: ethos initiatives adopt ${b.explorationId} (or dig-deeper, park, export)`]
+    : [];
+}
+
 /** One brief as its own card. */
 export function briefCard(b: DigestBrief): InitiativeCard {
-  return { text: briefLines(b).join('\n'), rows: briefRows(b) };
+  const rows = briefRows(b);
+  return { text: [...briefLines(b), ...briefFallback(b, rows)].join('\n'), rows };
 }
 
 /**
@@ -110,8 +136,9 @@ export function digestCard(d: InitiativeDigest): InitiativeCard {
   if (d.briefs.length) {
     lines.push('', 'Briefs ready:');
     for (const b of d.briefs.slice(0, MAX_ITEMS)) {
-      lines.push(...briefLines(b), '');
-      rows.push(...briefRows(b));
+      const r = briefRows(b);
+      lines.push(...briefLines(b), ...briefFallback(b, r), '');
+      rows.push(...r);
     }
   }
   if (d.questions.length) {

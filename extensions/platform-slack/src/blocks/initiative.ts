@@ -1,8 +1,11 @@
 // Block Kit builders for the initiative digest and options brief. Pure functions, no Slack client.
 // Every button's `action_id` and `value` is the compact action id `init:<verb>:<target>`
 // (`initiativeActionId`, @ethosagent/types): a ledger id, never text a model wrote. The adapter
-// parses a tap with `parseInitiativeAction` and hands it to the wiring, which owns the owner check
-// (`isUserAuthorized`, ../authz) and the decision write.
+// parses a tap (`SlackAdapter.onInitiativeAction`, ../interactions/initiative) and the app's
+// `createInitiativeTapHandler` (apps/ethos/src/lib/initiative-wiring.ts) refuses anyone but
+// `channel_filter.slack.ownerUserId` and writes the decision through `decideInitiative`; pinned by
+// apps/ethos/src/__tests__/initiative-wiring.test.ts ('non-owner tap refused'). Not `isUserAuthorized`
+// (../authz): that is the slash-command allowlist, which admits more people than the owner.
 
 import {
   type DigestBrief,

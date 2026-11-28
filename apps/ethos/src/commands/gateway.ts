@@ -147,6 +147,7 @@ import {
   takeGatewayLockOrExit,
 } from '../lib/gateway-inbound-durability';
 import { scrubExpiredIncognito } from '../lib/incognito-retention';
+import { bindInitiativeHostFor } from '../lib/initiative-wiring';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -1402,7 +1403,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // module, shared with `ethos boot` (B-T5).
   const speaksFor = buildChannelSpeakers(config);
   cronDeliverFn = createCronDeliver({ gateway, speaksFor });
-
+  bindInitiativeHostFor(gateway, config, adapters); // Task 6.5: digest sender + owner-only buttons
   // Watcher deliver → the gateway's sendTo path. sendTo already routes
   // through the outbound dedup cache — the watcher layer adds NO dedup of
   // its own (CLAUDE.md adapter contract). Targets are explicit

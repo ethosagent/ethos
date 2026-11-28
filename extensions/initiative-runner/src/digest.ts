@@ -26,7 +26,8 @@ export interface DigestInput {
   usdPerExploration?: ReadonlyMap<string, number>;
 }
 
-const EPOCH = '1970-01-01T00:00:00.000Z';
+/** How far before `since` an approval still counts: a window can run days after its Gate 1 yes. */
+const APPROVAL_LOOKBACK_MS = 7 * 86_400_000;
 
 /** The text under `## <name>` in a brief body, up to the next heading. Empty when absent. */
 function section(body: string, name: string): string {
@@ -61,7 +62,10 @@ export function composeDigest(src: DigestSource, input: DigestInput): Initiative
   const mine = new Set(rows.map((r) => r.id));
   const approved = new Set(
     src
-      .decisionsSince(personalityId, EPOCH)
+      .decisionsSince(
+        personalityId,
+        new Date(input.since.getTime() - APPROVAL_LOOKBACK_MS).toISOString(),
+      )
       .flatMap((d) => (d.verdict === 'approve' ? [d.target] : [])),
   );
 

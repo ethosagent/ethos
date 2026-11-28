@@ -10,7 +10,7 @@ import { InitiativeConfigService } from '@ethosagent/initiative-runner';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { CompletionChunk, LLMProvider } from '@ethosagent/types';
+import type { CompletionChunk, LLMProvider, Storage } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
 import { createInitiativeRuntime, type DigestNotify } from '../initiative-runtime';
@@ -59,8 +59,7 @@ const writeDelivery = (id: string, channel: string) =>
     `delivery:\n  ownerChannel: "${channel}"\n  digestTime: "09:00"\n`,
   );
 
-async function setup(notify: DigestNotify) {
-  const storage = new FsStorage();
+async function setup(notify: DigestNotify | undefined, storage: Storage = new FsStorage()) {
   const ledger = createLazyInitiativeStore({ storage, dataDir });
   closers.push(ledger);
   const session = new SQLiteSessionStore(join(dataDir, 'sessions.db'));
@@ -83,7 +82,7 @@ async function setup(notify: DigestNotify) {
     session,
     clock: () => DUE,
     log: { warn: (m) => warnings.push(m) },
-    notify,
+    ...(notify ? { notify } : {}),
   });
   const config = new InitiativeConfigService({
     storage,
@@ -192,6 +191,20 @@ describe('initiative digest', () => {
     expect((await runtime.tick(LATER)).digests).toEqual(['product-manager']);
   });
 
+  it('a notify that throws restores the marker, so the next tick retries', async () => {
+    let calls = 0;
+    const { runtime, save, warnings } = await setup(async () => {
+      if (++calls === 1) throw new Error('network down');
+      return true;
+    });
+    await save('product-manager', 'activation');
+    writeDelivery('product-manager', 'telegram:42');
+    expect((await runtime.tick(DUE)).digests).toEqual([]);
+    expect(warnings.join('\n')).toContain('network down');
+    expect((await runtime.tick(LATER)).digests).toEqual(['product-manager']);
+    expect(calls).toBe(2);
+  });
+
   it('an owner channel with no chat id sends nothing', async () => {
     let calls = 0;
     const { runtime, save } = await setup(async () => {
@@ -202,5 +215,38 @@ describe('initiative digest', () => {
     writeDelivery('product-manager', 'telegram');
     await runtime.tick(DUE);
     expect(calls).toBe(0);
+  });
+
+  it('a marker that cannot be written sends nothing, so a broken store cannot resend every tick', async () => {
+    let calls = 0;
+    const real = new FsStorage();
+    const failing = Object.create(real) as Storage;
+    failing.writeAtomic = async (path, data) => {
+      if (path.endsWith('.digest-sent.json')) throw new Error('disk full');
+      return real.writeAtomic(path, data);
+    };
+    const { runtime, save } = await setup(async () => {
+      calls++;
+      return true;
+    }, failing);
+    await save('product-manager', 'activation');
+    writeDelivery('product-manager', 'telegram:42');
+    await runtime.tick(DUE);
+    await runtime.tick(LATER);
+    expect(calls).toBe(0);
+  });
+
+  it('notify can be bound after the runtime is built', async () => {
+    const calls: string[] = [];
+    const { runtime, save } = await setup(undefined);
+    await save('product-manager', 'activation');
+    writeDelivery('product-manager', 'telegram:42');
+    expect((await runtime.tick(DUE)).digests).toEqual([]); // no sender yet: marker not written either
+    runtime.setNotify(async (_t, text) => {
+      calls.push(text);
+      return true;
+    });
+    expect((await runtime.tick(LATER)).digests).toEqual(['product-manager']);
+    expect(calls).toHaveLength(1);
   });
 });

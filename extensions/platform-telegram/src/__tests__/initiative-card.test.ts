@@ -62,4 +62,14 @@ describe('initiative card', () => {
       'Copy as Markdown',
     ]);
   });
+
+  it('a brief whose id is too long for callback_data names the CLI command', () => {
+    const long = { ...brief, explorationId: 'EXP-'.padEnd(70, '9') };
+    const card = briefCard(long);
+    expect(card.rows).toEqual([]);
+    expect(card.text).toContain(`ethos initiatives adopt ${long.explorationId}`);
+    expect(
+      digestCard(digest({ needsYes: [], agentInitiatives: [], briefs: [long] })).text,
+    ).toContain(`ethos initiatives adopt ${long.explorationId}`);
+  });
 });

@@ -43,4 +43,5 @@ export type {
 } from './events/links';
 export type { SessionReader } from './home/handlers';
 export { buildHomeView, type HomeViewInput, type SlackHomeView } from './home/view';
+export type { InitiativeActionEvent } from './interactions/initiative';
 export { loadSlackSdk } from './sdk';

@@ -23,6 +23,7 @@ import type {
   Storage,
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
+import { INITIATIVE_ACTION_PREFIX, parseInitiativeAction } from '@ethosagent/types';
 import type { Bot, InputFile } from 'grammy';
 import { formatApprovalCardText } from './blocks/approval';
 import {
@@ -33,6 +34,7 @@ import {
   type RoomModeDefault,
 } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
+import type { InitiativeActionEvent } from './initiative-card';
 import type {
   OutboxCardBody,
   OutboxCardInput,
@@ -730,6 +732,8 @@ export class TelegramAdapter
   private readonly approvalDeciders = new Map<string, { username?: string; firstName?: string }>();
   /** Outbox-card button-click handler, wired by the outbox wiring. */
   private outboxDecisionHandler?: (event: OutboxDecisionEvent) => void | Promise<void>;
+  /** Initiative digest / brief button handler, wired by the app's initiative wiring. */
+  private initiativeActionHandler?: (event: InitiativeActionEvent) => void | Promise<void>;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
@@ -1388,6 +1392,46 @@ export class TelegramAdapter
         void (async () => {
           try {
             await handler(decisionEvent);
+          } catch {
+            // A failing handler must not leave the spinner turning.
+          }
+          if (!answered) await event.answer();
+        })();
+        return;
+      }
+
+      // Initiative digest / brief buttons. Parsing is the adapter's whole job: the owner check
+      // and the decision live in the app's initiative wiring (`parseInitiativeAction`).
+      if (data.startsWith(`${INITIATIVE_ACTION_PREFIX}:`)) {
+        const parsed = parseInitiativeAction(data);
+        const handler = this.initiativeActionHandler;
+        if (!parsed || !handler) {
+          void event.answer(parsed ? 'No initiative handler registered.' : 'Unrecognised button.');
+          return;
+        }
+        let answered = false;
+        const actionEvent: InitiativeActionEvent = {
+          verb: parsed.verb,
+          target: parsed.target,
+          userId: event.userId,
+          chatId: event.chatId,
+          messageId: event.messageId,
+          answer: async (text) => {
+            answered = true;
+            await event.answer(text);
+          },
+          reply: async (text) => {
+            try {
+              await this.bot.api.sendMessage(Number(event.chatId), text);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+        };
+        void (async () => {
+          try {
+            await handler(actionEvent);
           } catch {
             // A failing handler must not leave the spinner turning.
           }
@@ -2055,6 +2099,11 @@ export class TelegramAdapter
     );
   }
 
+  /** Register the initiative digest / brief button handler (`init:<verb>:<target>` taps). */
+  onInitiativeAction(handler: (event: InitiativeActionEvent) => void | Promise<void>): void {
+    this.initiativeActionHandler = handler;
+  }
+
   /** Register the outbox-card button-click handler. The outbox wiring plugs in
    *  here and owns the owner check, the revision check and the store writes. */
   onOutboxDecision(handler: (event: OutboxDecisionEvent) => void | Promise<void>): void {
@@ -2082,6 +2131,7 @@ export class TelegramAdapter
 }
 
 export { CHANNEL_MODES, type RoomModeDefault } from './config';
+export type { InitiativeActionEvent } from './initiative-card';
 export type {
   OutboxCardBody,
   OutboxCardDestination,

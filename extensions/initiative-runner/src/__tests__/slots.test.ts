@@ -23,6 +23,14 @@ describe('slotsOnDay', () => {
   });
 });
 
+describe('slotsOnDay cap', () => {
+  it('"every 15m" covers the whole day (96 slots)', () => {
+    const slots = slotsOnDay(['every 15m'], DAY);
+    expect(slots).toHaveLength(96);
+    expect(slots.at(-1)).toBe('2026-11-29T23:45:00.000Z');
+  });
+});
+
 describe('nextSlotAfter', () => {
   it('is strictly after now and rolls into the next UTC day', () => {
     expect(nextSlotAfter(['every 6h'], new Date('2026-11-29T06:00:00Z'))).toBe(
