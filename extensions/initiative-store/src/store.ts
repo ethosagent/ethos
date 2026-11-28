@@ -25,6 +25,8 @@ import {
   type WindowKind,
   type WindowRow,
 } from '@ethosagent/types';
+import { selectDrafts } from './drafts';
+import { extendExplorationRow } from './lifecycle';
 import { INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
 
 /** `<dataDir>/initiatives.db`. */
@@ -100,16 +102,6 @@ interface QuestionDbRow {
   answer: string | null;
   created_at: string;
   answered_at: string | null;
-}
-
-interface DraftDbRow {
-  id: string;
-  parent_id: string;
-  draft_yaml: string;
-  why: string;
-  status: string;
-  refusal: string | null;
-  created_at: string;
 }
 
 const INITIATIVE_COLS =
@@ -255,18 +247,6 @@ function toQuestion(r: QuestionDbRow): QuestionRow {
     answer: r.answer,
     createdAt: r.created_at,
     answeredAt: r.answered_at,
-  };
-}
-
-function toDraft(r: DraftDbRow): DraftRow {
-  return {
-    id: r.id,
-    parentId: r.parent_id,
-    draftYaml: r.draft_yaml,
-    why: r.why,
-    status: r.status as DraftStatus,
-    refusal: r.refusal,
-    createdAt: r.created_at,
   };
 }
 
@@ -645,6 +625,15 @@ export class SQLiteInitiativeStore implements InitiativeStore {
     });
   }
 
+  /** Runner only: a reopened exploration gets a fresh budget and deadline (see lifecycle.ts). */
+  extendExploration(id: string, e: { addBudgetUsd: number; deadline: string }): ExplorationRow {
+    return this.write(() => {
+      this.requireExploration(id);
+      extendExplorationRow(this.db, id, e, this.iso());
+      return this.requireExploration(id);
+    });
+  }
+
   getExploration(id: string): ExplorationRow | null {
     const r = this.db
       .prepare(`SELECT ${EXPLORATION_COLS} FROM explorations WHERE id = ?`)
@@ -720,13 +709,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   }
 
   drafts(status: DraftStatus): DraftRow[] {
-    const rows = this.db
-      .prepare(
-        `SELECT id, parent_id, draft_yaml, why, status, refusal, created_at FROM drafts
-         WHERE status = ? ORDER BY created_at, rowid`,
-      )
-      .all(status) as DraftDbRow[];
-    return rows.map(toDraft);
+    return selectDrafts(this.db, status);
   }
 
   addQuestion(q: { initiativeId: string; explorationId: string | null; text: string }): string {

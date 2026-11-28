@@ -47,6 +47,12 @@ function printReport(report: RunReport, say: Say): void {
   if (report.kind === 'survey') {
     say(`  proposed explorations: ${report.proposals.length}`);
     for (const p of report.proposals) say(`    ${p.id}  ${p.question}`);
+    for (const x of report.started) say(`  started ${x.explorationId}: ${x.reason}`);
+    for (const x of report.waiting) say(`  waiting ${x.explorationId}: ${x.reason}`);
+  } else if (report.outcome) {
+    say(
+      `  exploration ${report.explorationId}: ${report.outcome}${report.reopened ? ' (reopened)' : ''}`,
+    );
   }
   say(`  findings: ${report.findings.length}`);
   for (const f of report.findings) say(`    ${f.id}  ${f.claim} [${f.sourceRef}]`);

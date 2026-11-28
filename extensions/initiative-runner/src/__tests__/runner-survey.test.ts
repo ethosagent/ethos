@@ -62,6 +62,22 @@ function fakeStore(opts: { seedIdeas?: string[] } = {}) {
       const w = windows.find((x) => x.id === id);
       if (w) w.closed = r;
     },
+    getInitiative: () => ({
+      id: FILE.id,
+      personalityId: 'product-manager',
+      origin: 'human',
+      parentId: null,
+      state: 'active',
+      configPath: '/x.yaml',
+      configHash: 'h',
+      version: 1,
+    }),
+    transitionExploration: () => {},
+    extendExploration: (id) => {
+      const e = explorations.find((x) => x.id === id);
+      if (!e) throw new Error('missing');
+      return e;
+    },
     getExploration: (id) => explorations.find((e) => e.id === id) ?? null,
     explorations: () => [...explorations],
     ideas: () => [...ideas],

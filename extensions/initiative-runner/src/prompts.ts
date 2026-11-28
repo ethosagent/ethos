@@ -1,4 +1,4 @@
-import type { ExplorationRow, IdeaRow } from '@ethosagent/types';
+import type { ExplorationRow, FindingRow, IdeaRow } from '@ethosagent/types';
 import type { InitiativeFile } from './config-schema';
 
 /**
@@ -70,5 +70,31 @@ export function windowPrompt(i: RunPromptInput & { exploration: ExplorationRow }
     `3. When you can answer, or the budget is nearly spent, call initiative_brief for ${e.id}. Set partial: true if the question is not fully answered.`,
     '',
     'End with a two-line summary of what you found.',
+  ].join('\n');
+}
+
+/**
+ * The window a stalled exploration gets: it has used its budget or days, so it does not read
+ * more. It turns what it already recorded into a partial brief. It never stops without one.
+ */
+export function briefWindowPrompt(
+  i: RunPromptInput & { exploration: ExplorationRow; findings: FindingRow[] },
+): string {
+  const e = i.exploration;
+  const found = i.findings.length
+    ? i.findings.map((f) => `- ${f.id} (${f.confidence}): ${f.claim} [${f.sourceRef}]`)
+    : ['- (no findings were recorded)'];
+  return [
+    ...header(i.file),
+    '',
+    `Exploration ${e.id} has used its budget or its days before the question was answered: ${e.question}`,
+    'Do not read any more sources. Hand in what you have.',
+    `Call initiative_brief for ${e.id} with partial: true, the options you can see, the evidence (finding ids below), the cost so far, the risk, and a recommendation.`,
+    'Say plainly what is still unanswered, so the owner can choose to dig deeper.',
+    '',
+    'Findings so far:',
+    ...found,
+    '',
+    'End with a two-line summary of what the brief says.',
   ].join('\n');
 }

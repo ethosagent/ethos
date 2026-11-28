@@ -12,7 +12,10 @@ function runnerWithNoInitiatives(): InitiativeRunner {
     store: {
       openWindow: refuse,
       closeWindow: refuse,
+      getInitiative: refuse,
       getExploration: () => null,
+      transitionExploration: refuse,
+      extendExploration: refuse,
       explorations: refuse,
       ideas: refuse,
       budget: refuse,
@@ -78,6 +81,10 @@ describe('ethos initiatives run', () => {
         ideas: [],
         findings: [],
         text: '',
+        started: [],
+        waiting: [],
+        outcome: null,
+        reopened: false,
       }),
       runWindow: async () => {
         throw new Error('unused');

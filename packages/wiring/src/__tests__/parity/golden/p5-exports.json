@@ -1399,6 +1399,9 @@
   "@ethosagent/initiative-runner": {
     "entry": "extensions/initiative-runner/src/index.ts",
     "exports": {
+      "AutonomyOutcome": "type",
+      "AutonomyVerdict": "type",
+      "BRIEF_RESERVE_SHARE": "value",
       "DayPlan": "type",
       "GuidanceLevel": "type",
       "INITIATIVE_CHAT_TOOLS": "value",
@@ -1424,6 +1427,7 @@
       "MAX_SELF_STARTED_DEFAULT": "value",
       "PER_CALL_RESERVE_USD": "value",
       "PlanDayInput": "type",
+      "PreparedWindow": "type",
       "ReadOnlyLoopParts": "type",
       "RunReport": "type",
       "RunnerStore": "type",
@@ -1431,6 +1435,8 @@
       "SURVEY_CAP_USD": "value",
       "SourceEntry": "type",
       "WindowGuard": "type",
+      "WindowOutcome": "type",
+      "applyAutonomy": "value",
       "assertReadOnlyCapabilities": "value",
       "checkSources": "value",
       "createInitiativeRunner": "value",
@@ -1438,17 +1444,20 @@
       "createReadOnlyLoop": "value",
       "createReadOnlyLoopParts": "value",
       "createWindowGuard": "value",
+      "decideAutonomy": "value",
       "effectiveEnabled": "value",
       "loadInitiativeSettings": "value",
       "mapGuidance": "value",
       "mergeGuidance": "value",
       "parseInitiativeFile": "value",
       "planDay": "value",
+      "prepareWindow": "value",
       "readOnlyCapabilityBackends": "value",
       "readOnlyLoopConfig": "value",
       "readOnlyRunOptions": "value",
       "repoSourcePaths": "value",
-      "runToolNames": "value"
+      "runToolNames": "value",
+      "settleWindow": "value"
     }
   },
   "@ethosagent/initiative-store": {

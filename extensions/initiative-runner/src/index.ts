@@ -1,3 +1,14 @@
+export {
+  type AutonomyOutcome,
+  type AutonomyVerdict,
+  applyAutonomy,
+  BRIEF_RESERVE_SHARE,
+  decideAutonomy,
+  type PreparedWindow,
+  prepareWindow,
+  settleWindow,
+  type WindowOutcome,
+} from './autonomy';
 export type { DayPlan, PlanDayInput, WindowGuard } from './budget';
 export { createWindowGuard, planDay } from './budget';
 export { assertReadOnlyCapabilities } from './capability-audit';

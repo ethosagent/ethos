@@ -346,6 +346,7 @@ export function createLazyInitiativeStore(deps: {
     upsertInitiative: (row) => open().upsertInitiative(row),
     appendConfigVersion: (v) => open().appendConfigVersion(v),
     openWindow: (w) => open().openWindow(w),
+    extendExploration: (id, e) => open().extendExploration(id, e),
     closeWindow: (id, r) => open().closeWindow(id, r),
     getInitiative: (id) => open().getInitiative(id),
     getExploration: (id) => open().getExploration(id),

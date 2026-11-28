@@ -12,9 +12,17 @@ import {
   type PersonalityRegistry,
   type WindowKind,
 } from '@ethosagent/types';
+import {
+  type AutonomyOutcome,
+  applyAutonomy,
+  BRIEF_RESERVE_SHARE,
+  prepareWindow,
+  settleWindow,
+  type WindowOutcome,
+} from './autonomy';
 import { createWindowGuard } from './budget';
 import type { InitiativeFile } from './config-schema';
-import { surveyPrompt, windowPrompt } from './prompts';
+import { briefWindowPrompt, surveyPrompt, windowPrompt } from './prompts';
 import { createReadOnlyLoop, createReadOnlyLoopParts, readOnlyRunOptions } from './run-loop';
 import { INITIATIVE_READ_TOOLS, runToolNames } from './tool-classes';
 
@@ -26,7 +34,16 @@ export const PER_CALL_RESERVE_USD = 0.05;
 /** What a run calls on the store. A subset of the contract; no decision writer, no config writer. */
 export type RunnerStore = Pick<
   InitiativeStore,
-  'openWindow' | 'closeWindow' | 'getExploration' | 'explorations' | 'ideas' | 'budget' | 'get'
+  | 'openWindow'
+  | 'closeWindow'
+  | 'getInitiative'
+  | 'getExploration'
+  | 'explorations'
+  | 'ideas'
+  | 'budget'
+  | 'get'
+  | 'transitionExploration'
+  | 'extendExploration'
 >;
 
 /** An initiative as the runner needs it: the owner, the validated YAML and the readable source paths. */
@@ -69,6 +86,14 @@ export interface RunReport {
   ideas: IdeaRow[];
   findings: FindingRow[];
   text: string;
+  /** Proposals the initiative's autonomy started (proposed -> exploring), with the reason. */
+  started: AutonomyOutcome['started'];
+  /** Proposals still waiting for a Gate 1 decision, with the reason. */
+  waiting: AutonomyOutcome['waiting'];
+  /** Where a window left its exploration; null for a survey. */
+  outcome: WindowOutcome | null;
+  /** A "dig deeper" had reopened the exploration and it ran on a new budget. */
+  reopened: boolean;
   error?: string;
 }
 
@@ -113,6 +138,14 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     if (!loaded) throw notFound(input.initiativeId);
     const { personalityId, file, sourcePaths } = loaded;
     const { initiativeId } = input;
+    const row = deps.store.getInitiative(initiativeId);
+    if (row?.state !== 'active' && row?.state !== 'self_started') {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `initiative "${initiativeId}" is ${row?.state ?? 'unknown'}, so it does not run`,
+        action: 'Resume the initiative first (an owner step); a run never resumes one.',
+      });
+    }
     const personality = deps.personalities.get(personalityId);
     if (!personality) {
       throw new EthosError({
@@ -122,10 +155,19 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       });
     }
 
+    // A stalled exploration gets a brief window; an exhausted one a dig-deeper budget (autonomy.ts).
+    const prepared = input.exploration
+      ? prepareWindow(deps.store, file, input.exploration, now(), PER_CALL_RESERVE_USD)
+      : null;
+    const exploration = prepared?.exploration ?? null;
+    const kind: WindowKind = prepared ? prepared.kind : input.kind;
+
     const day = now().toISOString().slice(0, 10);
     const budget = deps.store.budget(initiativeId, day);
-    const explorationRemainingUsd = input.exploration
-      ? input.exploration.budgetUsd - input.exploration.spentUsd
+    const explorationRemainingUsd = exploration
+      ? kind === 'brief'
+        ? file.budget.usd_per_day * BRIEF_RESERVE_SHARE
+        : exploration.budgetUsd - exploration.spentUsd
       : SURVEY_CAP_USD;
     const abort = new AbortController();
     const guard = createWindowGuard(
@@ -142,14 +184,23 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       explorations: new Set(deps.store.explorations(initiativeId).map((e) => e.id)),
       ideas: new Set(deps.store.ideas(initiativeId).map((i) => i.id)),
       findings: new Set((deps.store.get(initiativeId)?.findings ?? []).map((f) => f.id)),
+      briefs: new Set((deps.store.get(initiativeId)?.briefs ?? []).map((b) => b.id)),
     };
     const promptInput = {
       file,
       ideas: deps.store.ideas(initiativeId),
       explorations: deps.store.explorations(initiativeId),
     };
-    const prompt = input.exploration
-      ? windowPrompt({ ...promptInput, exploration: input.exploration })
+    const prompt = exploration
+      ? kind === 'brief'
+        ? briefWindowPrompt({
+            ...promptInput,
+            exploration,
+            findings: (deps.store.get(initiativeId)?.findings ?? []).filter(
+              (f) => f.explorationId === exploration.id,
+            ),
+          })
+        : windowPrompt({ ...promptInput, exploration })
       : surveyPrompt(promptInput);
 
     const registry = deps.buildRegistry({ initiativeId, personalityId, sourcePaths });
@@ -170,8 +221,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     );
     const windowId = deps.store.openWindow({
       initiativeId,
-      explorationId: input.exploration?.id ?? null,
-      kind: input.kind,
+      explorationId: exploration?.id ?? null,
+      kind,
     });
 
     const tools = new Set<string>();
@@ -225,23 +276,44 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       endReason,
     });
 
+    const after = {
+      proposals: deps.store
+        .explorations(initiativeId)
+        .filter((x) => !before.explorations.has(x.id)),
+      briefs: (deps.store.get(initiativeId)?.briefs ?? []).filter((b) => !before.briefs.has(b.id)),
+    };
+    // Autonomy and stalls are the runner's own moves, applied after the window is closed and
+    // charged. They are plain transitions, never decision rows (autonomy.ts).
+    const autonomy = applyAutonomy(deps.store, file, after.proposals);
+    const outcome = exploration
+      ? settleWindow(
+          deps.store,
+          exploration.id,
+          after.briefs.some((b) => b.explorationId === exploration.id),
+          now(),
+          PER_CALL_RESERVE_USD,
+        )
+      : null;
+
     return {
       windowId,
-      kind: input.kind,
+      kind,
       initiativeId,
-      explorationId: input.exploration?.id ?? null,
+      explorationId: exploration?.id ?? null,
       spentUsd: guard.spentUsd(),
       endReason,
       toolsUsed: [...tools].sort(),
       reads,
-      proposals: deps.store
-        .explorations(initiativeId)
-        .filter((x) => !before.explorations.has(x.id)),
+      proposals: after.proposals,
       ideas: deps.store.ideas(initiativeId).filter((x) => !before.ideas.has(x.id)),
       findings: (deps.store.get(initiativeId)?.findings ?? []).filter(
         (f) => !before.findings.has(f.id),
       ),
       text,
+      started: autonomy.started,
+      waiting: autonomy.waiting,
+      outcome,
+      reopened: prepared?.reopened ?? false,
       ...(error ? { error } : {}),
     };
   }
@@ -257,10 +329,10 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
           action: 'Pass an exploration id the initiative owns.',
         });
       }
-      if (exploration.state !== 'exploring') {
+      if (exploration.state !== 'exploring' && exploration.state !== 'stalled') {
         throw new EthosError({
           code: 'INVALID_INPUT',
-          cause: `exploration "${explorationId}" is ${exploration.state}, not exploring`,
+          cause: `exploration "${explorationId}" is ${exploration.state}, not exploring or stalled`,
           action: 'Approve the proposal first; a run never approves its own work.',
         });
       }

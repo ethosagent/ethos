@@ -207,6 +207,11 @@ export interface InitiativeStore extends InitiativeLedgerPort {
     sessionId: string | null;
     confirmedBy: string;
   }): void;
+  /**
+   * Runner only. A "dig deeper" reopens an exploration with a new budget: `budget_usd` becomes
+   * what it has spent plus `addBudgetUsd`, and the deadline moves. Not a decision.
+   */
+  extendExploration(id: string, e: { addBudgetUsd: number; deadline: string }): ExplorationRow;
   openWindow(w: { initiativeId: string; explorationId: string | null; kind: WindowKind }): string;
   closeWindow(
     id: string,
