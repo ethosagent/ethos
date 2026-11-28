@@ -170,9 +170,9 @@ A plugin runs inside the `ethos` process with your files, your environment, and 
 
 ## ethos skills {#ethos-skills}
 
-Install ClawHub-compatible skills (markdown files with frontmatter). `list` (default) shows installed skills. `install <slug>` installs from ClawHub — slug formats: `owner/repo`, `github:owner/repo`, `github:owner/repo/path`. `update [<slug>]` updates one or all. `remove <slug>` uninstalls.
+Install ClawHub-compatible skills (markdown files with frontmatter). `list` (default) shows installed skills. `install <slug>` installs from ClawHub — slug formats: `owner/repo`, `github:owner/repo`, `github:owner/repo/path`. `update [<slug>]` updates one or all. `remove <slug>` uninstalls. `history`, `diff`, `restore`, `lock` and `unlock` work on flat skill files and are on [their own page](skills-history.md).
 
-Synopsis: `ethos skills [list | install <slug> | update [<slug>] | remove <slug>]`
+Synopsis: `ethos skills [list | install <slug> | update [<slug>] | remove <slug> | history | diff | restore | lock | unlock]`
 
 ## ethos keys {#ethos-keys}
 

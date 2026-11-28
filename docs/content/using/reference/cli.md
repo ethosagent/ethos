@@ -92,6 +92,7 @@ Errors land on stderr formatted by `formatError(toEthosError(err))` and are appe
 | <a id="ethos-world-exit-codes"></a>[Exit codes](cli/evolve-and-learn.md#ethos-world-exit-codes) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-plugin"></a>[ethos plugin](cli/evolve-and-learn.md#ethos-plugin) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-skills"></a>[ethos skills](cli/evolve-and-learn.md#ethos-skills) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
+| <a id="ethos-skills-history"></a>[ethos skills history, diff, restore, lock, unlock](cli/skills-history.md#ethos-skills-history) | [CLI: skill history and lock commands](cli/skills-history.md) |
 | <a id="ethos-keys"></a>[ethos keys](cli/evolve-and-learn.md#ethos-keys) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-set"></a>[ethos set](cli/evolve-and-learn.md#ethos-set) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-team"></a>[ethos team](cli/evolve-and-learn.md#ethos-team) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |

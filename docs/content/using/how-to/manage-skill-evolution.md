@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: manage-skill-evolution
 time: "10 min"
-updated: 2026-11-03
+updated: 2026-11-28
 ---
 
 ## Task
@@ -176,6 +176,8 @@ Each human decision prints one `audit.approval` line with code `learning.approve
 **`replay_unavailable`.** `learningReplay.enabled` is `false` in `~/.ethos/config.yaml`.
 
 **Approve refuses with `stale`.** The live file changed after the draft was made, so the draft no longer applies to it. Reject the candidate.
+
+**Approve refuses with `locked`.** The skill the draft rewrites is locked, and a lock holds even against your own approval of an agent draft. The candidate stays waiting. Run `ethos skills unlock <id>`, then approve again. See [Review, undo and lock a skill](review-and-lock-skills.md).
 
 **The agent says it cannot approve a skill.** That is intended. `skills_pending_approve` refuses in chat, because approval is a human decision. Run `ethos learning approve <id>`.
 

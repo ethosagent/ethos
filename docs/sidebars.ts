@@ -156,6 +156,7 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             'using/how-to/use-skills',
+            'using/how-to/review-and-lock-skills',
             splitDoc('using/how-to/manage-skill-evolution', 'Manage skill evolution', [
               '/reject-rollback-archive',
             ]),
@@ -251,6 +252,7 @@ const sidebars: SidebarsConfig = {
               '/setup-and-chat',
               '/gateway-and-serve',
               '/evolve-and-learn',
+              '/skills-history',
               '/operations',
               '/diagnostics',
               '/maintenance',
