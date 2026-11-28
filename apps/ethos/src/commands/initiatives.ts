@@ -1,5 +1,9 @@
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
-import type { InitiativeRunner, RunReport } from '@ethosagent/initiative-runner';
+import {
+  type InitiativeRunner,
+  loadInitiativeSettings,
+  type RunReport,
+} from '@ethosagent/initiative-runner';
 import { EthosError } from '@ethosagent/types';
 import { createInitiativeCliPort } from '@ethosagent/wiring';
 import { type Say, sayFor, splitJson, writeJson } from '../json-output';
@@ -95,7 +99,11 @@ export async function runInitiatives(argv: string[], config: EthosConfig): Promi
     }
     const port = await createInitiativeCliPort({ storage: getStorage(), dataDir: ethosDir() });
     try {
-      const out = await runManageCommand(args, port, { personalityId: config.personality });
+      const out = await runManageCommand(args, port, {
+        personalityId: config.personality,
+        loadStandingGuidance: async (id) =>
+          (await loadInitiativeSettings(getStorage(), ethosDir(), id)).settings.standingGuidance,
+      });
       if (out.raw !== undefined && !json) process.stdout.write(out.raw);
       else if (json) writeJson({ ok: true, ...out.data });
       else for (const line of out.lines) console.log(line);

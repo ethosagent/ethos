@@ -6,6 +6,7 @@ import {
   type InitiativeDecision,
   renderBriefMarkdown,
 } from '@ethosagent/wiring';
+import { guidanceMetrics } from './initiatives-guidance-metrics';
 
 // `ethos initiatives` subcommands other than `run`: read the ledger, pause/resume through
 // InitiativeConfigService (the only writer of initiatives/*.yaml) and record Gate 1, Gate 2 and
@@ -112,7 +113,12 @@ const scalar = (v: unknown): string =>
 export async function runManageCommand(
   args: readonly string[],
   port: InitiativeCliPort | null,
-  opts: { personalityId: string; now?: Date },
+  opts: {
+    personalityId: string;
+    now?: Date;
+    /** The personality's settings.yaml `standingGuidance`; the CLI wires it, absent counts none. */
+    loadStandingGuidance?: (personalityId: string) => Promise<readonly string[]>;
+  },
 ): Promise<ManageOutput> {
   const [sub, ...rest] = args;
   if (!sub || !MANAGE_COMMANDS.includes(sub))
@@ -229,6 +235,7 @@ export async function runManageCommand(
         }
       }
       const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+      const guidance = await guidanceMetrics(port, personalityId, opts.loadStandingGuidance);
       return {
         lines: [
           `Last ${days} days (personality ${personalityId})`,
@@ -236,8 +243,11 @@ export async function runManageCommand(
           `Gate 2 approve rate: ${pct(m.gate2.rate)} (${m.gate2.adopted} of ${m.gate2.briefs})`,
           `Self-start: ${m.selfStart.kept} kept, ${m.selfStart.stopped} stopped`,
           `Spend: $${spent.toFixed(4)}`,
+          guidance.ratio === null
+            ? 'Unreachable guidance: no guidance lines'
+            : `Unreachable guidance: ${guidance.unreachable} of ${guidance.total} lines (${pct(guidance.ratio)})`,
         ],
-        data: { personalityId, days, ...m, spentUsd: spent },
+        data: { personalityId, days, ...m, spentUsd: spent, guidance },
       };
     }
     case 'approve':

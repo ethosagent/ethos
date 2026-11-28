@@ -43,7 +43,11 @@ const run = (args: string[], over: { personalityId?: string } = {}) =>
   runManageCommand(args, port, { personalityId: over.personalityId ?? 'pm' });
 
 /** Seed through the real owners: the config service writes the YAML, the store holds the rows. */
-async function seed(): Promise<{ proposed: string; briefed: string }> {
+async function seed(
+  draft:
+    | typeof YAML_DRAFT
+    | (Omit<typeof YAML_DRAFT, 'guidance'> & { guidance: { text: string }[] }) = YAML_DRAFT,
+): Promise<{ proposed: string; briefed: string }> {
   const store = new SQLiteInitiativeStore(initiativesDbPath(dir), { explorationCapFor: () => 5 });
   const svc = new InitiativeConfigService({
     storage,
@@ -62,7 +66,7 @@ async function seed(): Promise<{ proposed: string; briefed: string }> {
   const saved = await svc.save({
     personalityId: 'pm',
     op: 'create',
-    draft: YAML_DRAFT,
+    draft,
     sessionId: 's',
     confirmedBy: 'owner_chat',
   });
@@ -197,6 +201,37 @@ describe('ethos initiatives (manage)', () => {
     expect(text).toContain('Gate 1 approve rate: 100% (1 of 1)');
     expect(text).toContain('Gate 2 approve rate: 100% (1 of 1)');
     expect(text).toContain('Spend: $0.2500');
+  });
+
+  it('metrics counts unreachable guidance lines across initiative and standing guidance', async () => {
+    await seed({
+      ...YAML_DRAFT,
+      guidance: [{ text: 'Check Mixpanel funnels' }, { text: 'Read g2 reviews' }],
+    });
+    const out = await run(['metrics']);
+    expect(out.lines.filter((l) => l.startsWith('Unreachable guidance'))).toEqual([
+      'Unreachable guidance: 1 of 2 lines (50%)',
+    ]);
+    expect(out.data.guidance).toEqual({ total: 2, unreachable: 1, ratio: 0.5 });
+    const withStanding = await runManageCommand(['metrics'], port, {
+      personalityId: 'pm',
+      loadStandingGuidance: async () => ['Watch Slack threads', 'Read g2 reviews'],
+    });
+    expect(withStanding.data.guidance).toEqual({ total: 4, unreachable: 2, ratio: 0.5 });
+  });
+
+  it('metrics reports no guidance lines as a null ratio', async () => {
+    await seed();
+    const out = await run(['metrics']);
+    expect(out.lines).toContain('Unreachable guidance: no guidance lines');
+    expect(out.data.guidance).toEqual({ total: 0, unreachable: 0, ratio: null });
+    port?.close();
+    port = null;
+    expect((await run(['metrics'])).data.guidance).toEqual({
+      total: 0,
+      unreachable: 0,
+      ratio: null,
+    });
   });
 
   it('approve and deny record gate 1 decisions as owner:cli and refuse a wrong state', async () => {
