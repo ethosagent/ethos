@@ -74,7 +74,12 @@ export function fakeLedger() {
   const findings: FindingRow[] = [];
   const briefs: BriefRow[] = [];
   const windows: FakeWindow[] = [];
-  const reservations: Array<{ initiativeId: string; reserveUsd: number }> = [];
+  const reservations: Array<{
+    initiativeId: string;
+    reserveUsd: number;
+    caps: { personalityUsd?: number; globalUsd?: number; poolUsd?: number };
+  }> = [];
+  const touches: Array<{ windowId: string; ttlMs: number }> = [];
   const refusal: { scope: 'initiative' | 'personality' | 'global' | 'pool' | null } = {
     scope: null,
   };
@@ -106,6 +111,7 @@ export function fakeLedger() {
     briefs,
     windows,
     reservations,
+    touches,
     refusal,
     draftRows: drafts,
     caps,
@@ -158,10 +164,14 @@ export function fakeLedger() {
       explorationId: string | null;
       kind: WindowKind;
       reserveUsd: number;
+      caps: { personalityUsd?: number; globalUsd?: number; poolUsd?: number };
     }) {
       if (refusal.scope) return { ok: false as const, scope: refusal.scope, leftUsd: 0.1 };
-      reservations.push({ initiativeId: w.initiativeId, reserveUsd: w.reserveUsd });
+      reservations.push({ initiativeId: w.initiativeId, reserveUsd: w.reserveUsd, caps: w.caps });
       return { ok: true as const, windowId: ledger.openWindow(w) };
+    },
+    touchReservation(windowId: string, ttlMs: number) {
+      touches.push({ windowId, ttlMs });
     },
     closeWindow(id: string, r: { spentUsd: number; endReason: string }) {
       const w = windows.find((x) => x.id === id);

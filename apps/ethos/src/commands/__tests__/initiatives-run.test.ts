@@ -11,6 +11,7 @@ function runnerWithNoInitiatives(): InitiativeRunner {
   return createInitiativeRunner({
     store: {
       reserveAndOpenWindow: refuse,
+      touchReservation: refuse,
       closeWindow: refuse,
       getInitiative: refuse,
       getExploration: () => null,

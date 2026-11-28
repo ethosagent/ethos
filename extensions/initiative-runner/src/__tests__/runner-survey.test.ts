@@ -58,6 +58,7 @@ function fakeStore(opts: { seedIdeas?: string[] } = {}) {
       windows.push({ id, kind: w.kind });
       return { ok: true, windowId: id };
     },
+    touchReservation: () => {},
     closeWindow: (id, r) => {
       const w = windows.find((x) => x.id === id);
       if (w) w.closed = r;

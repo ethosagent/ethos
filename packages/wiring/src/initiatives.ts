@@ -371,6 +371,7 @@ export function createLazyInitiativeStore(deps: {
     appendConfigVersion: (v) => open().appendConfigVersion(v),
     openWindow: (w) => open().openWindow(w),
     reserveAndOpenWindow: (w) => open().reserveAndOpenWindow(w),
+    touchReservation: (id, ttlMs) => open().touchReservation(id, ttlMs),
     extendExploration: (id, e) => open().extendExploration(id, e),
     drafts: (status) => open().drafts(status),
     settleDraft: (id, status, refusal) => open().settleDraft(id, status, refusal),

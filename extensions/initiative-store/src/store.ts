@@ -28,7 +28,7 @@ import {
 } from '@ethosagent/types';
 import { selectDrafts, settleDraftRow } from './drafts';
 import { clampExplorationBudget, extendExplorationRow, reactionClockRow } from './lifecycle';
-import { releaseWindow, reserveWindow } from './reservations';
+import { releaseWindow, reserveWindow, touchWindow } from './reservations';
 import {
   type BriefDbRow,
   clip,
@@ -588,6 +588,11 @@ export class SQLiteInitiativeStore implements InitiativeStore {
         .run(id, w.initiativeId, w.explorationId, w.kind, this.iso());
       return { ok: true as const, windowId: id };
     });
+  }
+
+  /** A running window renews its reservation to now + `ttlMs` (reservations.ts `touchWindow`). */
+  touchReservation(windowId: string, ttlMs: number): void {
+    this.write(() => touchWindow(this.db, windowId, this.now(), ttlMs));
   }
 
   /**

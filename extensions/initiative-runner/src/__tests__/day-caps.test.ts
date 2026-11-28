@@ -138,7 +138,7 @@ describe('cross-process reservation', () => {
     const ok = await run(ledger, files, { maxUsdPerDay: 5 });
     expect(ok.report.endReason).toBe('done');
     // The survey cap ($1) is the tightest ceiling, so that is what is held.
-    expect(ledger.reservations).toEqual([{ initiativeId: 'mine', reserveUsd: 1 }]);
+    expect(ledger.reservations).toMatchObject([{ initiativeId: 'mine', reserveUsd: 1 }]);
 
     const { ledger: l2, files: f2 } = setup();
     l2.refusal.scope = 'global';

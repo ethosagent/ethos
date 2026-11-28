@@ -2,6 +2,7 @@ import { DefaultToolRegistry } from '@ethosagent/core';
 import type { Tool } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { INITIATIVE_TOOL_CALL_USD } from '../index';
+import { RESERVATION_TTL_MS } from '../runner';
 import { fakeLedger, harness, ledgerTools, makeFile, scriptedLLM } from './helpers/fake-ledger';
 
 const note = (id: string) => ({
@@ -125,5 +126,18 @@ describe('paid tool calls are charged before they run', () => {
     expect(spy.ran()).toBe(2);
     expect(r.spentUsd).toBeGreaterThanOrEqual(2 * price);
     expect(r.spentUsd).toBeLessThan(3 * price);
+  });
+});
+
+describe('the reservation heartbeat', () => {
+  it('extends the hold on every usage event and every paid tool charge', async () => {
+    const { file, ledger, exp } = setup(5);
+    const turns = [[note(exp.id)], [note(exp.id)], []];
+    const { llm, calls } = scriptedLLM(turns, 0.01);
+    await harness({ ledger, llm, files: { [file.id]: file } }).runWindow(file.id, exp.id);
+    expect(calls()).toBeGreaterThan(0);
+    expect(ledger.touches.length).toBeGreaterThanOrEqual(calls());
+    expect(new Set(ledger.touches.map((t) => t.windowId))).toEqual(new Set(['W-1']));
+    expect(ledger.touches.every((t) => t.ttlMs === RESERVATION_TTL_MS)).toBe(true);
   });
 });

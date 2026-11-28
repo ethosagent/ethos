@@ -261,6 +261,11 @@ export interface InitiativeStore extends InitiativeLedgerPort {
    * releases the reservation in the transaction that records the spend.
    */
   reserveAndOpenWindow(w: WindowReservationRequest): WindowReservationResult;
+  /**
+   * Runner only. Heartbeat: sets the window's reservation expiry to now + `ttlMs`, so a window that
+   * is still spending keeps its hold; only a silent one lapses.
+   */
+  touchReservation(windowId: string, ttlMs: number): void;
   closeWindow(
     id: string,
     r: {

@@ -41,13 +41,14 @@ export const SURVEY_CAP_USD = 1;
 /** Abort when a cap has less than this left: the in-flight call finishes, so overshoot is at most one call (R10). */
 export const PER_CALL_RESERVE_USD = 0.05;
 
-/** A window's reservation dies after this, so a crashed run cannot hold the day's money for ever. Estimate: a run is bounded by its caps, not by time, and takes minutes. */
+/** A window's reservation lapses this long after its last heartbeat (`touchReservation`), so a crashed run cannot hold the day's money for ever while a live one keeps it. Estimate: a run takes minutes and beats on every model and paid-tool charge. */
 export const RESERVATION_TTL_MS = 2 * 60 * 60 * 1000;
 
 /** What a run calls on the store. A subset of the contract; no decision writer, no config writer. */
 export type RunnerStore = Pick<
   InitiativeStore,
   | 'reserveAndOpenWindow'
+  | 'touchReservation'
   | 'closeWindow'
   | 'getInitiative'
   | 'getExploration'
@@ -197,7 +198,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     // cap run one at a time in this process: the initiative's own, the agent pool, and (when the
     // constitution sets a total) the day totals. That lock only orders runs inside one process;
     // across processes the enforcer is the reservation `reserveAndOpenWindow` takes in
-    // initiatives.db (initiative-store/src/reservations.ts).
+    // initiatives.db (initiative-store/src/reservations.ts); the window's heartbeat
+    // (`beat`, below) renews it, so only a stopped process loses its hold.
     const c = (await readConstitution?.())?.initiatives;
     const keys = [
       `i:${initiativeId}`,
@@ -339,6 +341,11 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     const runToolset = runToolNames(personality.toolset);
     const runPersonalities = new DefaultPersonalityRegistry();
     runPersonalities.define({ ...personality, toolset: runToolset });
+    // Renews the window's hold on every charge, so the TTL never frees a window that is working.
+    let heldWindowId: string | null = null;
+    const beat = (): void => {
+      if (heldWindowId) deps.store.touchReservation(heldWindowId, RESERVATION_TTL_MS);
+    };
     const loop = createReadOnlyLoop(
       createReadOnlyLoopParts({
         tools: registry,
@@ -346,12 +353,18 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         safety: deps.safety,
         personalities: runPersonalities,
         allowed: new Set(runToolset),
-        chargeToolCall: (_name, usd) => guard.chargeToolCall(usd),
+        chargeToolCall: (_name, usd) => {
+          const stop = guard.chargeToolCall(usd);
+          beat();
+          return stop;
+        },
       }),
     );
     // The most this window may spend: the smaller of what its guard allows (day less the brief
     // reserve), its own cap and its exploration. It is held in initiatives.db beside the window
-    // row, so a run in another process cannot spend the same dollars (reservations.ts).
+    // row, so a run in another process cannot spend the same dollars: the enforcer is reservations.ts,
+    // and the `beat` heartbeat below keeps the hold alive for as long as this window is working
+    // (pinned by window-budget.test.ts, 'the reservation heartbeat').
     const reserveUsd = Math.max(
       0,
       Math.min(
@@ -397,6 +410,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       });
     }
     const windowId = reserved.windowId;
+    heldWindowId = windowId;
 
     // LLM `usage` events are metered below. A paid tool's provider bill never reaches its
     // `ToolResult`, so it is charged a fixed per-call estimate (tool-prices.ts) BEFORE it runs, by
@@ -446,6 +460,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
             } else priced = est.costUsd;
           }
           guard.onUsage(priced);
+          beat();
         } else if (e.type === 'error') {
           error = `${e.code}: ${e.error}`;
         }

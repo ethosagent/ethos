@@ -13,7 +13,8 @@ import type {
  * `BEGIN IMMEDIATE` transaction, that cap - spent - live reservations covers the request for the
  * initiative, personality, global and pool scopes (and, for an exploring window, the exploration's
  * budget less its spend less live holds), then inserts the reservation with the window
- * row. Pinned by __tests__/reservations.test.ts.
+ * row. A live window renews its hold on every spend (`touchWindow`), so the TTL frees only a
+ * process that stopped. Pinned by __tests__/reservations.test.ts.
  */
 
 const EPSILON = 1e-9;
@@ -130,4 +131,20 @@ export function reserveWindow(
 /** Same transaction as the window's close: the spend is on the row, so the hold goes. */
 export function releaseWindow(db: Database.Database, windowId: string): void {
   db.prepare('DELETE FROM window_reservations WHERE window_id = ?').run(windowId);
+}
+
+/**
+ * Heartbeat: a window still running pushes its expiry out to `nowMs + ttlMs`, so the TTL only
+ * ever frees the hold of a process that stopped beating. Pinned by __tests__/reservations.test.ts.
+ */
+export function touchWindow(
+  db: Database.Database,
+  windowId: string,
+  nowMs: number,
+  ttlMs: number,
+): void {
+  db.prepare('UPDATE window_reservations SET expires_at = ? WHERE window_id = ?').run(
+    new Date(nowMs + ttlMs).toISOString(),
+    windowId,
+  );
 }

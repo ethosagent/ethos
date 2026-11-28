@@ -73,6 +73,23 @@ describe('SQLiteInitiativeStore: cross-process window reservations', () => {
     b.close();
   });
 
+  it("a heartbeat keeps a live window's hold past its first ttl; without one it lapses", () => {
+    const path = tmpDb();
+    let now = NOW;
+    const a = open(path, { now: () => now });
+    const b = open(path, { now: () => now });
+    const r = a.reserveAndOpenWindow(req({ reserveUsd: 1, ttlMs: 1000 }));
+    if (!r.ok) throw new Error('refused');
+    now += 900;
+    a.touchReservation(r.windowId, 1000); // activity: the hold now runs to NOW + 1900
+    now += 600; // NOW + 1500, past the original expiry
+    expect(b.reserveAndOpenWindow(req({ reserveUsd: 0.5 })).ok).toBe(false);
+    now += 500; // NOW + 2000, no more activity
+    expect(b.reserveAndOpenWindow(req({ reserveUsd: 0.5 })).ok).toBe(true);
+    a.close();
+    b.close();
+  });
+
   it('closing a window frees its reservation and records the spend', () => {
     const path = tmpDb();
     const a = open(path);
