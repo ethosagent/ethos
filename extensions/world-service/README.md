@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The rules layer of the world model. A world backend (`WorldGraphProvider`, `packages/types/src/world-graph.ts`) stores facts; this package decides who may see or write them. This task ships the config shapes and the access function; `WorldService`, `WorldSchemaService` and the tool port land in later tasks.
+The rules layer of the world model. A world backend (`WorldGraphProvider`, `packages/types/src/world-graph.ts`) stores facts; this package decides who may see or write them. It holds the config shapes, the access function, the schema and proposal services, `WorldService` (the one reader and writer of facts) and the narrow `WorldToolPort` the `world_*` tools get.
 
 ## Public surface
 
@@ -20,10 +20,14 @@ Single entry point, `src/index.ts`.
 | `parseSchemaYaml`, `serializeSchemaYaml` | functions | Canonical and short (`"A -> B"`, attribute-less edges only) forms; errors carry line and column. `sensitive: true` on an attribute is a world-service extension kept out of the frozen `WorldSchema`. |
 | `SchemaChange`, `classifySchemaChange`, `applyChange` | type, functions | The eight change ops, additive vs rewrite, and the pure application of one to a schema. |
 | `SQLiteWorldServiceStore`, `serviceDbPath` | class, function | `worlds/service.db` (WAL, `synchronous = FULL`, STRICT): `schema_versions`, `schema_load_errors`, `proposals`, `proposal_tombstones`. `propose` / `decide` / `inbox` are the proposal queue: dedup by fingerprint, tombstone on reject, per-world cap (default 500) and TTL (default 30 days). |
+| `WorldService`, `WorldServiceError` | class | The one place facts are read or written. Reads span visible worlds and tag every result `acme:Ravi` (R8). `writeFacts` routes per fact: refuse (no world with 2+ visible, read-only mount, vetting), proposal (shared world, authoritative collision, confidence under 0.7) or direct write with unique collisions closed. Owner surfaces only: `acceptProposal` (replays with the original author, records `decided_by`), `rejectProposal` (tombstone), `promoteToUser`, `ownerWrite`, `ownerImport`, `purge`. |
+| `createWorldToolPort`, `WorldToolPort` | function, type | A frozen object of eleven methods bound to a `WorldService`: no provider, no `purge`, no `acceptProposal`, no config writer. `build` refuses `not_implemented` until plan P5. |
+| `vetFact` | function | Pure content check before a write or proposal: secrets (`detectSecrets`), personal data (`redactPii`, agent only), `sensitive: true` attributes (agent never), schema fit, confidence range. A refusal reason never echoes the matched text. |
+| `parseAssertPayload`, `parseClosePayload`, `parseSchemaPayload` | functions | `safeParse` of the JSON a proposal row carries; an unreadable payload fails closed on accept. |
 
 ## Seam
 
-Archcheck layer: `extensions`, security tier 1 (it sits on the world access trust boundary). Imports `@ethosagent/types` only; never `world-sqlite`. `WorldConfigService` reads and writes the two config files through the `Storage` it is handed; the service store opens its own SQLite file; everything else takes text and maps in.
+Archcheck layer: `extensions`, security tier 1 (it sits on the world access trust boundary). Imports `@ethosagent/types` and `@ethosagent/safety-redact`; never `world-sqlite`. `WorldConfigService` reads and writes the two config files through the `Storage` it is handed; the service store opens its own SQLite file; everything else takes text and maps in.
 
 Two files, two owners, both needed for access: `worlds/<slug>/world.yaml` (grants: `readers`, `proposers`, `audience`) and `personalities/<id>/worlds.yaml` (mounts). A mount the world does not list is inert; neither file is agent-writable (`packages/wiring/src/__tests__/world-floor.test.ts`).
 
@@ -38,6 +42,8 @@ Guarantees and what pins them:
 - `schema.yaml` is written only through the injected `Storage.writeAtomic`: `schema-service.test.ts`, 'apply writes schema.yaml only through the injected Storage.writeAtomic ...'.
 - A payload is queued once, a rejected one never again, the queue is capped and expires, and the inbox lists conflicts first: `proposals.test.ts`, 'same payload twice → one pending row', 'rejected fingerprint is not re-proposed', 'cap expires the oldest', 'ttl expires stale pending proposals', 'inbox lists conflicts first, then by created_at, rowid', 'batch_id groups a first-build or shared-world batch'.
 - `service.db` is STRICT and `synchronous = FULL`: `schema-service.test.ts`, 'schema_versions is STRICT; durability posture is FULL'.
+- Writes: an agent write on a shared world is a proposal, a user or import fact is never overwritten or closed by the agent (a conflict proposal instead), a tool's claimed author is ignored, and a secret, personal data or sensitive attribute is refused (R1, R2, R11): `write-routing.test.ts` 'R1 shared-world writes are proposals only', 'R2 user facts are never overwritten by the agent', 'an agent cannot claim the user author'; `fact-vetting.test.ts` 'R11 a fact carrying a secret is refused', 'sensitive attribute refused for the agent, allowed for the owner'.
+- A write with no world and 2+ visible worlds is refused `WORLD_REQUIRED` (R9): 'R9 null world with 2+ visible worlds → WORLD_REQUIRED'. The tool port exposes no owner method (R13): `world-port.test.ts` 'R13 tool port is narrow'.
 
 ## Gotchas
 
@@ -46,3 +52,4 @@ Guarantees and what pins them:
 - Mount `world:` is the slug (`acme`), not `world:acme`.
 - Limitation: `WorldGraphProvider` cannot retire or retype an entity, so renaming or merging an entity type re-asserts the entities under the new type and moves their attributes and edges, but the old entity rows remain in the backend under a type the schema no longer lists.
 - `undoLast` is refused after a rename or merge (facts were rewritten); apply the inverse change instead.
+- Limitations: `closeFact` and `promoteToUser` find a fact by reading `export(world)` (the contract has no lookup by id), each fact is asserted on its own, and an imported bundle carries live facts only (`FactInput` has no `validTo`).

@@ -176,12 +176,13 @@ register_anchors:
     - { path: packages/types/src/memory-paths.ts, line: 240, contains: "export function sharedTurnPathDeny" }
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 334, contains: "this.hitsDenyWhen(next, kind)" }
 
-  # plan world-model Task 2.5. G-WORLD-WRITE is PLANNED: its enforcement point
-  # (WorldService.writeFacts, Task 2.4) does not exist yet, so it cites nothing
-  # and the key is empty. The task that adds writeFacts adds the anchor here.
-  # The worlds/ and worlds.yaml floors live in files G-FS already cites (a
-  # kernel path is cited by exactly one row).
+  # plan world-model Tasks 2.4 and 2.5. G-WORLD-WRITE cites WorldService.writeFacts
+  # (the entry point) and WorldService.place (where vetting, authority and the
+  # shared-world rule are decided). The worlds/ and worlds.yaml floors live in
+  # files G-FS already cites (a kernel path is cited by exactly one row).
   G-WORLD-WRITE:
+    - { path: extensions/world-service/src/service.ts, line: 328, contains: "async writeFacts(" }
+    - { path: extensions/world-service/src/service.ts, line: 403, contains: "private async place(" }
 
   G-WORLD-AUD:
     - { path: extensions/world-service/src/access.ts, line: 38, contains: "export function resolveAccess" }

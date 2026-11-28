@@ -22,6 +22,16 @@ export {
   type WriteMeta,
 } from './config-service';
 export { isSafeSlug, parseWorldId, privateWorldId, sharedWorldId, worldSlug } from './ids';
+export { createWorldToolPort, type WorldToolPort } from './port';
+export {
+  type AssertPayload,
+  type ClosePayload,
+  type EntityRef,
+  parseAssertPayload,
+  parseClosePayload,
+  parseSchemaPayload,
+  schemaChangeZ,
+} from './proposal-payload';
 export {
   applyChange,
   type ChangeClass,
@@ -47,6 +57,18 @@ export {
   worldSchemaPath,
 } from './schema-service';
 export {
+  type Caller,
+  type ImportOutcome,
+  type SchemaRequestOutcome,
+  type Tagged,
+  type TaggedEntity,
+  type TaggedFacts,
+  WorldService,
+  type WorldServiceDeps,
+  WorldServiceError,
+  type WriteOutcome,
+} from './service';
+export {
   fingerprintOf,
   type LoadErrorsRow,
   type ProposalKind,
@@ -58,3 +80,4 @@ export {
   SQLiteWorldServiceStore,
   serviceDbPath,
 } from './service-store';
+export { type VetContext, type VetResult, vetFact } from './vetting';

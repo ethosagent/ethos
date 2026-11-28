@@ -871,8 +871,9 @@ function guaranteeRows(
         'a shared-audience turn neither reads nor writes private memory; no personality field narrows it',
     },
     'G-WORLD-WRITE': {
-      status: 'n/a',
-      detail: 'planned: no world fact writes are wired yet (plan world-model Task 2.4)',
+      status: 'enforced',
+      detail:
+        'an agent write to a shared world is a proposal and never overwrites a user fact; no personality field narrows it',
     },
     'G-WORLD-AUD': {
       status: 'enforced',

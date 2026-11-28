@@ -61,5 +61,5 @@ relaxed = widens or disables something above the non-overridable floor · n/a = 
 | G-CHAN        | n/a      | set by channel config, not by this personality — an unconfigured platform is ungated |
 | G-AUDIT       | enforced | safety decisions land in observability.db; no tamper-evidence |
 | G-MEM         | enforced | a shared-audience turn neither reads nor writes private memory; no personality field narrows it |
-| G-WORLD-WRITE | n/a      | planned: no world fact writes are wired yet (plan world-model Task 2.4) |
+| G-WORLD-WRITE | enforced | an agent write to a shared world is a proposal and never overwrites a user fact; no personality field narrows it |
 | G-WORLD-AUD   | enforced | an owner_only world is never visible in a shared turn, and a world needs both a grant and a mount; no personality field narrows it |

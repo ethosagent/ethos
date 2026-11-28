@@ -2566,6 +2566,9 @@ importers:
 
   extensions/world-service:
     dependencies:
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../../packages/sqlite
