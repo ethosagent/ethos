@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { DefaultPersonalityRegistry } from '@ethosagent/core';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import {
   createReadOnlyLoop,
@@ -28,6 +29,7 @@ import type {
   AgentEvent,
   CompletionChunk,
   InitiativeLedgerPort,
+  InitiativeRecallPort,
   LLMProvider,
   PersonalityConfig,
 } from '@ethosagent/types';
@@ -56,6 +58,45 @@ function fakeLedger(): InitiativeLedgerPort {
     addQuestion: () => 'q-1',
     ideas: () => [],
     budget: () => ({ spentUsd: 0, capUsd: 1, explorationsOpen: 0 }),
+    ownerOf: (_kind, id) => (id.startsWith('exp-foreign') ? 'INI-2' : 'INI-1'),
+  };
+}
+
+const FINDING_ID = 'F-77';
+
+/** In-memory recall port: one initiative of personality 'open' with one finding. */
+function fakeRecall(): InitiativeRecallPort {
+  const initiative = {
+    id: 'INI-1',
+    personalityId: 'open',
+    origin: 'human' as const,
+    parentId: null,
+    state: 'active' as const,
+    configPath: 'initiatives/INI-1.yaml',
+    configHash: 'h',
+    version: 1,
+  };
+  return {
+    list: () => [initiative],
+    search: () => [{ kind: 'finding', id: FINDING_ID, snippet: 'recall-claim' }],
+    get: (id) =>
+      id === 'INI-1'
+        ? {
+            initiative,
+            explorations: [],
+            briefs: [],
+            findings: [
+              {
+                id: FINDING_ID,
+                explorationId: 'exp-1',
+                claim: 'recall-claim',
+                sourceRef: 'https://x.example',
+                confidence: 0.5,
+                createdAt: 'now',
+              },
+            ],
+          }
+        : null,
   };
 }
 
@@ -83,6 +124,12 @@ function diffHashes(before: Map<string, string>, after: Map<string, string>): st
   const names = new Set([...before.keys(), ...after.keys()]);
   return [...names].filter((n) => before.get(n) !== after.get(n)).sort();
 }
+
+const MEMORY_CANARY = 'canary-memory-fact-7731';
+const SESSION_CANARY = 'canary-session-key-4417';
+// Planted in the registry-default personality: a run bound to 'open' must never see them.
+const DEFAULT_MEMORY_CANARY = 'canary-default-memory-9902';
+const DEFAULT_SESSION_CANARY = 'canary-default-session-5530';
 
 interface Call {
   name: string;
@@ -136,6 +183,17 @@ describe('initiative run writes only the ledger (L9)', () => {
     process.env.ETHOS_STATE_DIR = dataDir;
     repo = join(home, 'repo');
     mkdirSync(join(dataDir, 'personalities', 'open'), { recursive: true });
+    // The run is bound to the initiative owner ('open'): memory_read reads its scope.
+    // The registry default personality holds a negative canary that must not surface.
+    mkdirSync(join(dataDir, 'personalities', 'default'), { recursive: true });
+    writeFileSync(
+      join(dataDir, 'personalities', 'open', 'MEMORY.md'),
+      `# Memory\n${MEMORY_CANARY}\n`,
+    );
+    writeFileSync(
+      join(dataDir, 'personalities', 'default', 'MEMORY.md'),
+      `# Memory\n${DEFAULT_MEMORY_CANARY}\n`,
+    );
     mkdirSync(join(repo, 'src'), { recursive: true });
     writeFileSync(join(dataDir, 'MEMORY.md'), '# Memory\nfact\n');
     writeFileSync(join(dataDir, 'personalities', 'open', 'config.yaml'), 'name: open\n');
@@ -166,12 +224,36 @@ describe('initiative run writes only the ledger (L9)', () => {
     for (const s of [session, kanbanStore, goalStore])
       stores.push(s as unknown as { close(): void });
 
+    for (const [personalityId, title] of [
+      ['open', SESSION_CANARY],
+      ['default', DEFAULT_SESSION_CANARY],
+    ] as const) {
+      await session.createSession({
+        key: `cli:${title}`,
+        platform: 'cli',
+        model: 'm',
+        provider: 'p',
+        personalityId,
+        title,
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          estimatedCostUsd: 0,
+          apiCallCount: 0,
+          compactionCount: 0,
+        },
+      });
+    }
+
     const seeded = kanbanStore.createTask({ title: 'seed task', roomAudience: 'shared' });
 
     const personality: PersonalityConfig = { id: 'open', name: 'open' };
     const registry = buildReadOnlyRegistry({
       personality,
       ledger: fakeLedger(),
+      recall: fakeRecall(),
       initiativeId: 'INI-1',
       sourcePaths: [repo],
       factories: defaultInitiativeToolFactories({
@@ -200,6 +282,8 @@ describe('initiative run writes only the ledger (L9)', () => {
       kanban_show: { task_id: seeded.id },
       goal_status: {},
       initiative_note: { text: 'n' },
+      initiative_search: { query: 'recall' },
+      initiative_get: { id: 'INI-1' },
     };
     // Tools that must RUN and succeed with these args, so a validation failure cannot pass
     // as "called once". The initiative_* ledger tools are skeletons that answer
@@ -213,11 +297,15 @@ describe('initiative run writes only the ledger (L9)', () => {
       'kanban_list',
       'kanban_show',
       'goal_status',
+      'memory_read',
+      'session_list_by_date',
+      'initiative_search',
+      'initiative_get',
     ];
     // An initiative run is incognito, so it is a shared-audience turn, and
-    // SHARED_AUDIENCE_EXCLUDED_TOOLS (packages/core/src/agent-loop/audience.ts) hides these
-    // two even though they are in INITIATIVE_READ_TOOLS. Pinned so a change is deliberate.
-    const surfaceExcluded = ['memory_read', 'session_list_by_date'];
+    // SHARED_AUDIENCE_EXCLUDED_TOOLS hides memory_read and session_list_by_date; the run opts
+    // back in with `readOnlyRunOptions().readmitReadTools` (INCOGNITO_READ_READMITTABLE_TOOLS,
+    // packages/core/src/agent-loop/audience.ts), so both run and return the seeded content.
     const writeTries: Call[] = [
       { name: 'write_file', input: { path: join(repo, 'src', 'evil.ts'), content: 'x' } },
       { name: 'memory_write', input: { store: 'memory', content: 'evil', action: 'add' } },
@@ -233,7 +321,11 @@ describe('initiative run writes only the ledger (L9)', () => {
     const before = hashTree(home, [home]);
 
     const allowed = new Set(runToolNames(personality.toolset));
+    // The run loop must resolve the owner's personality ('open'), not fall back to 'default'.
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define(personality);
     const parts = createReadOnlyLoopParts({
+      personalities,
       tools: registry,
       llm: scriptedLLM(calls),
       safety: createTestSafety(),
@@ -244,6 +336,7 @@ describe('initiative run writes only the ledger (L9)', () => {
     for await (const e of loop.run(
       'explore',
       readOnlyRunOptions({
+        personalityId: 'open',
         initiativeId: 'INI-1',
         windowId: 'W-1',
         abortSignal: new AbortController().signal,
@@ -267,12 +360,21 @@ describe('initiative run writes only the ledger (L9)', () => {
       const end = ended.find((e) => e.toolName === name);
       expect(end?.ok, `${name} ran with valid args: ${end?.error ?? ''}`).toBe(true);
     }
-    for (const name of surfaceExcluded) {
-      const end = ended.find((e) => e.toolName === name);
-      expect(end?.error, `${name} is off the shared-audience surface`).toMatch(
-        /not available on this surface/,
-      );
-    }
+    // The readmitted reads returned the fake content, not an empty or refused result.
+    const runSession = await parts.session.getSessionByKey('initiative:INI-1:W-1');
+    const resultText = (await parts.session.getMessages(runSession?.id ?? '')).map((m) =>
+      typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+    );
+    const joined = resultText.join('\n');
+    expect(joined, 'memory_read returned the seeded MEMORY.md').toContain(MEMORY_CANARY);
+    expect(joined, 'session_list_by_date listed the seeded session').toContain(SESSION_CANARY);
+    expect(joined, 'the default personality memory stayed out').not.toContain(
+      DEFAULT_MEMORY_CANARY,
+    );
+    expect(joined, 'the default personality sessions stayed out').not.toContain(
+      DEFAULT_SESSION_CANARY,
+    );
+    expect(joined, 'initiative_search/get returned the finding id').toContain(FINDING_ID);
     for (const name of runNames.filter((n) => n.startsWith('initiative_'))) {
       const end = ended.find((e) => e.toolName === name);
       expect(end?.error ?? '', `${name} was not rejected as invalid input`).not.toMatch(

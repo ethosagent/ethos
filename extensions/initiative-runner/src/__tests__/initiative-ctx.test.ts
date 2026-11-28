@@ -1,4 +1,4 @@
-import { DefaultToolRegistry, type RunOptions } from '@ethosagent/core';
+import { DefaultPersonalityRegistry, DefaultToolRegistry, type RunOptions } from '@ethosagent/core';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   AgentEvent,
@@ -46,7 +46,14 @@ function scriptedLLM(
   };
 }
 
+function ownerRegistry(): DefaultPersonalityRegistry {
+  const r = new DefaultPersonalityRegistry();
+  r.define({ id: 'open', name: 'open' });
+  return r;
+}
+
 const runInput = {
+  personalityId: 'open',
   initiativeId: 'INI-1',
   windowId: 'W-1',
   abortSignal: new AbortController().signal,
@@ -59,6 +66,7 @@ async function runSpy(tool: Tool, backends: ReturnType<typeof readOnlyCapability
     tools,
     llm: scriptedLLM(tool.name),
     safety: createTestSafety(),
+    personalities: ownerRegistry(),
     allowed: new Set([tool.name]),
   });
   const loop = createReadOnlyLoop(parts);
@@ -188,6 +196,7 @@ describe('L5 read-only run context', () => {
     expect(opts.abortSignal).toBe(runInput.abortSignal);
     expect(opts.modelOverride).toBe('m1');
     expect('modelOverride' in readOnlyRunOptions(runInput)).toBe(false);
+    expect(readOnlyRunOptions(runInput).personalityId).toBe('open');
   });
 
   it('no memory flush and no auto-compaction', async () => {
@@ -195,6 +204,7 @@ describe('L5 read-only run context', () => {
       tools: new DefaultToolRegistry(),
       llm: scriptedLLM(null, { maxContextTokens: 4_400 }),
       safety: createTestSafety(),
+      personalities: ownerRegistry(),
       allowed: new Set(),
     });
     const cfg = readOnlyLoopConfig(parts);

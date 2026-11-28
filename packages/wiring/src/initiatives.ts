@@ -11,7 +11,11 @@ import { defaultAlwaysDeny } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createGoalTools } from '@ethosagent/tools-goals';
-import { createInitiativeLedgerTools, createRunClarifyTool } from '@ethosagent/tools-initiatives';
+import {
+  createInitiativeLedgerTools,
+  createInitiativeRecallTools,
+  createRunClarifyTool,
+} from '@ethosagent/tools-initiatives';
 import { createKanbanTools } from '@ethosagent/tools-kanban';
 import { createMemoryTools, createTeamMemoryTools } from '@ethosagent/tools-memory';
 import { createRedditSearchTool, createRedditThreadTool } from '@ethosagent/tools-reddit';
@@ -27,6 +31,7 @@ import { createXSearchTool } from '@ethosagent/tools-x-search';
 import type {
   GoalStore,
   InitiativeLedgerPort,
+  InitiativeRecallPort,
   MemoryProvider,
   PersonalityConfig,
   SecretRef,
@@ -44,6 +49,8 @@ import type {
 export interface InitiativeToolFactories {
   read: ReadonlyArray<() => Tool[]>;
   ledger: (port: InitiativeLedgerPort, initiativeId: string) => Tool[];
+  /** initiative_list/search/get over the read-only recall port, bound to the run's personality. */
+  recall: (port: InitiativeRecallPort, personalityId: string) => Tool[];
 }
 
 /** Dependencies the default read constructors take; the same values compose-tools uses. */
@@ -123,6 +130,8 @@ export function defaultInitiativeToolFactories(deps: InitiativeToolDeps): Initia
       ...createInitiativeLedgerTools(port, initiativeId),
       createRunClarifyTool(port, initiativeId),
     ],
+    recall: (port, personalityId) =>
+      createInitiativeRecallTools(port, personalityId, { surface: 'run' }),
   };
 }
 
@@ -148,6 +157,8 @@ function withSourceReach(tool: Tool, sourcePaths: readonly string[]): Tool {
 export function buildReadOnlyRegistry(input: {
   personality: PersonalityConfig;
   ledger: InitiativeLedgerPort;
+  /** Read side of the store for initiative_list/search/get; absent means a run gets no recall tools. */
+  recall?: InitiativeRecallPort;
   initiativeId: string;
   /** From the validated YAML; the `fs_reach.read` roots for read_file / search_files. */
   sourcePaths: readonly string[];
@@ -172,6 +183,7 @@ export function buildReadOnlyRegistry(input: {
   const candidates = [
     ...input.factories.read.flatMap((make) => make()),
     ...input.factories.ledger(input.ledger, input.initiativeId),
+    ...(input.recall ? input.factories.recall(input.recall, input.personality.id) : []),
   ];
   for (const tool of candidates) {
     if (allowed.has(tool.name)) registry.register(withSourceReach(tool, input.sourcePaths));

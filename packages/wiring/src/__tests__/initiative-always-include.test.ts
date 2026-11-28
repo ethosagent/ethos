@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runToolNames } from '@ethosagent/initiative-runner';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import type { InitiativeLedgerPort, MemoryProvider, SessionStore, Tool } from '@ethosagent/types';
+import type {
+  InitiativeLedgerPort,
+  InitiativeRecallPort,
+  MemoryProvider,
+  SessionStore,
+  Tool,
+} from '@ethosagent/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentLoop, type WiringConfig, type WiringProfile } from '../index';
 import {
@@ -118,6 +124,29 @@ describe('initiative run registry (L2)', () => {
     expect(narrow).toContain('clarify');
     expect(narrow).not.toContain('write_file');
     expect(narrow).not.toContain('web_search');
+  });
+
+  it('a run given a recall port gets the real list/search/get, and none without it', () => {
+    const withRecall = buildReadOnlyRegistry({
+      personality,
+      ledger,
+      recall: {} as InitiativeRecallPort,
+      initiativeId: 'i1',
+      sourcePaths: [],
+      factories,
+      storage: new InMemoryStorage(),
+      dataDir: '/ethos-state',
+    });
+    const names = withRecall.getAvailable().map((t) => t.name);
+    for (const n of ['initiative_list', 'initiative_search', 'initiative_get']) {
+      expect(names).toContain(n);
+    }
+    expect(withRecall.getAvailable().filter((t) => t.alwaysInclude === true)).toEqual([]);
+    expect(
+      build({})
+        .getAvailable()
+        .map((t) => t.name),
+    ).not.toContain('initiative_get');
   });
 
   it('sourcePaths become the fs_reach read roots of read_file and search_files', () => {

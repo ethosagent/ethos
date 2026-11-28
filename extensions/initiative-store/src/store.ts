@@ -447,6 +447,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
       addQuestion: this.addQuestion.bind(this),
       ideas: this.ideas.bind(this),
       budget: this.budget.bind(this),
+      ownerOf: this.ownerOf.bind(this),
     });
   }
 
@@ -590,6 +591,15 @@ export class SQLiteInitiativeStore implements InitiativeStore {
         .run(id, i.initiativeId, i.origin, i.text, i.sourceRef, createdAt);
       return { ...i, id, createdAt };
     });
+  }
+
+  ownerOf(kind: 'exploration' | 'idea', id: string): string | null {
+    const sql =
+      kind === 'exploration'
+        ? 'SELECT initiative_id FROM explorations WHERE id = ?'
+        : 'SELECT initiative_id FROM ideas WHERE id = ?';
+    const r = this.db.prepare(sql).get(id) as { initiative_id: string } | undefined;
+    return r ? r.initiative_id : null;
   }
 
   ideas(initiativeId: string): IdeaRow[] {

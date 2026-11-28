@@ -105,6 +105,7 @@ export async function* setupTurn(
     skipPersonalityMemory?: boolean;
     judgeAudience?: boolean;
     incognito?: boolean;
+    readmitReadTools?: boolean;
   },
   /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
   decisions?: TurnDecisions,
@@ -549,6 +550,7 @@ export async function* setupTurn(
       ? [...new Set([...(opts.toolsetExclude ?? []), ...personalityExclude])]
       : opts.toolsetExclude,
     incognito, // D3 — the owner gets the process tools back; callerShared is never incognito
+    incognito && opts.readmitReadTools === true, // opt-in read tools, incognito owner only
   );
   const filterOpts: ToolFilterOpts = {
     allowedMcpServers: personality.mcp_servers ?? [],

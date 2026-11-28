@@ -8,7 +8,13 @@ import {
   type RunOptions,
   ScopedSecretsImpl,
 } from '@ethosagent/core';
-import type { AgentSafety, LLMProvider, SecretRef, Storage } from '@ethosagent/types';
+import type {
+  AgentSafety,
+  LLMProvider,
+  PersonalityRegistry,
+  SecretRef,
+  Storage,
+} from '@ethosagent/types';
 import { createInitiativeToolGate } from './tool-gate';
 
 /**
@@ -23,6 +29,8 @@ export interface ReadOnlyLoopParts {
   /** Fresh; only the L4 gate registered. */
   hooks: DefaultHookRegistry;
   session: InMemorySessionStore;
+  /** Must resolve `RunOptions.personalityId`; an unknown id would silently fall back to the registry default. */
+  personalities: PersonalityRegistry;
   /** No compaction watermark pages. */
   compaction: { autoCompact: false };
 }
@@ -31,6 +39,8 @@ export function createReadOnlyLoopParts(input: {
   tools: DefaultToolRegistry;
   llm: LLMProvider;
   safety: AgentSafety;
+  /** Resolves the owner's personality (see `readOnlyRunOptions.personalityId`). */
+  personalities: PersonalityRegistry;
   /** The L1 names for this run (`runToolNames(toolset)`). */
   allowed: ReadonlySet<string>;
 }): ReadOnlyLoopParts {
@@ -42,6 +52,7 @@ export function createReadOnlyLoopParts(input: {
     safety: input.safety,
     hooks,
     session: new InMemorySessionStore(),
+    personalities: input.personalities,
     compaction: { autoCompact: false },
   };
 }
@@ -58,6 +69,7 @@ export function readOnlyLoopConfig(parts: ReadOnlyLoopParts): AgentLoopConfig {
     tools: parts.tools,
     session: parts.session,
     hooks: parts.hooks,
+    personalities: parts.personalities,
     safety: parts.safety,
     compaction: parts.compaction,
     memoryConsolidation: { enabled: false },
@@ -70,6 +82,8 @@ export function createReadOnlyLoop(parts: ReadOnlyLoopParts): AgentLoop {
 
 /** Every `AgentLoop.run` passes `roomAudience` (audience-census.test.ts); the caller drains it. */
 export function readOnlyRunOptions(input: {
+  /** The initiative owner's personality: the run's memory and session reads are scoped to it, never the registry default. */
+  personalityId: string;
   initiativeId: string;
   windowId: string;
   abortSignal: AbortSignal;
@@ -77,8 +91,12 @@ export function readOnlyRunOptions(input: {
 }): RunOptions {
   return {
     sessionKey: `initiative:${input.initiativeId}:${input.windowId}`,
+    personalityId: input.personalityId,
     roomAudience: 'private',
     incognito: true,
+    // Opt-in core re-admission of memory_read / session_list_by_date for this
+    // incognito owner turn (INCOGNITO_READ_READMITTABLE_TOOLS, core audience.ts).
+    readmitReadTools: true,
     abortSignal: input.abortSignal,
     ...(input.model ? { modelOverride: input.model } : {}),
   };

@@ -16,6 +16,7 @@ export { ApproverDecisionSinks } from './agent-loop/approver-decision-sinks';
 // turn, and the chat-level audience questions asked outside one.
 export {
   defaultEthosStateDirs,
+  INCOGNITO_READ_READMITTABLE_TOOLS,
   INCOGNITO_READMITTED_TOOLS,
   memoryFlushForbidden,
   ROOM_AUDIENCE_METADATA_KEY,

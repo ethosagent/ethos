@@ -93,7 +93,7 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 34, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 441, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 756, contains: "= resolveRunDowngrade(" }
+    - { path: packages/core/src/agent-loop.ts, line: 758, contains: "= resolveRunDowngrade(" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 800, contains: "handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
@@ -168,16 +168,16 @@ register_anchors:
   G-MEM:
     - { path: packages/core/src/agent-loop/audience.ts, line: 130, contains: "export function resolveTurnAudience" }
     - { path: packages/core/src/agent-loop/audience.ts, line: 233, contains: "export function sharedTurnDenyFor" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 177, contains: "resolveTurnAudience(requestedAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 298, contains: "sharedTurnDenyFor(" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 546, contains: "withSharedAudienceExclusions(" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 178, contains: "resolveTurnAudience(requestedAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 299, contains: "sharedTurnDenyFor(" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 547, contains: "withSharedAudienceExclusions(" }
     - { path: packages/core/src/agent-loop/turn-end.ts, line: 354, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 150, contains: "export function isPrivateMemoryPath" }
     - { path: packages/types/src/memory-paths.ts, line: 240, contains: "export function sharedTurnPathDeny" }
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 334, contains: "this.hitsDenyWhen(next, kind)" }
 
   G-INIT-RO:
-    - { path: packages/wiring/src/initiatives.ts, line: 148, contains: "export function buildReadOnlyRegistry" }
+    - { path: packages/wiring/src/initiatives.ts, line: 157, contains: "export function buildReadOnlyRegistry" }
     - { path: extensions/initiative-runner/src/capability-audit.ts, line: 28, contains: "export function assertReadOnlyCapabilities" }
     - { path: extensions/initiative-runner/src/tool-gate.ts, line: 10, contains: "export function createInitiativeToolGate" }
 

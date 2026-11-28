@@ -642,12 +642,36 @@ describe('SQLiteInitiativeStore: ledgerPort', () => {
         'addQuestion',
         'budget',
         'ideas',
+        'ownerOf',
         'propose',
         'proposeInitiativeDraft',
         'submitBrief',
       ].sort(),
     );
     expect(Object.isFrozen(port)).toBe(true);
+    store.close();
+  });
+
+  it('ownerOf names the owning initiative, or null for an unknown id', () => {
+    const store = new SQLiteInitiativeStore(':memory:');
+    const port = store.ledgerPort();
+    const idea = port.addIdea({
+      initiativeId: 'ini-1',
+      origin: 'agent',
+      text: 'x',
+      sourceRef: null,
+    });
+    const exp = port.propose({
+      initiativeId: 'ini-2',
+      ideaId: null,
+      question: 'q',
+      estimateUsd: 1,
+      days: 1,
+    });
+    expect(port.ownerOf('idea', idea.id)).toBe('ini-1');
+    expect(port.ownerOf('exploration', exp.id)).toBe('ini-2');
+    expect(port.ownerOf('exploration', idea.id)).toBeNull();
+    expect(port.ownerOf('idea', 'nope')).toBeNull();
     store.close();
   });
 

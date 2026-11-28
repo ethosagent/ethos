@@ -37,7 +37,12 @@ import { createCronTool } from '@ethosagent/tools-cron';
 import { buildDebugTools } from '@ethosagent/tools-debug';
 import { createDecideTool } from '@ethosagent/tools-decision';
 import { createGoalTools } from '@ethosagent/tools-goals';
-import { createInitiativeLedgerTools, createRunClarifyTool } from '@ethosagent/tools-initiatives';
+import {
+  createInitiativeChatTools,
+  createInitiativeLedgerTools,
+  createInitiativeRecallTools,
+  createRunClarifyTool,
+} from '@ethosagent/tools-initiatives';
 import { createKanbanTools } from '@ethosagent/tools-kanban';
 import { createTeamMemoryTools } from '@ethosagent/tools-memory';
 import { buildDashboardTools, dashboardSaveTool } from '@ethosagent/tools-ui';
@@ -50,12 +55,7 @@ import { createAgentLoop, type WiringConfig, type WiringProfile } from '../index
  * Classified names this census cannot construct, and why. Everything a host wires
  * from an in-process factory is built directly in `beforeAll` (see `buildHostWired`).
  */
-const NOT_COMPOSED: Record<string, string> = {
-  initiative_define:
-    'chat tool: no factory exists yet (extensions/tools-initiatives exports only ledger + clarify tools)',
-  initiative_add_ideas:
-    'chat tool: no factory exists yet (extensions/tools-initiatives exports only ledger + clarify tools)',
-};
+const NOT_COMPOSED: Record<string, string> = {};
 
 const PROFILES: WiringProfile[] = ['cli', 'tui', 'web', 'acp', 'mcp'];
 
@@ -101,6 +101,8 @@ function buildHostWired(dataDir: string): { tools: Tool[]; close: () => void } {
     createBrowserTakeoverTool(inert) as Tool,
     ...createInitiativeLedgerTools(ledger, 'INI-1'),
     createRunClarifyTool(ledger, 'INI-1'),
+    ...createInitiativeRecallTools(inert, 'census'),
+    ...createInitiativeChatTools({ config: inert, ideas: () => ledger, recall: inert }),
   ];
   return {
     tools,

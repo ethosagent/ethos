@@ -185,6 +185,8 @@ export interface InitiativeLedgerPort {
     initiativeId: string,
     day: string,
   ): { spentUsd: number; capUsd: number; explorationsOpen: number };
+  /** The initiative id that owns an exploration or idea; null when the id does not exist. Ledger tools refuse any id owned by another initiative. */
+  ownerOf(kind: 'exploration' | 'idea', id: string): string | null;
 }
 
 /** Full store. Approval surfaces and the runner hold it; tools never do. */
@@ -236,6 +238,9 @@ export interface InitiativeStore extends InitiativeLedgerPort {
   indexLines(personalityId: string, max: number): string[];
 }
 
+/** What recall tools (initiative_list/search/get) call: the read side of the store, nothing else. */
+export type InitiativeRecallPort = Pick<InitiativeStore, 'list' | 'search' | 'get'>;
+
 /** What chat tools call. Implemented by InitiativeConfigService (3.6). */
 export interface InitiativeConfigPort {
   save(input: {
@@ -245,7 +250,15 @@ export interface InitiativeConfigPort {
     sessionId: string;
     confirmedBy: 'owner_chat' | 'owner_ui' | 'runner';
   }): Promise<
-    | { ok: true; id: string; version: number; clamps: string[]; guidance: GuidanceMapping[] }
+    | {
+        ok: true;
+        id: string;
+        version: number;
+        clamps: string[];
+        guidance: GuidanceMapping[];
+        /** ISO time of the next survey window, when the service can compute it. */
+        nextSurveyAt?: string;
+      }
     | { ok: false; error: string }
   >;
 }

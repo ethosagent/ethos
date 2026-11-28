@@ -304,6 +304,8 @@ export interface RunOptions extends MemoryPrefetchGate {
   roomAudience?: import('@ethosagent/types').TurnAudience;
   /** Plan incognito-sessions D5 — run incognito: stamped sticky (`isIncognitoSession`), `'shared'` for memory, shell kept, no paged compaction, no stored tool args; ignored for a shared caller. The STAMP reaches descendants (`<key>:sub:…`/`:job:…` children are stamped by turn-setup, so readers refuse them); the shell re-admission never does (a child is a shared caller). Pinned in `__tests__/incognito.test.ts`. */
   incognito?: boolean;
+  /** Opt-in, only honoured on an incognito owner turn: also re-admit `INCOGNITO_READ_READMITTABLE_TOOLS` (`memory_read`, `session_list_by_date`; never a write tool). Ignored on a caller-shared, non-incognito or inherited-incognito turn; a caller `toolsetExclude` naming them still wins. Set only by the initiative runner (`readOnlyRunOptions`), pinned by `__tests__/incognito-read-readmit.test.ts`. */
+  readmitReadTools?: boolean;
   /** Verification round E5 — the caller JUDGED the live room (only the gateway, `Gateway.runTurn`); only then does a private turn on an unstamped channel-shaped session record the judged `'private'` stamp (`sessionAudienceStampFor`, ./chat-audience.ts), so a client-supplied key never turns a pre-upgrade group lane private. Pinned in `__tests__/shared-audience.test.ts`. */
   judgeAudience?: boolean;
   /** Who started this turn → `ToolContext.initiator`, verbatim. Children never inherit it. */
