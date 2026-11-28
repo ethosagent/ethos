@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Needs maintainer approval before Task 3.4 and Task 3.7 of `plan/phases/initiative-engine.md` merge. It adds no law and edits no existing one; ARCHITECTURE.md is untouched until approval, then gets one line under Law 7.
+Accepted. It adds no law and edits no existing one; ARCHITECTURE.md carries one sentence under Law 7.
 
 ## Context
 

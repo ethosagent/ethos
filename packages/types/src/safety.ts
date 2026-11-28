@@ -174,6 +174,8 @@ export const GUARANTEE_IDS = [
   'G-CHAN',
   'G-AUDIT',
   'G-MEM',
+  'G-INIT-RO',
+  'G-INIT-CFG',
 ] as const;
 
 /** One published guarantee's id. See {@link GUARANTEE_IDS}. */

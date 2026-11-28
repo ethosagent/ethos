@@ -101,7 +101,7 @@ Layer roles, the totality rule and the first-party rule: [ADR 0001](docs/decisio
 
 ## III. Architectural Laws
 
-Each law is a one-sentence rule. Laws are binding. Each law names what enforces it: an archcheck rule id from
+Laws are binding. Each law names what enforces it: an archcheck rule id from
 `architecture.config.ts` (§IX), a test, or "not mechanically enforced
 (known gap)" — a law with no enforcer is recorded as a gap, never implied
 to be checked. Rationale: Laws 1, 2, 3, 5 in [ADR 0002](docs/decisions/0002-law-rationale-dependency-direction.md); Laws 4, 7, 8 in [ADR 0003](docs/decisions/0003-law-rationale-extensions-storage-tools.md); Laws 6, 9, 10, 11 in [ADR 0004](docs/decisions/0004-law-rationale-schema-style-kernel.md).
@@ -122,7 +122,7 @@ seam.
 and the security kernel only) and
 `packages/core/src/__tests__/no-kernel-runtime-imports.test.ts`. §II lets
 core reach the kernel through contract types only, but archcheck's
-`ignoreTypeOnly` is set per source layer, so the archcheck rule allows
+`ignoreTypeOnly` is set per source layer, so the rule allows
 every core → kernel edge; the test scans non-test `packages/core/src` for
 runtime imports of the kernel packages (the `security-kernel` layer in
 `architecture.config.ts`) and allows only `import type` / `export type`.
@@ -168,11 +168,11 @@ filenames is not mechanically enforced (known gap).
 Modules that read or write user-authored files on a personality's behalf
 use the Storage contract. All other filesystem access — internal state,
 logs, pidfiles, journals, database-driver files, system paths,
-build-time tooling — may use raw `node:fs`.
+build-time tooling — may use raw `node:fs`. Only `InitiativeConfigService` writes `personalities/<id>/initiatives/` YAML after the owner's yes (ADR 0011).
 *Enforced by:* `apps/ethos/src/__tests__/no-raw-fs.test.ts` (the raw
 `node:fs` scan and its reasoned allowlist) and
 `scripts/check-tool-imports.sh` (tool packages; runs at pre-push and in
-CI's `architecture` job), not archcheck: archcheck
+CI's `architecture` job), not archcheck, which
 cannot ban a Node built-in import. archcheck
 `p24-no-fsstorage-in-libraries` enforces the other half — library code
 receives an injected Storage and never constructs `FsStorage` — over every
@@ -192,8 +192,8 @@ model's message contract.
 ### Law 9 — Imports are extensionless internally
 Internal relative imports omit the file extension.
 *Enforced by:* not mechanically enforced (known gap). No lint rule,
-test or archcheck rule inspects import specifiers for an extension, and
-tsx resolves both forms, so an extensioned import does not fail in dev.
+test or archcheck rule inspects import specifiers, and
+tsx resolves both forms.
 
 ### Law 10 — Library code is silent
 Library code outside designated app entry points uses the `Logger`
