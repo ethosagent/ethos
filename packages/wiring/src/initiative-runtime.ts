@@ -302,7 +302,8 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
     if (minuteOfDay(now.getTime(), timeZone) < due) return;
     const day = localDay(now, timeZone);
     const sent = await readDigestSent(personalityId);
-    if (sent?.day === day) return;
+    // ISO dates order as strings; `>=` also holds back a digest when a zone change moved the local day backwards.
+    if (sent && sent.day >= day) return;
     const usdPerExploration = new Map<string, number>();
     for (const row of store.list({ personalityId })) {
       const loaded = await load(row.id);

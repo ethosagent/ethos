@@ -341,4 +341,14 @@ describe('initiative digest time zone', () => {
     expect(sent).toHaveLength(1);
     expect(await tick('2026-11-28T19:00:00Z', 'Pacific/Auckland')).toEqual(['product-manager']);
   });
+
+  it('a zone change that moves the local day backwards does not send a second digest', async () => {
+    const { sent, tick, arm } = await sendTo();
+    await arm('08:00');
+    // 09:00 in Tokyo on 11-28 ...
+    expect(await tick('2026-11-28T00:00:00Z', 'Asia/Tokyo')).toEqual(['product-manager']);
+    // ... and the owner's zone becomes Los Angeles: the same instant is 16:00 on 11-27.
+    expect(await tick('2026-11-28T00:00:00Z', 'America/Los_Angeles')).toEqual([]);
+    expect(sent).toHaveLength(1);
+  });
 });
