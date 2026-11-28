@@ -273,3 +273,45 @@ describe('agent-started initiatives', () => {
     ]);
   });
 });
+
+describe('the pool cap a run reserves against', () => {
+  it('passes the whole pool total as `poolUsd`, not what is left of it', async () => {
+    const h = selfStartHarness({
+      constitution: { selfStartPoolUsdPerDay: 0.5, maxSelfStarted: 3 },
+    });
+    await h.seed(h.parentFile());
+    const agent = (id: string) =>
+      makeFile({
+        id,
+        origin: 'agent',
+        state: 'self_started',
+        parent_id: 'growth',
+        sources: ['sessions'],
+        budget: { usd_per_day: 0.3, usd_per_exploration: 0.3, max_open_explorations: 1 },
+      });
+    const mine = await h.seed(agent('mine'));
+    await h.seed(agent('other'));
+    // Another agent initiative already spent $0.20 of the $0.50 pool today.
+    h.ledger.windows.push({
+      id: 'W-9',
+      initiativeId: 'other',
+      explorationId: null,
+      kind: 'survey',
+      day: '2026-11-28',
+      spentUsd: 0.2,
+      endReason: 'done',
+    });
+    await h.runner(scriptedLLM([[]], 0.01).llm).runSurvey(mine.id);
+    // poolLeft (0.30) + the agent spend so far (0.20): the reservation's own pool scope subtracts
+    // spend again, so it must be handed the total, or the $0.20 would be counted twice.
+    expect(h.ledger.reservations).toHaveLength(1);
+    expect(h.ledger.reservations[0]?.caps.poolUsd).toBeCloseTo(0.5, 10);
+  });
+
+  it('a human-origin run carries no pool cap', async () => {
+    const h = selfStartHarness();
+    const mine = await h.seed(makeFile({ id: 'human-1', sources: ['sessions'] }));
+    await h.runner(scriptedLLM([[]], 0.01).llm).runSurvey(mine.id);
+    expect(h.ledger.reservations[0]?.caps).not.toHaveProperty('poolUsd');
+  });
+});
