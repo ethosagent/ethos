@@ -40,6 +40,7 @@
       "@ethosagent/delivery-ledger": ["./extensions/delivery-ledger/src"],
       "@ethosagent/share-links": ["./extensions/share-links/src"],
       "@ethosagent/world-sqlite": ["./extensions/world-sqlite/src"],
+      "@ethosagent/world-service": ["./extensions/world-service/src"],
       "@ethosagent/inbound-dedup": ["./extensions/inbound-dedup/src"],
       "@ethosagent/inbound-spool": ["./extensions/inbound-spool/src"],
       "@ethosagent/channel-transcript-sqlite": ["./extensions/channel-transcript-sqlite/src"],

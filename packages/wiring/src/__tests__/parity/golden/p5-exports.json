@@ -6097,6 +6097,30 @@
     }
   },
   "@ethosagent/world-sqlite": {
+  "@ethosagent/world-service": {
+    "entry": "extensions/world-service/src/index.ts",
+    "exports": {
+      "AccessResult": "type",
+      "ConfigIssue": "type",
+      "InertReason": "type",
+      "MountMode": "type",
+      "MountsFile": "type",
+      "MountsFileSchema": "value",
+      "ResolvedWorld": "type",
+      "WorldConfigError": "value",
+      "WorldFile": "type",
+      "WorldFileSchema": "value",
+      "displayTag": "value",
+      "isSafeSlug": "value",
+      "parseMountsYaml": "value",
+      "parseWorldId": "value",
+      "parseWorldYaml": "value",
+      "privateWorldId": "value",
+      "resolveAccess": "value",
+      "sharedWorldId": "value",
+      "worldSlug": "value"
+    }
+  },
     "entry": "extensions/world-sqlite/src/index.ts",
     "exports": {
       "SQLiteWorldGraphProvider": "value",
