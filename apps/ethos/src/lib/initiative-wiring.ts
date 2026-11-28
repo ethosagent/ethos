@@ -1,5 +1,4 @@
 import { ethosDir } from '@ethosagent/config';
-import type { NotifyOutcome } from '@ethosagent/gateway';
 import type { InitiativeActionVerb, InitiativeDigest, Storage } from '@ethosagent/types';
 import {
   createInitiativeCliPort,
@@ -204,7 +203,7 @@ export interface DigestGateway {
     target: { platform: string; chatId: string; botKey?: string },
     text: string,
     extra?: { initiativeDigest?: InitiativeDigest },
-  ): Promise<NotifyOutcome>;
+  ): Promise<'confirmed' | 'held' | 'owed' | 'failed'>;
   listAdapters(): ReadonlyArray<{ id: string }>;
 }
 

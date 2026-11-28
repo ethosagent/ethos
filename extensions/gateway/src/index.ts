@@ -150,7 +150,7 @@ import {
   transcriptTimestamp,
   type WakeReview,
 } from './gateway-pure';
-import { isInitiativeCardAdapter } from './initiative-card';
+import { type NotifyOutcome, outcomeOf, sendCardOrText } from './initiative-card';
 import { activeLaneJobSummary, parseJobCommand, runJobCommand, stopJobByRef } from './job-commands';
 import { LaneManager } from './lane-manager';
 import { LaneSessionFiles } from './lane-sessions';
@@ -268,13 +268,6 @@ export { type DeliveryTargetConfig, type RelayResult, relayToTargets } from './w
  * bounded rather than exact. Overridable per call (`shutdown({ drainTimeoutMs })`).
  */
 const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
-
-/**
- * What `Gateway.notifyTrackedOutcome` reports. `owed` is an unconfirmed send whose `pending` ledger
- * row is durable, so the delivery sweep re-sends it and the caller must not retry; `failed` wrote
- * nothing durable (refused, no ledger, or the ledger write failed).
- */
-export type NotifyOutcome = 'confirmed' | 'held' | 'owed' | 'failed';
 
 export class Gateway {
   /** Bot routing table keyed by `botKey`. Mutable so `addAdapter` /
@@ -4846,16 +4839,7 @@ export class Gateway {
     // sweep does not redeliver a send that outlasts its age grace.
     let result: DeliveryResult;
     try {
-      // An owner digest goes out as a button card on an adapter that renders one, with the same
-      // text the obligation holds as its fallback; everything else is the plain send.
-      const attempt =
-        card && isInitiativeCardAdapter(target.adapter)
-          ? target.adapter.sendInitiativeDigest(target.chatId, card, {
-              text: message.text,
-              ...(message.threadId ? { threadId: message.threadId } : {}),
-            })
-          : target.adapter.send(target.chatId, message);
-      result = await attempt.catch(
+      result = await sendCardOrText(target.adapter, target.chatId, message, card).catch(
         (err: unknown): DeliveryResult => ({
           ok: false,
           error: err instanceof Error ? err.message : String(err),
@@ -4930,10 +4914,7 @@ export class Gateway {
       answersInbound?: boolean;
     },
     text: string,
-    /**
-     * The owner digest behind `text`. A card-capable adapter renders its buttons; a held notice
-     * (quiet hours) and a ledger redelivery carry only `text`. Not a recipient: that stays `target`.
-     */
+    /** The owner digest behind `text` (buttons on a card adapter; held and redelivered notices carry only `text`). */
     extra?: { initiativeDigest?: InitiativeDigest },
   ): Promise<NotifyOutcome> {
     const refuse = (cause: string): 'failed' => {
@@ -4988,14 +4969,10 @@ export class Gateway {
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
       extra?.initiativeDigest,
     );
-    if (sent.confirmed) return 'confirmed';
-    return sent.obligationId === null ? 'failed' : 'owed';
+    return outcomeOf(sent);
   }
 
-  /**
-   * {@link notifyTrackedOutcome} as the boolean the other callers read: `'owed'` (unconfirmed, but
-   * the ledger holds a `pending` row the sweep redelivers) is `false`, exactly as before.
-   */
+  /** {@link notifyTrackedOutcome} as the boolean the other callers read: `owed` and `failed` are `false`. */
   async notifyTracked(
     target: Parameters<Gateway['notifyTrackedOutcome']>[0],
     text: string,

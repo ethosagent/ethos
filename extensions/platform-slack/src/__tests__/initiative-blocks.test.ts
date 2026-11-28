@@ -127,9 +127,13 @@ describe('escaping and the section cap', () => {
   });
 
   it('cuts a brief section after escaping too', () => {
-    const t = (
-      briefBlocks({ ...brief, question: amps, recommendation: amps })[0]?.text as { text: string }
-    ).text;
+    const t =
+      (
+        briefBlocks({ ...brief, question: amps, recommendation: amps })[0]?.text as
+          | { text: string }
+          | undefined
+      )?.text ?? '';
+    expect(t.length).toBeGreaterThan(0);
     expect(t.length).toBeLessThanOrEqual(3000);
     expect(t.replace(/&(amp|lt|gt);/g, '')).not.toContain('&');
   });
