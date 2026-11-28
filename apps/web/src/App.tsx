@@ -109,6 +109,7 @@ import { TeamSettings } from './pages/team/TeamSettings';
 import { TeamStructure } from './pages/team/TeamStructure';
 import { Welcome } from './pages/Welcome';
 import { WelcomeReset } from './pages/WelcomeReset';
+import { World } from './pages/World';
 import { rpc } from './rpc';
 
 // Top-level route map. v0 ships only Talk-group routes (Chat + Sessions)
@@ -135,6 +136,7 @@ const WORKSPACE_ROUTES: ReadonlyArray<{ path: string; element: ReactNode }> = [
   { path: 'plugins', element: <Plugins /> },
   { path: 'activity', element: <Activity /> },
   { path: 'identity', element: <PersonalityDetail /> },
+  { path: 'world', element: <World /> },
 ];
 
 // T1 placeholders for the team panes (`/t/:teamId/<pane>`), keyed by

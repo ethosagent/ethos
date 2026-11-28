@@ -452,6 +452,9 @@ importers:
       '@ethosagent/wiring':
         specifier: workspace:*
         version: link:../../packages/wiring
+      '@ethosagent/world-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/world-sqlite
       '@types/nodemailer':
         specifier: ^6.4.17
         version: 6.4.23
@@ -593,6 +596,9 @@ importers:
       antd:
         specifier: ^6.5.0
         version: 6.5.3(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      cytoscape:
+        specifier: 3.35.0
+        version: 3.35.0
       dayjs:
         specifier: ^1.11.21
         version: 1.11.21
@@ -8365,6 +8371,10 @@ packages:
 
   curve25519-js@0.0.4:
     resolution: {integrity: sha512-axn2UMEnkhyDUPWOwVKBMVIzSQy2ejH2xRGy1wq81dqRwApXfIzfbE3hIX0ZRFBIihf/KDqK158DLwESu4AK1w==}
+
+  cytoscape@3.35.0:
+    resolution: {integrity: sha512-sMvBIXiGMnhkCaWz2R06FwF/27MNlS+Tqvi17foO9UhnUg3XGZccKjxsvEqQFAQYMSSZmN5SxYzUYlQ0DOJJ3g==}
+    engines: {node: '>=0.10'}
 
   data-urls@7.0.0:
     resolution: {integrity: sha512-23XHcCF+coGYevirZceTVD7NdJOqVn+49IHyxgszm+JIiHLoB2TkmPtsYkNWT1pvRSGkc35L6NHs0yHkN2SumA==}
@@ -20028,6 +20038,8 @@ snapshots:
   csstype@3.2.3: {}
 
   curve25519-js@0.0.4: {}
+
+  cytoscape@3.35.0: {}
 
   data-urls@7.0.0(@noble/hashes@2.2.0):
     dependencies:
