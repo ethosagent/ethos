@@ -183,7 +183,7 @@ register_anchors:
 
   G-INIT-CFG:
     - { path: extensions/initiative-runner/src/config-service.ts, line: 134, contains: "async save(input: SaveInput)" }
-    - { path: extensions/initiative-runner/src/sources.ts, line: 54, contains: "export function checkSources" }
+    - { path: extensions/initiative-runner/src/sources.ts, line: 52, contains: "export function checkSources" }
     - { path: packages/types/src/personality-definition.ts, line: 71, contains: "'initiatives/'" }
 
 # ---- Security tiers -------------------------------------------------------

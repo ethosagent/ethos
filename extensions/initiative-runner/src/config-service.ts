@@ -379,9 +379,11 @@ export class InitiativeConfigService implements InitiativeConfigPort {
     const blocked = await this.blocked();
     const readableRoots = constitution.initiatives?.readableRoots ?? [];
     const out: Array<{ id: string; ok: boolean; error?: string }> = [];
-    for (const name of names.sort()) {
+    const sorted = names.sort();
+    const docs = await Promise.all(sorted.map((name) => this.readDoc(join(dir, name))));
+    for (const [i, name] of sorted.entries()) {
       const id = name.slice(0, -'.yaml'.length);
-      const doc = await this.readDoc(join(dir, name));
+      const doc = docs[i] ?? null;
       let error: string | undefined;
       if (doc !== null && 'ok' in doc) error = doc.error;
       else if (doc !== null) {

@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { resolve, sep } from 'node:path';
 import { isReachWithinAllowedRoots } from '@ethosagent/constitution';
+import { CASE_INSENSITIVE_FS, foldDenyKey } from '@ethosagent/storage-fs';
 import type { SourceEntry } from './config-schema';
 
 /**
@@ -21,10 +22,7 @@ import type { SourceEntry } from './config-schema';
  * symlink inside a root that points outside it is not resolved here.
  */
 
-const CASE_FOLD = process.platform === 'darwin' || process.platform === 'win32';
 const NO_VARS = { ethosHome: '', self: '', cwd: '' };
-
-const key = (p: string): string => (CASE_FOLD ? p.toLowerCase() : p);
 
 const label = (e: SourceEntry): string => (typeof e === 'string' ? e : e.repo);
 
@@ -35,15 +33,15 @@ function expand(s: string): string | null {
 }
 
 function within(p: string, root: string): boolean {
-  const a = key(p);
-  const b = key(root);
+  const a = foldDenyKey(p);
+  const b = foldDenyKey(root);
   return a === b || a.startsWith(b.endsWith(sep) ? b : `${b}${sep}`);
 }
 
 /** `**\/.env*`, `**\/*.pem`, `**\/id_*`, matched against every path segment. */
 function secretFileMatch(abs: string): string | null {
   for (const seg of abs.split(sep)) {
-    const s = CASE_FOLD ? seg.toLowerCase() : seg;
+    const s = CASE_INSENSITIVE_FS ? foldDenyKey(seg) : seg;
     if (s.startsWith('.env')) return '**/.env*';
     if (s.endsWith('.pem')) return '**/*.pem';
     if (s.startsWith('id_')) return '**/id_*';
@@ -79,7 +77,7 @@ export function checkSources(
       { filesystem: { allowedMountRoots: roots } },
       NO_VARS,
     );
-    if (!inside || !roots.some((r) => within(abs, r))) {
+    if (!inside) {
       return { ok: false, error: `source "${src}" is outside readableRoots` };
     }
     const hit = blocked.find((b) => within(abs, b) || within(b, abs));

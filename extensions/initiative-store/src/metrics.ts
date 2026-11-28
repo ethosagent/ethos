@@ -21,10 +21,13 @@ export function computeGateMetrics(
   personalityId: string,
   sinceIso: string,
 ): GateMetrics {
+  const tally = new Map<string, number>();
+  for (const d of store.decisionsSince(personalityId, sinceIso)) {
+    const key = `${d.gate}:${d.verdict}`;
+    tally.set(key, (tally.get(key) ?? 0) + 1);
+  }
   const count = (gate: string, verdicts: string[]) =>
-    store
-      .decisionsSince(personalityId, sinceIso)
-      .filter((d) => d.gate === gate && verdicts.includes(d.verdict)).length;
+    verdicts.reduce((n, v) => n + (tally.get(`${gate}:${v}`) ?? 0), 0);
   const asked = count('gate1_explore', ['approve', 'reject']);
   const approved = count('gate1_explore', ['approve']);
   const briefs = count('gate2_adopt', ['adopt', 'park', 'dig_deeper']);

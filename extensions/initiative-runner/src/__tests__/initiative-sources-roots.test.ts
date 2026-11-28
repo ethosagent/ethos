@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
+import { CASE_INSENSITIVE_FS, sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
 import { checkSources } from '../index';
 
@@ -45,5 +45,10 @@ describe('checkSources', () => {
 
   it('accepts the bare kinds without roots', () => {
     expect(checkSources(['web', 'memory'], ctx({ readableRoots: [] }))).toEqual({ ok: true });
+  });
+
+  it.runIf(CASE_INSENSITIVE_FS)('refuses a case-variant of a blocked path', () => {
+    const r = checkSources([repo('~/.SSH')], ctx({ readableRoots: [HOME] }));
+    expect(r).toEqual({ ok: false, error: expect.stringContaining('blocked') });
   });
 });

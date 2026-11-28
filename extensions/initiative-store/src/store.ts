@@ -155,6 +155,75 @@ function toExploration(r: ExplorationDbRow): ExplorationRow {
   };
 }
 
+/** `?, ?, ?` placeholders for an SQL `IN (...)` over `values`. */
+function inClause(values: readonly unknown[]): string {
+  return values.map(() => '?').join(', ');
+}
+
+interface BriefDbRow {
+  id: string;
+  exploration_id: string;
+  version: number;
+  body_md: string;
+  recommended_option: string | null;
+  partial: number;
+}
+
+function toBrief(r: BriefDbRow): BriefRow {
+  return {
+    id: r.id,
+    explorationId: r.exploration_id,
+    version: r.version,
+    bodyMd: r.body_md,
+    recommendedOption: r.recommended_option,
+    partial: r.partial === 1,
+  };
+}
+
+interface FindingDbRow {
+  id: string;
+  exploration_id: string;
+  claim: string;
+  source_ref: string;
+  confidence: number;
+  created_at: string;
+}
+
+function toFinding(r: FindingDbRow): FindingRow {
+  return {
+    id: r.id,
+    explorationId: r.exploration_id,
+    claim: r.claim,
+    sourceRef: r.source_ref,
+    confidence: r.confidence,
+    createdAt: r.created_at,
+  };
+}
+
+interface DecisionDbRow {
+  id: string;
+  target: string;
+  gate: string;
+  verdict: string;
+  reason: string | null;
+  option: string | null;
+  decided_by: string;
+  at: string;
+}
+
+function toDecision(r: DecisionDbRow): DecisionRow {
+  return {
+    id: r.id,
+    target: r.target,
+    gate: r.gate as GateId,
+    verdict: r.verdict as InitiativeVerdict,
+    reason: r.reason,
+    option: r.option,
+    decidedBy: r.decided_by,
+    at: r.at,
+  };
+}
+
 /** A JSON text column that must hold a string array; anything else reads as empty. */
 function parseStrings(json: string): string[] {
   const parsed: unknown = JSON.parse(json);
@@ -234,7 +303,7 @@ const IMPLIED: Partial<
   },
 };
 
-const INDEX_EXPLORATION_STATES = ['proposed', 'exploring', 'stalled', 'briefed'] as const;
+const INDEX_EXPLORATION_STATES = [...OPEN_EXPLORATION_STATES, 'briefed'] as const;
 
 function clip(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -389,8 +458,8 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   }
 
   /** Throws `INITIATIVE_ILLEGAL_TRANSITION` on a move EXPLORATION_TRANSITIONS does not allow. */
-  transitionExploration(id: string, to: ExplorationState, why: string): void {
-    this.write(() => this.moveExploration(id, to, why));
+  transitionExploration(id: string, to: ExplorationState, _why: string): void {
+    this.write(() => this.moveExploration(id, to));
   }
 
   /**
@@ -422,7 +491,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
         const e = this.requireExploration(d.target);
         initiativeId = e.initiativeId;
         if (implied.exploration !== null) {
-          this.moveExploration(d.target, implied.exploration, d.reason ?? d.verdict);
+          this.moveExploration(d.target, implied.exploration);
         }
       } else {
         this.requireInitiative(d.target);
@@ -492,7 +561,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
       .run(to, this.iso(), to, why, to, why, id);
   }
 
-  private moveExploration(id: string, to: ExplorationState, _why: string): void {
+  private moveExploration(id: string, to: ExplorationState): void {
     const from = this.requireExploration(id).state;
     if (!canTransition(EXPLORATION_TRANSITIONS, from, to)) {
       throw new EthosError({
@@ -562,17 +631,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
           at,
           at,
         );
-      return {
-        id,
-        initiativeId: p.initiativeId,
-        ideaId: p.ideaId,
-        question: p.question,
-        state: 'proposed',
-        budgetUsd: p.estimateUsd,
-        spentUsd: 0,
-        deadline,
-        estimateUsd: p.estimateUsd,
-      };
+      return this.requireExploration(id);
     });
   }
 
@@ -584,7 +643,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   }
 
   explorations(initiativeId: string, states?: ExplorationState[]): ExplorationRow[] {
-    const filter = states?.length ? ` AND state IN (${states.map(() => '?').join(', ')})` : '';
+    const filter = states?.length ? ` AND state IN (${inClause(states)})` : '';
     const rows = this.db
       .prepare(
         `SELECT ${EXPLORATION_COLS} FROM explorations WHERE initiative_id = ?${filter}
@@ -772,7 +831,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
     const open = this.db
       .prepare(
         `SELECT COUNT(*) AS n FROM explorations
-         WHERE initiative_id = ? AND state IN (${OPEN_EXPLORATION_STATES.map(() => '?').join(', ')})`,
+         WHERE initiative_id = ? AND state IN (${inClause(OPEN_EXPLORATION_STATES)})`,
       )
       .get(initiativeId, ...OPEN_EXPLORATION_STATES) as { n: number };
     return { spentUsd: spent.s, capUsd: this.capFor(initiativeId), explorationsOpen: open.n };
@@ -782,7 +841,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
 
   list(filter: { personalityId: string; states?: InitiativeState[] }): InitiativeRow[] {
     const states = filter.states ?? [];
-    const clause = states.length ? ` AND state IN (${states.map(() => '?').join(', ')})` : '';
+    const clause = states.length ? ` AND state IN (${inClause(states)})` : '';
     const rows = this.db
       .prepare(
         `SELECT ${INITIATIVE_COLS} FROM initiatives WHERE personality_id = ?${clause}
@@ -806,47 +865,19 @@ export class SQLiteInitiativeStore implements InitiativeStore {
          FROM briefs b JOIN explorations e ON e.id = b.exploration_id
          WHERE e.initiative_id = ? ORDER BY b.created_at, b.rowid`,
       )
-      .all(id) as Array<{
-      id: string;
-      exploration_id: string;
-      version: number;
-      body_md: string;
-      recommended_option: string | null;
-      partial: number;
-    }>;
+      .all(id) as BriefDbRow[];
     const findings = this.db
       .prepare(
         `SELECT f.id, f.exploration_id, f.claim, f.source_ref, f.confidence, f.created_at
          FROM findings f JOIN explorations e ON e.id = f.exploration_id
          WHERE e.initiative_id = ? ORDER BY f.created_at, f.rowid`,
       )
-      .all(id) as Array<{
-      id: string;
-      exploration_id: string;
-      claim: string;
-      source_ref: string;
-      confidence: number;
-      created_at: string;
-    }>;
+      .all(id) as FindingDbRow[];
     return {
       initiative,
       explorations: this.explorations(id),
-      briefs: briefs.map((b) => ({
-        id: b.id,
-        explorationId: b.exploration_id,
-        version: b.version,
-        bodyMd: b.body_md,
-        recommendedOption: b.recommended_option,
-        partial: b.partial === 1,
-      })),
-      findings: findings.map((f) => ({
-        id: f.id,
-        explorationId: f.exploration_id,
-        claim: f.claim,
-        sourceRef: f.source_ref,
-        confidence: f.confidence,
-        createdAt: f.created_at,
-      })),
+      briefs: briefs.map(toBrief),
+      findings: findings.map(toFinding),
     };
   }
 
@@ -928,25 +959,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
          WHERE i.personality_id = ? AND d.at >= ?
          ORDER BY d.at, d.rowid`,
       )
-      .all(personalityId, sinceIso) as Array<{
-      id: string;
-      target: string;
-      gate: string;
-      verdict: string;
-      reason: string | null;
-      option: string | null;
-      decided_by: string;
-      at: string;
-    }>;
-    return rows.map((r) => ({
-      id: r.id,
-      target: r.target,
-      gate: r.gate as GateId,
-      verdict: r.verdict as InitiativeVerdict,
-      reason: r.reason,
-      option: r.option,
-      decidedBy: r.decided_by,
-      at: r.at,
-    }));
+      .all(personalityId, sinceIso) as DecisionDbRow[];
+    return rows.map(toDecision);
   }
 }
