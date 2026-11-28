@@ -49,6 +49,9 @@
             "id": {
               "type": "string"
             },
+            "locked": {
+              "type": "boolean"
+            },
             "modifiedAt": {
               "type": "string"
             },
@@ -76,6 +79,11 @@
                   "type": "null"
                 }
               ]
+            },
+            "versionCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -86,7 +94,9 @@
             "body",
             "modifiedAt",
             "source",
-            "readonly"
+            "readonly",
+            "locked",
+            "versionCount"
           ],
           "type": "object"
         }
@@ -174,6 +184,9 @@
             "id": {
               "type": "string"
             },
+            "locked": {
+              "type": "boolean"
+            },
             "modifiedAt": {
               "type": "string"
             },
@@ -201,6 +214,11 @@
                   "type": "null"
                 }
               ]
+            },
+            "versionCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -211,13 +229,101 @@
             "body",
             "modifiedAt",
             "source",
-            "readonly"
+            "readonly",
+            "locked",
+            "versionCount"
           ],
           "type": "object"
         }
       },
       "required": [
         "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.history": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "versions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "candidateId": {
+                "type": "string"
+              },
+              "hash": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "type": "string"
+              },
+              "restoredFrom": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "learning",
+                  "learning-rollback",
+                  "web-edit",
+                  "web-import",
+                  "restore",
+                  "external"
+                ],
+                "type": "string"
+              },
+              "versionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "at",
+              "source",
+              "actor",
+              "hash"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "versions"
       ],
       "type": "object"
     },
@@ -270,6 +376,9 @@
               "id": {
                 "type": "string"
               },
+              "locked": {
+                "type": "boolean"
+              },
               "modifiedAt": {
                 "type": "string"
               },
@@ -297,6 +406,11 @@
                     "type": "null"
                   }
                 ]
+              },
+              "versionCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -307,7 +421,9 @@
               "body",
               "modifiedAt",
               "source",
-              "readonly"
+              "readonly",
+              "locked",
+              "versionCount"
             ],
             "type": "object"
           },
@@ -317,6 +433,83 @@
       "required": [
         "skills",
         "pendingCount"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.restore": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "versionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "versionId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "versionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "versionId"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.setLock": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "locked"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "locked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "locked"
       ],
       "type": "object"
     },
@@ -371,6 +564,9 @@
             "id": {
               "type": "string"
             },
+            "locked": {
+              "type": "boolean"
+            },
             "modifiedAt": {
               "type": "string"
             },
@@ -398,6 +594,11 @@
                   "type": "null"
                 }
               ]
+            },
+            "versionCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -408,13 +609,65 @@
             "body",
             "modifiedAt",
             "source",
-            "readonly"
+            "readonly",
+            "locked",
+            "versionCount"
           ],
           "type": "object"
         }
       },
       "required": [
         "skill"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "skills.version": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "versionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "versionId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "versionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "versionId",
+        "content"
       ],
       "type": "object"
     },

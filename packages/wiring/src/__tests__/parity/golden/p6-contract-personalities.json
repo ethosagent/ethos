@@ -3683,11 +3683,19 @@
             "id": {
               "type": "string"
             },
+            "locked": {
+              "type": "boolean"
+            },
             "modifiedAt": {
               "type": "string"
             },
             "name": {
               "type": "string"
+            },
+            "versionCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -3695,7 +3703,9 @@
             "name",
             "description",
             "body",
-            "modifiedAt"
+            "modifiedAt",
+            "locked",
+            "versionCount"
           ],
           "type": "object"
         }
@@ -3786,11 +3796,19 @@
             "id": {
               "type": "string"
             },
+            "locked": {
+              "type": "boolean"
+            },
             "modifiedAt": {
               "type": "string"
             },
             "name": {
               "type": "string"
+            },
+            "versionCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -3798,7 +3816,9 @@
             "name",
             "description",
             "body",
-            "modifiedAt"
+            "modifiedAt",
+            "locked",
+            "versionCount"
           ],
           "type": "object"
         }
@@ -3857,11 +3877,19 @@
               "id": {
                 "type": "string"
               },
+              "locked": {
+                "type": "boolean"
+              },
               "modifiedAt": {
                 "type": "string"
               },
               "name": {
                 "type": "string"
+              },
+              "versionCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -3869,7 +3897,9 @@
               "name",
               "description",
               "body",
-              "modifiedAt"
+              "modifiedAt",
+              "locked",
+              "versionCount"
             ],
             "type": "object"
           },
@@ -3922,11 +3952,19 @@
               "id": {
                 "type": "string"
               },
+              "locked": {
+                "type": "boolean"
+              },
               "modifiedAt": {
                 "type": "string"
               },
               "name": {
                 "type": "string"
+              },
+              "versionCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -3934,7 +3972,9 @@
               "name",
               "description",
               "body",
-              "modifiedAt"
+              "modifiedAt",
+              "locked",
+              "versionCount"
             ],
             "type": "object"
           },
@@ -3995,11 +4035,19 @@
             "id": {
               "type": "string"
             },
+            "locked": {
+              "type": "boolean"
+            },
             "modifiedAt": {
               "type": "string"
             },
             "name": {
               "type": "string"
+            },
+            "versionCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
@@ -4007,7 +4055,9 @@
             "name",
             "description",
             "body",
-            "modifiedAt"
+            "modifiedAt",
+            "locked",
+            "versionCount"
           ],
           "type": "object"
         }

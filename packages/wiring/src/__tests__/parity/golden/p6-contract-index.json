@@ -387,8 +387,12 @@
     "skills.create",
     "skills.delete",
     "skills.get",
+    "skills.history",
     "skills.list",
-    "skills.update"
+    "skills.restore",
+    "skills.setLock",
+    "skills.update",
+    "skills.version"
   ],
   "slashCommands": [
     "slashCommands.list"
