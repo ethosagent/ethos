@@ -204,7 +204,6 @@ describe('SkillHistory', () => {
       await history.setLock(DEST, true, 'cli');
       const snapshot = await snapshotTree(storage);
       const result = await history.writeAgentAuthored(DEST, 'agent\n', {
-        source: 'learning',
         actor: 'nightly',
         candidateId: 'c1',
       });
@@ -215,7 +214,6 @@ describe('SkillHistory', () => {
 
     it('writeAgentAuthored on an unlocked skill writes and returns the version id', async () => {
       const result = await history.writeAgentAuthored(DEST, 'agent\n', {
-        source: 'learning',
         actor: 'nightly',
         candidateId: 'c1',
       });

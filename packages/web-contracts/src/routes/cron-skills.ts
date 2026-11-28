@@ -10,6 +10,7 @@ import {
   MissedRunPolicySchema,
   PendingSkillSchema,
   SkillSchema,
+  SkillVersionSchema,
 } from '../schemas';
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,31 @@ const SkillUpdateOutput = z.object({ skill: SkillSchema });
 const SkillDeleteInput = z.object({ id: z.string().min(1) });
 const SkillOkOutput = z.object({ ok: z.literal(true) });
 
+/**
+ * History, bytes, restore and lock for one flat skill. `personalityId` selects a
+ * personality's own skill (`personalities/<id>/skills/`); omitted = the shared one.
+ */
+const SkillScopeInput = z.object({
+  id: z.string().min(1),
+  personalityId: z.string().min(1).optional(),
+});
+const SkillHistoryOutput = z.object({
+  /** Oldest first. Capped at 50 per skill. */
+  versions: z.array(SkillVersionSchema),
+});
+const SkillVersionInput = SkillScopeInput.extend({ versionId: z.string().min(1) });
+const SkillVersionOutput = z.object({
+  versionId: z.string(),
+  /** The bytes of that version; `null` for a tombstone or an unknown id. */
+  content: z.string().nullable(),
+});
+const SkillRestoreOutput = z.object({
+  /** The NEW version the restore recorded. */
+  versionId: z.string(),
+});
+const SkillSetLockInput = SkillScopeInput.extend({ locked: z.boolean() });
+const SkillSetLockOutput = z.object({ locked: z.boolean() });
+
 /** @experimental */
 export const skills = {
   list: oc.input(z.object({ includeUnavailable: z.boolean().optional() })).output(SkillListOutput),
@@ -164,6 +190,10 @@ export const skills = {
   create: oc.input(SkillCreateInput).output(SkillCreateOutput),
   update: oc.input(SkillUpdateInput).output(SkillUpdateOutput),
   delete: oc.input(SkillDeleteInput).output(SkillOkOutput),
+  history: oc.input(SkillScopeInput).output(SkillHistoryOutput),
+  version: oc.input(SkillVersionInput).output(SkillVersionOutput),
+  restore: oc.input(SkillVersionInput).output(SkillRestoreOutput),
+  setLock: oc.input(SkillSetLockInput).output(SkillSetLockOutput),
 };
 
 // ---------------------------------------------------------------------------

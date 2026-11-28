@@ -21,6 +21,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CatalogBrowser } from '../components/catalog/CatalogBrowser';
+import { LockedChip, SkillHistoryButton, SkillLockSwitch } from '../components/skills/SkillHistory';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { learningKeys } from '../features/learning/api/keys';
 import { personalityKeys } from '../features/personalities/api/keys';
@@ -202,6 +203,7 @@ function WorkspaceSkillsPanel({ personalityId }: { personalityId: string }) {
                 <div key={skill.id} className="skill-card">
                   <div className="skill-card-header">
                     <div style={{ fontWeight: 500 }}>{skill.name}</div>
+                    {skill.locked ? <LockedChip /> : null}
                   </div>
                   <div className="skill-card-description">
                     {skill.description ?? (
@@ -214,14 +216,27 @@ function WorkspaceSkillsPanel({ personalityId }: { personalityId: string }) {
                     </Typography.Text>
                     <span>{formatRelative(skill.modifiedAt)}</span>
                   </div>
-                  <div className="skill-card-actions">
-                    <Switch
-                      size="small"
-                      checked
-                      loading={detachMut.isPending && detachMut.variables === skill.id}
-                      onChange={() => detachMut.mutate(skill.id)}
+                  <div className="skill-card-actions" style={{ gap: 12, flexWrap: 'wrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <Switch
+                        size="small"
+                        checked
+                        loading={detachMut.isPending && detachMut.variables === skill.id}
+                        onChange={() => detachMut.mutate(skill.id)}
+                      />
+                      <span style={{ fontSize: 12, marginLeft: 6 }}>Attached</span>
+                    </span>
+                    <SkillLockSwitch
+                      skillId={skill.id}
+                      locked={skill.locked}
+                      personalityId={personalityId}
                     />
-                    <span style={{ fontSize: 12, marginLeft: 6 }}>Attached</span>
+                    <SkillHistoryButton
+                      skillId={skill.id}
+                      skillName={skill.name}
+                      personalityId={personalityId}
+                      versionCount={skill.versionCount}
+                    />
                   </div>
                 </div>
               ))}
@@ -455,6 +470,7 @@ function LibraryPanel({ skillsQuery }: LibraryPanelProps) {
               >
                 <div className="skill-card-header">
                   <div style={{ fontWeight: 500 }}>{skill.name}</div>
+                  {skill.locked ? <LockedChip /> : null}
                   <Tag color={cfg.color}>{cfg.label}</Tag>
                 </div>
                 <div className="skill-card-description">
@@ -527,10 +543,16 @@ function SkillCardActions({ skill, onEdit }: { skill: Skill; onEdit: () => void 
   }
 
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <Button size="small" onClick={onEdit}>
         Edit
       </Button>
+      <SkillHistoryButton
+        skillId={skill.id}
+        skillName={skill.name}
+        versionCount={skill.versionCount}
+      />
+      <SkillLockSwitch skillId={skill.id} locked={skill.locked} />
       <Popconfirm
         title="Delete this skill?"
         description="The file is removed from disk."

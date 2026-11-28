@@ -854,7 +854,7 @@ export class PersonalitiesService {
   async skillsList(personalityId: string): Promise<{ skills: PersonalitySkill[] }> {
     this.requirePersonality(personalityId);
     const records = await this.opts.library.listPersonalitySkills(personalityId);
-    return { skills: records.map(toWirePersonalitySkill) };
+    return { skills: await Promise.all(records.map((r) => this.wireSkill(personalityId, r))) };
   }
 
   async skillsGet(personalityId: string, skillId: string): Promise<{ skill: PersonalitySkill }> {
@@ -867,7 +867,7 @@ export class PersonalitiesService {
         action: 'Use personalities.skillsList to see installed skills.',
       });
     }
-    return { skill: toWirePersonalitySkill(skill) };
+    return { skill: await this.wireSkill(personalityId, skill) };
   }
 
   async skillsCreate(
@@ -877,7 +877,7 @@ export class PersonalitiesService {
   ): Promise<{ skill: PersonalitySkill }> {
     this.requirePersonality(personalityId);
     const skill = await this.opts.library.createPersonalitySkill(personalityId, skillId, body);
-    return { skill: toWirePersonalitySkill(skill) };
+    return { skill: await this.wireSkill(personalityId, skill) };
   }
 
   async skillsUpdate(
@@ -887,7 +887,7 @@ export class PersonalitiesService {
   ): Promise<{ skill: PersonalitySkill }> {
     this.requirePersonality(personalityId);
     const skill = await this.opts.library.updatePersonalitySkill(personalityId, skillId, body);
-    return { skill: toWirePersonalitySkill(skill) };
+    return { skill: await this.wireSkill(personalityId, skill) };
   }
 
   async skillsDelete(personalityId: string, skillId: string): Promise<void> {
@@ -901,7 +901,17 @@ export class PersonalitiesService {
   ): Promise<{ imported: PersonalitySkill[] }> {
     this.requirePersonality(personalityId);
     const records = await this.opts.library.importGlobalIntoPersonality(personalityId, skillIds);
-    return { imported: records.map(toWirePersonalitySkill) };
+    return { imported: await Promise.all(records.map((r) => this.wireSkill(personalityId, r))) };
+  }
+
+  private async wireSkill(
+    personalityId: string,
+    record: PersonalitySkillRecord,
+  ): Promise<PersonalitySkill> {
+    return toWirePersonalitySkill(
+      record,
+      await this.opts.library.historySummary(record.id, personalityId),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1331,13 +1341,18 @@ export class PersonalitiesService {
   }
 }
 
-function toWirePersonalitySkill(record: PersonalitySkillRecord): PersonalitySkill {
+function toWirePersonalitySkill(
+  record: PersonalitySkillRecord,
+  summary: { locked: boolean; versionCount: number },
+): PersonalitySkill {
   return {
     id: record.id,
     name: record.name,
     description: record.description,
     body: record.body,
     modifiedAt: record.modifiedAt,
+    locked: summary.locked,
+    versionCount: summary.versionCount,
   };
 }
 

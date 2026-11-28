@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
+import { assertSafeId, BoundaryError, EthosError, type Storage } from '@ethosagent/types';
 import { parseEthosRequires } from './dialects/ethos-namespace';
 import { checkRequirements, parseSkillFrontmatter } from './skill-compat';
 import { SkillHistory } from './skill-history';
@@ -91,6 +91,30 @@ export class SkillsLibrary {
   /** Absolute path to the directory holding live (global) skills. */
   getSkillsDir(): string {
     return this.skillsDir;
+  }
+
+  /**
+   * What the Skills page shows beside a skill: its lock and how many versions
+   * exist. A file whose name is not a safe skill id (`v1.2 notes.md`) has no
+   * history, so it reports zero instead of failing the whole listing.
+   */
+  async historySummary(
+    skillId: string,
+    personalityId?: string,
+  ): Promise<{ locked: boolean; versionCount: number }> {
+    const dir =
+      personalityId === undefined ? this.skillsDir : this.personalitySkillsDir(personalityId);
+    const dest = join(dir, `${skillId}.md`);
+    try {
+      const [locked, versions] = await Promise.all([
+        this.history.isLocked(dest),
+        this.history.versions(dest),
+      ]);
+      return { locked, versionCount: versions.length };
+    } catch (err) {
+      if (err instanceof BoundaryError) return { locked: false, versionCount: 0 };
+      throw err;
+    }
   }
 
   // ---------------------------------------------------------------------------
