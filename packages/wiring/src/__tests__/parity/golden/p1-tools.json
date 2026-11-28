@@ -2,6 +2,11 @@
   "byPersonality": {
     "debug": [
       "get_skill",
+      "initiative_add_ideas",
+      "initiative_define",
+      "initiative_get",
+      "initiative_list",
+      "initiative_search",
       "memory_read",
       "render_file",
       "render_html",
@@ -10,6 +15,11 @@
     ],
     "engineer": [
       "get_skill",
+      "initiative_add_ideas",
+      "initiative_define",
+      "initiative_get",
+      "initiative_list",
+      "initiative_search",
       "kanban_block",
       "kanban_comment",
       "kanban_complete",
@@ -42,6 +52,11 @@
     ],
     "personality-architect": [
       "get_skill",
+      "initiative_add_ideas",
+      "initiative_define",
+      "initiative_get",
+      "initiative_list",
+      "initiative_search",
       "list_available_models",
       "list_available_skills",
       "list_available_tools",
@@ -52,6 +67,11 @@
     ],
     "researcher": [
       "get_skill",
+      "initiative_add_ideas",
+      "initiative_define",
+      "initiative_get",
+      "initiative_list",
+      "initiative_search",
       "kanban_block",
       "kanban_comment",
       "kanban_complete",
@@ -74,6 +94,11 @@
     ],
     "reviewer": [
       "get_skill",
+      "initiative_add_ideas",
+      "initiative_define",
+      "initiative_get",
+      "initiative_list",
+      "initiative_search",
       "kanban_block",
       "kanban_comment",
       "kanban_complete",
@@ -91,6 +116,11 @@
     ],
     "team-architect": [
       "get_skill",
+      "initiative_add_ideas",
+      "initiative_define",
+      "initiative_get",
+      "initiative_list",
+      "initiative_search",
       "list_available_models",
       "list_available_skills",
       "list_available_tools",
@@ -536,6 +566,140 @@
         "type": "object"
       },
       "toolset": "image"
+    },
+    {
+      "available": true,
+      "description": "Record ideas (and optional standing guidance notes) the owner gave for an initiative. They land in the ledger as the owner's own ideas. Private chats only.",
+      "maxResultChars": 2000,
+      "name": "initiative_add_ideas",
+      "schema": {
+        "properties": {
+          "guidance": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ideas": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "initiative_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "initiative_id",
+          "ideas"
+        ],
+        "type": "object"
+      },
+      "toolset": "initiative"
+    },
+    {
+      "available": true,
+      "description": "Create or change an initiative (a standing research brief the owner has agreed to) after interviewing the owner. Show the owner the summary and set confirmed:true only after their explicit yes. Creating, and any change to budget, sources or autonomy, is refused until confirmed. pause, resume and end take draft.id. Private chats only.",
+      "maxResultChars": 4000,
+      "name": "initiative_define",
+      "schema": {
+        "properties": {
+          "confirmed": {
+            "description": "True only after the owner said yes to the summary.",
+            "type": "boolean"
+          },
+          "draft": {
+            "description": "The initiative document (create/update) or { id } (pause, resume, end).",
+            "type": "object"
+          },
+          "id": {
+            "description": "Initiative id (also accepted as draft.id).",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "create",
+              "update",
+              "pause",
+              "resume",
+              "end"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "toolset": "initiative"
+    },
+    {
+      "available": true,
+      "description": "Show one initiative: explorations, briefs and findings with their sources and ids.",
+      "maxResultChars": 12000,
+      "name": "initiative_get",
+      "schema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "toolset": "initiative"
+    },
+    {
+      "available": true,
+      "description": "List this personality's initiatives, optionally by state.",
+      "maxResultChars": 12000,
+      "name": "initiative_list",
+      "schema": {
+        "properties": {
+          "states": {
+            "items": {
+              "enum": [
+                "active",
+                "self_started",
+                "paused",
+                "review",
+                "ended",
+                "stopped"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "toolset": "initiative"
+    },
+    {
+      "available": true,
+      "description": "Search findings, briefs and explorations in the ledger. Each hit carries its id.",
+      "maxResultChars": 12000,
+      "name": "initiative_search",
+      "schema": {
+        "properties": {
+          "limit": {
+            "type": "number"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "toolset": "initiative"
     },
     {
       "available": true,
