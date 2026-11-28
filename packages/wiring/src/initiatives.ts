@@ -370,6 +370,7 @@ export function createLazyInitiativeStore(deps: {
     upsertInitiative: (row) => open().upsertInitiative(row),
     appendConfigVersion: (v) => open().appendConfigVersion(v),
     openWindow: (w) => open().openWindow(w),
+    reserveAndOpenWindow: (w) => open().reserveAndOpenWindow(w),
     extendExploration: (id, e) => open().extendExploration(id, e),
     drafts: (status) => open().drafts(status),
     settleDraft: (id, status, refusal) => open().settleDraft(id, status, refusal),

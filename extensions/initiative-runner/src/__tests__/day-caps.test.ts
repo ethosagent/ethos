@@ -131,3 +131,27 @@ describe('runs that share a cap do not overlap', () => {
     expect(ledger.windows.map((w) => w.spentUsd)).toEqual([0.01, 0.01]);
   });
 });
+
+describe('cross-process reservation', () => {
+  it('a run reserves what its guard allows and a refusal opens no window', async () => {
+    const { ledger, files } = setup();
+    const ok = await run(ledger, files, { maxUsdPerDay: 5 });
+    expect(ok.report.endReason).toBe('done');
+    // The survey cap ($1) is the tightest ceiling, so that is what is held.
+    expect(ledger.reservations).toEqual([{ initiativeId: 'mine', reserveUsd: 1 }]);
+
+    const { ledger: l2, files: f2 } = setup();
+    l2.refusal.scope = 'global';
+    const { llm, calls } = scriptedLLM([[]], 0.01);
+    await expect(
+      harness({
+        ledger: l2,
+        llm,
+        files: f2,
+        personalityIds: ['product-manager', 'writer'],
+      }).runSurvey('mine'),
+    ).rejects.toThrow(/global day cap/);
+    expect(l2.windows).toHaveLength(0);
+    expect(calls()).toBe(0);
+  });
+});

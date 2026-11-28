@@ -1,15 +1,15 @@
 import type { Constitution, InitiativeStore } from '@ethosagent/types';
 
 /**
- * In-process keyed mutex. A run reads what is left of the day's money before it starts and
- * its spend only lands when its window closes, so two runs sharing a cap (the tick and the CLI
- * in one process, two agent initiatives on the pool) must not overlap. Keys are taken in sorted
- * order, so two runs cannot deadlock.
+ * In-process keyed mutex. A run reads what is left of the day's money before it starts, so two
+ * runs sharing a cap in one process (the tick and a manual run, two agent initiatives on the
+ * pool) must not read at the same time. Keys are taken in sorted order, so two runs cannot
+ * deadlock.
  *
- * Limitation (no enforcer): the lock is per process. The CLI process and the `serve` process
- * each have their own, so a manual run beside the scheduled tick can still read the same
- * remaining money; the overshoot is bounded by one run's cap. A cross-process guard would need
- * a lock row in `initiatives.db`.
+ * This only orders runs inside ONE process. The enforcer across processes (the CLI beside
+ * `ethos serve`) is the reservation `reserveAndOpenWindow` writes in initiatives.db in the
+ * transaction that opens the window (`reserveWindow` in extensions/initiative-store/src/
+ * reservations.ts, pinned by its __tests__/reservations.test.ts).
  */
 export interface KeyedLock {
   run<T>(keys: readonly string[], fn: () => Promise<T>): Promise<T>;
@@ -74,4 +74,19 @@ export function totalsRemainingUsd(input: {
     left = Math.min(left, c.maxUsdPerDay - total);
   }
   return Math.max(0, left);
+}
+
+/** The day's spend of every agent-origin initiative: the pool's spent half. */
+export function agentSpentTodayUsd(
+  store: TotalsStore,
+  personalityIds: readonly string[],
+  day: string,
+): number {
+  let total = 0;
+  for (const id of new Set(personalityIds)) {
+    for (const row of store.list({ personalityId: id })) {
+      if (row.origin === 'agent') total += store.budget(row.id, day).spentUsd;
+    }
+  }
+  return total;
 }

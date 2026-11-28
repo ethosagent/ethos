@@ -2,7 +2,7 @@
 // STRICT; ordered reads tie-break on rowid (never in SELECT *). Timestamps are
 // ISO-8601 UTC strings, so `substr(started, 1, 10)` is the UTC day.
 
-export const INITIATIVE_STORE_SCHEMA_VERSION = 1;
+export const INITIATIVE_STORE_SCHEMA_VERSION = 2;
 
 export const SCHEMA = `
   CREATE TABLE IF NOT EXISTS initiatives (
@@ -35,6 +35,14 @@ export const SCHEMA = `
     kind TEXT NOT NULL CHECK (kind IN ('survey','scan','window','brief')),
     started TEXT NOT NULL, ended TEXT, spent_usd REAL NOT NULL DEFAULT 0,
     tools_used TEXT NOT NULL DEFAULT '[]', reads TEXT NOT NULL DEFAULT '[]', checkpoint TEXT, end_reason TEXT
+  ) STRICT;
+
+  -- Live day-cap reservations, one per open reserved window. The cross-process enforcer of the
+  -- day caps (reservations.ts); version 2. A row past expires_at is dead.
+  CREATE TABLE IF NOT EXISTS window_reservations (
+    window_id TEXT PRIMARY KEY, initiative_id TEXT NOT NULL, personality_id TEXT NOT NULL,
+    pool INTEGER NOT NULL CHECK (pool IN (0,1)), day TEXT NOT NULL, reserved_usd REAL NOT NULL,
+    holder TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS findings (

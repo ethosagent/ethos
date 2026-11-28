@@ -53,10 +53,10 @@ function fakeStore(opts: { seedIdeas?: string[] } = {}) {
   const explorations: ExplorationRow[] = [];
   const windows: Array<{ id: string; kind: WindowKind; closed?: Closed }> = [];
   const store: RunnerStore = {
-    openWindow: (w) => {
+    reserveAndOpenWindow: (w) => {
       const id = `W-${windows.length + 1}`;
       windows.push({ id, kind: w.kind });
-      return id;
+      return { ok: true, windowId: id };
     },
     closeWindow: (id, r) => {
       const w = windows.find((x) => x.id === id);

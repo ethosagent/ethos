@@ -69,6 +69,8 @@ export function planDay(i: PlanDayInput): DayPlan {
 export interface WindowGuard {
   onUsage(costUsd: number): void;
   spentUsd(): number;
+  /** What the day still allows this window: the day remaining less the brief reserve, floored at 0. */
+  dayRemainingUsd(): number;
   /**
    * 'day', 'window' or 'exploration' once aborted, else null. Day wins over window, window over
    * exploration, when more than one is out. A non-finite or
@@ -121,6 +123,7 @@ export function createWindowGuard(caps: WindowCaps, abort: AbortController): Win
       check();
     },
     spentUsd: () => spent,
+    dayRemainingUsd: () => Math.max(0, dayUsableUsd),
     endReason: () => reason,
   };
 }

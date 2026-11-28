@@ -47,6 +47,7 @@ describe('SQLiteInitiativeStore: schema', () => {
       'ideas',
       'initiatives',
       'questions',
+      'window_reservations',
       'windows',
     ]);
     for (const t of tables) expect(t.sql.trimEnd(), t.name).toMatch(/\)\s*STRICT$/);

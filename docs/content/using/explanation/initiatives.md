@@ -57,7 +57,6 @@ These are limits, not guarantees. Each has no enforcer unless one is named.
 | Limit | Detail |
 |---|---|
 | Per-call tools are unmetered | Only model `usage` events count toward the window guard. Tools that bill per call (`engine_ask`, `x_search`, search providers) report no cost, so their spend is not charged to the window or the day. The loop's per-turn tool budget bounds calls, not dollars. |
-| Cross-process cap race | The keyed lock in `day-caps.ts` is per process. A CLI `run` beside `ethos serve` can read the same remaining money. Overshoot is bounded by one run's cap. |
 | Declared secrets are allowed | Any exact secret reference a read tool declares in `capabilities.secrets` is allowed to it. Nothing checks that the tool uses it for its own provider. |
 | Self-started resumes as active | After a switch-off and back on, a self-started initiative returns as `active`, because `paused` to `self_started` is not an allowed move. |
 | Stopped-topic match is narrow | A draft is refused as a repeat of a stopped initiative only by id or by identical normalised title. A reworded draft passes. |

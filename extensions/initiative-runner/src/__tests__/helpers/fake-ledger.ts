@@ -74,6 +74,10 @@ export function fakeLedger() {
   const findings: FindingRow[] = [];
   const briefs: BriefRow[] = [];
   const windows: FakeWindow[] = [];
+  const reservations: Array<{ initiativeId: string; reserveUsd: number }> = [];
+  const refusal: { scope: 'initiative' | 'personality' | 'global' | 'pool' | null } = {
+    scope: null,
+  };
   const drafts: DraftRow[] = [];
   const caps = new Map<string, number>();
   const transitions: Array<{ id: string; to: string; why: string }> = [];
@@ -101,6 +105,8 @@ export function fakeLedger() {
     findings,
     briefs,
     windows,
+    reservations,
+    refusal,
     draftRows: drafts,
     caps,
     transitions,
@@ -146,6 +152,16 @@ export function fakeLedger() {
       const id = `W-${windows.length + 1}`;
       windows.push({ id, ...w, day: NOW.toISOString().slice(0, 10), spentUsd: 0, endReason: null });
       return id;
+    },
+    reserveAndOpenWindow(w: {
+      initiativeId: string;
+      explorationId: string | null;
+      kind: WindowKind;
+      reserveUsd: number;
+    }) {
+      if (refusal.scope) return { ok: false as const, scope: refusal.scope, leftUsd: 0.1 };
+      reservations.push({ initiativeId: w.initiativeId, reserveUsd: w.reserveUsd });
+      return { ok: true as const, windowId: ledger.openWindow(w) };
     },
     closeWindow(id: string, r: { spentUsd: number; endReason: string }) {
       const w = windows.find((x) => x.id === id);

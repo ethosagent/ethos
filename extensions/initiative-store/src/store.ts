@@ -22,10 +22,13 @@ import {
   type InitiativeVerdict,
   type QuestionRow,
   type WindowKind,
+  type WindowReservationRequest,
+  type WindowReservationResult,
   type WindowRow,
 } from '@ethosagent/types';
 import { selectDrafts, settleDraftRow } from './drafts';
 import { clampExplorationBudget, extendExplorationRow, reactionClockRow } from './lifecycle';
+import { releaseWindow, reserveWindow } from './reservations';
 import {
   type BriefDbRow,
   clip,
@@ -560,6 +563,33 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   }
 
   /**
+   * Opens a window and reserves its ceiling against the day caps in one transaction
+   * (reservations.ts). A refusal writes nothing.
+   */
+  reserveAndOpenWindow(w: WindowReservationRequest): WindowReservationResult {
+    return this.write(() => {
+      const id = this.nextId('windows', 'W-');
+      const refused = reserveWindow(
+        this.db,
+        { ...w },
+        {
+          windowId: id,
+          initiativeCap: this.capFor(w.initiativeId),
+          nowMs: this.now(),
+          holder: `pid:${process.pid}`,
+        },
+      );
+      if (refused) return refused;
+      this.db
+        .prepare(
+          `INSERT INTO windows (id, initiative_id, exploration_id, kind, started) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(id, w.initiativeId, w.explorationId, w.kind, this.iso());
+      return { ok: true as const, windowId: id };
+    });
+  }
+
+  /**
    * Closes an open window and, in the same transaction, adds its spend to its
    * exploration. A missing or already-closed window throws, so spend is never
    * counted twice.
@@ -598,6 +628,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
           details: { windowId: id },
         });
       }
+      releaseWindow(this.db, id);
       const win = this.db.prepare('SELECT exploration_id FROM windows WHERE id = ?').get(id) as {
         exploration_id: string | null;
       };

@@ -24,7 +24,7 @@ import {
 } from './autonomy';
 import { createWindowGuard } from './budget';
 import type { InitiativeFile } from './config-schema';
-import { createKeyedLock, totalsRemainingUsd } from './day-caps';
+import { agentSpentTodayUsd, createKeyedLock, totalsRemainingUsd } from './day-caps';
 import { briefWindowPrompt, scanPrompt, surveyPrompt, windowPrompt } from './prompts';
 import { createReadOnlyLoop, createReadOnlyLoopParts, readOnlyRunOptions } from './run-loop';
 import {
@@ -41,10 +41,13 @@ export const SURVEY_CAP_USD = 1;
 /** Abort when a cap has less than this left: the in-flight call finishes, so overshoot is at most one call (R10). */
 export const PER_CALL_RESERVE_USD = 0.05;
 
+/** A window's reservation dies after this, so a crashed run cannot hold the day's money for ever. Estimate: a run is bounded by its caps, not by time, and takes minutes. */
+export const RESERVATION_TTL_MS = 2 * 60 * 60 * 1000;
+
 /** What a run calls on the store. A subset of the contract; no decision writer, no config writer. */
 export type RunnerStore = Pick<
   InitiativeStore,
-  | 'openWindow'
+  | 'reserveAndOpenWindow'
   | 'closeWindow'
   | 'getInitiative'
   | 'getExploration'
@@ -192,7 +195,9 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     const { initiativeId } = input;
     // Remaining money is read once and spent only when the window closes, so runs that share a
     // cap run one at a time in this process: the initiative's own, the agent pool, and (when the
-    // constitution sets a total) the day totals. Cross-process stays a limitation (day-caps.ts).
+    // constitution sets a total) the day totals. That lock only orders runs inside one process;
+    // across processes the enforcer is the reservation `reserveAndOpenWindow` takes in
+    // initiatives.db (initiative-store/src/reservations.ts).
     const c = (await readConstitution?.())?.initiatives;
     const keys = [
       `i:${initiativeId}`,
@@ -343,11 +348,54 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         allowed: new Set(runToolset),
       }),
     );
-    const windowId = deps.store.openWindow({
+    // The most this window may spend: the smaller of what its guard allows (day less the brief
+    // reserve), its own cap and its exploration. It is held in initiatives.db beside the window
+    // row, so a run in another process cannot spend the same dollars (reservations.ts).
+    const reserveUsd = Math.max(
+      0,
+      Math.min(
+        guard.dayRemainingUsd(),
+        kind === 'window' && input.capUsd !== undefined ? input.capUsd : Number.POSITIVE_INFINITY,
+        explorationRemainingUsd,
+      ),
+    );
+    const reserved = deps.store.reserveAndOpenWindow({
       initiativeId,
       explorationId: exploration?.id ?? null,
       kind,
+      personalityId,
+      origin: file.origin,
+      reserveUsd,
+      ttlMs: RESERVATION_TTL_MS,
+      caps: {
+        ...(constitution?.maxUsdPerDayPerPersonality !== undefined
+          ? { personalityUsd: constitution.maxUsdPerDayPerPersonality }
+          : {}),
+        ...(constitution?.maxUsdPerDay !== undefined
+          ? { globalUsd: constitution.maxUsdPerDay }
+          : {}),
+        ...(Number.isFinite(poolLeft)
+          ? {
+              poolUsd:
+                poolLeft +
+                agentSpentTodayUsd(
+                  deps.store,
+                  deps.personalities.list().map((p) => p.id),
+                  day,
+                ),
+            }
+          : {}),
+      },
     });
+    if (!reserved.ok) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `initiative "${initiativeId}" cannot start: the ${reserved.scope} day cap has $${reserved.leftUsd.toFixed(2)} left after other runs' reservations, less than the $${reserveUsd.toFixed(2)} this run may spend`,
+        action:
+          'Wait for the other run (the scheduled tick or a manual one) to finish, or raise the cap.',
+      });
+    }
+    const windowId = reserved.windowId;
 
     // Limitation (no enforcer): only LLM `usage` events are metered. Tools that bill per call
     // (engine_ask, x_search, search providers) report no cost in `ToolResult`, and the run loop
