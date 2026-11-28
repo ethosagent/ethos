@@ -24,5 +24,9 @@
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@ethosagent/tools-world": "workspace:*",
+    "@ethosagent/world-service": "workspace:*"
   }
 }
