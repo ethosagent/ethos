@@ -365,3 +365,14 @@ export function renderCardForTelegram(card: CardEnvelope, opts: RenderOptions = 
 export function renderSettledChoice(question: string | undefined, label: string): string {
   return `${escapeHtml(question ?? 'Next?')}\n→ ${escapeHtml(label)}`;
 }
+
+/** A rendered HTML chunk as plain text, for the D18 fallback when Telegram rejects the markup. */
+export function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, '&');
+}
