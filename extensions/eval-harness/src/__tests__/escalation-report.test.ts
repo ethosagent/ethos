@@ -143,7 +143,7 @@ describe('summarizeEscalations', () => {
       tasks: 0,
       escalatedTasks: 0,
       escalations: 0,
-      escalationRate: 0,
+      escalationRate: null,
       passRateEscalated: null,
       passRateNot: null,
       costPerPassUsd: null,

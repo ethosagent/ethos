@@ -176,6 +176,9 @@ export class EvalRunner {
           case 'tier_escalation':
             escalations += 1;
             break;
+          default:
+            // Forward-compat: unknown AgentEvent variants are a no-op.
+            break;
         }
       }
     } catch (err) {

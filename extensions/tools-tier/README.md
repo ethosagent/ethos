@@ -25,3 +25,5 @@ pnpm vitest run extensions/tools-tier
 Pinning test: `src/__tests__/think-deeper.test.ts` holds the success value containing the reason and the tool metadata.
 
 Switch pinning test: `packages/core/src/__tests__/model-tier.test.ts` (`think_deeper escalation`, `think_deeper round trip`) holds the fast, deep, fast round trip.
+
+Limits: core caps escalations at 2 per turn and 10 per session (`packages/core/src/agent-loop/tier-escalation.ts`). The session count includes successful `think_deeper` calls even when `deep` did not resolve, and `/budget reset` also resets it. Round trip with the real tool: `src/__tests__/round-trip.test.ts`.

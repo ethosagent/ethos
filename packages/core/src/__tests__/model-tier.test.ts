@@ -26,6 +26,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
+import { ChainedProvider, tagProviderEntry } from '../providers/chained-provider';
 import { DefaultToolRegistry } from '../tool-registry';
 import { createTestSafety } from './helpers/test-safety';
 
@@ -461,7 +462,8 @@ describe('think_deeper escalation', () => {
 // call by call. The flag is SET in `tool-processing.ts` and CONSUMED in
 // `stream-step.ts` (`describe('think_deeper escalation')` above pins call 2;
 // this pins calls 3 and 4 too).
-type ScriptStep = { tool: 'think_deeper' | 'noop'; args?: Record<string, unknown> } | 'text';
+type ScriptCall = { tool: 'think_deeper' | 'noop'; args?: Record<string, unknown> };
+type ScriptStep = ScriptCall | { batch: ScriptCall[] } | 'text';
 
 function noopTool(): Tool {
   return {
@@ -492,11 +494,12 @@ function scriptedLLM(
   script: ScriptStep[],
   onComplete: (opts: CompletionOptions) => void,
   usageCost?: (call: number) => number,
+  model = 'base-model',
 ): LLMProvider {
   let call = 0;
   return {
     name: 'mock',
-    model: 'base-model',
+    model,
     maxContextTokens: 200_000,
     supportsCaching: false,
     supportsThinking: false,
@@ -525,11 +528,14 @@ function scriptedLLM(
         yield { type: 'done', finishReason: 'end_turn' };
         return;
       }
-      const id = `tc${call}`;
-      const json = JSON.stringify(step.args ?? {});
-      yield { type: 'tool_use_start', toolCallId: id, toolName: step.tool };
-      yield { type: 'tool_use_delta', toolCallId: id, partialJson: json };
-      yield { type: 'tool_use_end', toolCallId: id, inputJson: json };
+      const calls = 'batch' in step ? step.batch : [step];
+      for (const [i, c] of calls.entries()) {
+        const id = `tc${call}-${i}`;
+        const json = JSON.stringify(c.args ?? {});
+        yield { type: 'tool_use_start', toolCallId: id, toolName: c.tool };
+        yield { type: 'tool_use_delta', toolCallId: id, partialJson: json };
+        yield { type: 'tool_use_end', toolCallId: id, inputJson: json };
+      }
       yield { type: 'done', finishReason: 'tool_use' };
     },
     async countTokens() {
@@ -721,6 +727,41 @@ describe('tier_escalation event', () => {
     expect(escalationsOf(events)).toHaveLength(0);
   });
 
+  it('names the served model when deep maps to a non-primary chain entry', async () => {
+    const codexCalls = vi.fn();
+    const qwenCalls = vi.fn();
+    const codex = scriptedLLM(
+      [{ tool: 'think_deeper', args: { reason: 'hard' } }, 'text'],
+      codexCalls,
+      undefined,
+      'gpt-5.6-terra',
+    );
+    const qwen = scriptedLLM(['text'], qwenCalls, undefined, 'qwen3.8-flash-next');
+    const chainRegistry: ModelRegistry = {
+      entries: {
+        terra: { alias: 'terra', provider: 'codex', modelId: 'gpt-5.6-terra' },
+        qwen: { alias: 'qwen', provider: 'compat', modelId: 'qwen3.8-flash-next' },
+      },
+      default: 'terra',
+      roles: {},
+    };
+    // The personality NAMES deep, so the escalation is pinned to that entry.
+    const loop = scriptedLoop(
+      new ChainedProvider([tagProviderEntry(codex, 'codex'), tagProviderEntry(qwen, 'compat')]),
+      { ...ESCALATING, model: { default: 'terra', deep: 'qwen' } },
+      ctx({ registry: chainRegistry }),
+    );
+
+    const events = await collect(loop.run('hi', { personalityId: 'esc' }));
+
+    // The escalated call really went to the qwen hop...
+    expect(qwenCalls).toHaveBeenCalledTimes(1);
+    // ...so the user is told, and told the model that served it.
+    const found = escalationsOf(events);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.model).toBe('qwen3.8-flash-next');
+  });
+
   it('records the cleaned reason in the observability row', async () => {
     const recorded = vi.fn();
     const llm = scriptedLLM(
@@ -781,39 +822,22 @@ describe('escalation caps', () => {
   });
 
   it('counts one escalation per batch', async () => {
-    // Two think_deeper calls in ONE response: the setter breaks on the first.
-    let call = 0;
-    const onComplete = vi.fn();
-    const base = scriptedLLM(['text'], onComplete);
-    const llm: LLMProvider = {
-      ...base,
-      async *complete(messages, tools, opts) {
-        call += 1;
-        if (call === 1) {
-          onComplete(opts);
-          for (const id of ['t1', 't2']) {
-            const json = JSON.stringify({ reason: id });
-            yield { type: 'tool_use_start', toolCallId: id, toolName: 'think_deeper' };
-            yield { type: 'tool_use_delta', toolCallId: id, partialJson: json };
-            yield { type: 'tool_use_end', toolCallId: id, inputJson: json };
-          }
-          yield { type: 'done', finishReason: 'tool_use' };
-          return;
-        }
-        // Calls 2+ delegate to a text answer.
-        yield* base.complete(messages, tools, opts);
-      },
-    };
+    // Two think_deeper calls in ONE response count once (perTurn 1, not 2): a
+    // third is still allowed, and only the fourth is refused.
+    const llm = scriptedLLM(
+      [{ batch: [td('a'), td('b')] }, td('c'), td('d'), { tool: 'noop' }, 'text'],
+      vi.fn(),
+    );
     const loop = scriptedLoop(llm, ESCALATING);
 
     const events = await collect(loop.run('hi', { personalityId: 'esc' }));
 
-    expect(escalationsOf(events)).toHaveLength(1);
-    // A second think_deeper turn would still be allowed: the batch counted once.
-    const again = scriptedLLM([td('x'), td('y'), 'text'], vi.fn());
-    const loop2 = scriptedLoop(again, ESCALATING);
-    const events2 = await collect(loop2.run('hi', { personalityId: 'esc' }));
-    expect(escalationsOf(events2)).toHaveLength(2);
+    expect(escalationsOf(events)).toHaveLength(2);
+    const ends = events.filter(
+      (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>
+        e.type === 'tool_end' && e.toolName === 'think_deeper',
+    );
+    expect(ends.map((e) => e.ok)).toEqual([true, true, true, false]);
   });
 
   it('counts per session across runs, resets with resetSessionCost, and is per sessionKey', async () => {
@@ -845,19 +869,34 @@ describe('escalation caps', () => {
     expect(escalationsOf(await run('s1'))).toHaveLength(1);
   });
 
-  it('a rejected call does not count and does not trip the denial streak', async () => {
-    const llm = scriptedLLM(
-      [td('a'), td('b'), td('c'), td('d'), td('e'), { tool: 'noop' }, 'text'],
-      vi.fn(),
-    );
+  it('a rejected call does not count against the session or trip the denial streak', async () => {
+    // Run 1: two escalations, then three refusals in a row (they would trip
+    // MAX_CONSECUTIVE_DENIALS if they counted as denials).
+    const script: ScriptStep[] = [
+      td('a'),
+      td('b'),
+      td('c'),
+      td('d'),
+      td('e'),
+      { tool: 'noop' },
+      'text',
+      // Runs 2-9: one escalation each (2 + 8 = 10); run 10 is refused.
+      ...Array.from({ length: 9 }, () => [td('x'), 'text'] as ScriptStep[]).flat(),
+    ];
+    const llm = scriptedLLM(script, vi.fn());
     const loop = scriptedLoop(llm, ESCALATING);
+    const run = (): Promise<AgentEvent[]> =>
+      collect(loop.run('hi', { personalityId: 'esc', sessionKey: 'rej' }));
 
-    const events = await collect(loop.run('hi', { personalityId: 'esc' }));
+    const first = await run();
+    expect(first.some((e) => e.type === 'halt')).toBe(false);
+    expect(first.find((e) => e.type === 'done')).toBeDefined();
+    expect(escalationsOf(first)).toHaveLength(2);
 
-    // Three rejections in a row would trip MAX_CONSECUTIVE_DENIALS if they counted.
-    expect(events.some((e) => e.type === 'halt')).toBe(false);
-    expect(events.find((e) => e.type === 'done')).toBeDefined();
-    expect(escalationsOf(events)).toHaveLength(2);
+    // The three refusals did not count: eight more escalations still fit.
+    for (let i = 0; i < 8; i++) expect(escalationsOf(await run())).toHaveLength(1);
+    // 2 + 8 = 10: the next one is refused.
+    expect(escalationsOf(await run())).toHaveLength(0);
   });
 });
 

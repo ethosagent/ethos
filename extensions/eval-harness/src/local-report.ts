@@ -107,8 +107,8 @@ export interface EscalationSummary {
   escalatedTasks: number;
   /** Escalations across all tasks. */
   escalations: number;
-  /** escalatedTasks / tasks; 0 with no tasks. */
-  escalationRate: number;
+  /** escalatedTasks / tasks; null with no tasks. */
+  escalationRate: number | null;
   /** Pass rate among escalated tasks; null when none escalated. */
   passRateEscalated: number | null;
   /** Pass rate among tasks that never escalated; null when all did. */
@@ -148,7 +148,7 @@ export function summarizeEscalations(records: EscalationRecord[]): EscalationSum
     tasks: records.length,
     escalatedTasks,
     escalations,
-    escalationRate: records.length > 0 ? escalatedTasks / records.length : 0,
+    escalationRate: records.length > 0 ? escalatedTasks / records.length : null,
     passRateEscalated: escalatedTasks > 0 ? escalatedPassed / escalatedTasks : null,
     passRateNot: plainTasks > 0 ? plainPassed / plainTasks : null,
     costPerPassUsd: passed > 0 ? costUsd / passed : null,

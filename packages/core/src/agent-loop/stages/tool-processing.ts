@@ -32,7 +32,7 @@ import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
 import { drainSteerEntries, persistSteer, type SteerVision, steerContentBlocks } from '../steer';
-import { escalationCapMessage, recordEscalation, type TierEscalationRef } from '../tier-escalation';
+import { recordEscalation, type TierEscalationRef } from '../tier-escalation';
 import { toolCostFields } from '../tool-cost';
 import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';

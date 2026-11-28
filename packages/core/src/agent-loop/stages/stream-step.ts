@@ -329,7 +329,7 @@ export async function* streamStep(
     const route = escalated.ok
       ? routeTurnModel(deps.llm, escalated, deps.modelResolution)
       : undefined;
-    if (route?.ok) {
+    if (escalated.ok && route?.ok) {
       iterModelOverride = route.modelOverride;
       iterProviderEntry = route.providerEntry;
       // The escalated alias's effort, or none — never the turn's alias's effort
@@ -343,12 +343,16 @@ export async function* streamStep(
         ...(escalationReasonText ? { detail: escalationReasonText } : {}),
         personalityId: ctx.personality.id,
       });
-      // Tell the user only when the served model really changes (a `/tier deep`
-      // turn escalating to deep serves the same model). Pinned by
-      // `tier_escalation event` in `__tests__/model-tier.test.ts`.
-      const servedBefore = ctx.modelOverride ?? deps.llm.model;
-      const servedAfter = route.modelOverride ?? deps.llm.model;
-      if (servedAfter !== servedBefore) {
+      // Tell the user only when what serves the call really changes: the
+      // resolved model, or the provider entry it is scoped to (on a chain a
+      // non-primary entry's own model carries no `modelOverride`). The model
+      // named is the resolved one (`escalated.model`), not the override.
+      // Pinned by `tier_escalation event` in `__tests__/model-tier.test.ts`.
+      const servedAfter = escalated.model;
+      const servedBefore = ctx.effectiveModel;
+      const changed =
+        servedAfter !== servedBefore || route.providerEntry?.key !== ctx.providerEntry?.key;
+      if (changed) {
         yield {
           type: 'tier_escalation',
           from: ctx.activeTier,
