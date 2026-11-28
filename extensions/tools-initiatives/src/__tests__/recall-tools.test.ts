@@ -8,7 +8,7 @@ import type {
   ToolContext,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createInitiativeRecallTools } from '../recall-tools';
+import { createChatInitiativeRecallTools, createInitiativeRecallTools } from '../recall-tools';
 
 const row = (over: Partial<InitiativeRow> = {}): InitiativeRow => ({
   id: 'ini-1',
@@ -145,5 +145,44 @@ describe('recall tools', () => {
     expect(port.search).toHaveBeenCalledWith('eng', 'prices', expect.any(Number));
     const get = runTools.find((x) => x.name === 'initiative_get');
     expect((await get?.execute({ id: 'other' }, ctx('shared')))?.ok).toBe(false);
+  });
+});
+
+describe('chat recall tools', () => {
+  const pctx = (personalityId?: string, audience?: 'private' | 'shared'): ToolContext =>
+    ({
+      sessionId: 's',
+      sessionKey: 'k',
+      ...(personalityId ? { personalityId } : {}),
+      ...(audience ? { roomAudience: audience } : {}),
+    }) as ToolContext;
+
+  it('scopes every call to ctx.personalityId, so A cannot see B', async () => {
+    const { port } = setup();
+    const chat = createChatInitiativeRecallTools(port);
+    const get = chat.find((x) => x.name === 'initiative_get') as Tool;
+    const list = chat.find((x) => x.name === 'initiative_list') as Tool;
+    const search = chat.find((x) => x.name === 'initiative_search') as Tool;
+    expect(chat.every((t) => t.alwaysInclude === true)).toBe(true);
+
+    await list.execute({}, pctx('alice', 'private'));
+    expect(port.list).toHaveBeenCalledWith({ personalityId: 'alice' });
+    await search.execute({ query: 'x' }, pctx('bob', 'private'));
+    expect(port.search).toHaveBeenCalledWith('bob', 'x', expect.any(Number));
+    // ini-1 belongs to 'eng': any other personality gets not-found
+    expect((await get.execute({ id: 'ini-1' }, pctx('alice', 'private'))).ok).toBe(false);
+    expect((await get.execute({ id: 'ini-1' }, pctx('eng', 'private'))).ok).toBe(true);
+  });
+
+  it('refuses without a personality and in a shared room', async () => {
+    const { port } = setup();
+    for (const tool of createChatInitiativeRecallTools(port)) {
+      const args = tool.name === 'initiative_list' ? {} : { query: 'x', id: 'ini-1' };
+      expect((await tool.execute(args, pctx(undefined, 'private'))).ok).toBe(false);
+      expect((await tool.execute(args, pctx('eng', 'shared'))).ok).toBe(false);
+    }
+    expect(port.list).not.toHaveBeenCalled();
+    expect(port.search).not.toHaveBeenCalled();
+    expect(port.get).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,5 @@
+export type { DayPlan, PlanDayInput, WindowGuard } from './budget';
+export { createWindowGuard, planDay } from './budget';
 export { assertReadOnlyCapabilities } from './capability-audit';
 export {
   effectiveEnabled,
@@ -13,6 +15,12 @@ export {
 } from './config-schema';
 export { InitiativeConfigService, type InitiativeConfigServiceDeps } from './config-service';
 export { type GuidanceLevel, mapGuidance, mergeGuidance } from './guidance';
+export {
+  INITIATIVE_INDEX_HEADER,
+  INITIATIVE_INDEX_PRIORITY,
+  InitiativeIndexInjector,
+  type InitiativeIndexInjectorDeps,
+} from './index-injector';
 export {
   createReadOnlyLoop,
   createReadOnlyLoopParts,

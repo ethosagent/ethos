@@ -1,10 +1,14 @@
 import type { ToolSettingsMap } from '@ethosagent/config';
+import { loadConstitution } from '@ethosagent/constitution';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   assertReadOnlyCapabilities,
+  effectiveEnabled,
+  loadInitiativeSettings,
   readOnlyCapabilityBackends,
   runToolNames,
 } from '@ethosagent/initiative-runner';
+import { initiativesDbPath, SQLiteInitiativeStore } from '@ethosagent/initiative-store';
 import type { KanbanStore } from '@ethosagent/kanban-store';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
 import { defaultAlwaysDeny } from '@ethosagent/storage-fs';
@@ -29,9 +33,11 @@ import {
 import { createWebTools } from '@ethosagent/tools-web';
 import { createXSearchTool } from '@ethosagent/tools-x-search';
 import type {
+  Constitution,
   GoalStore,
   InitiativeLedgerPort,
   InitiativeRecallPort,
+  InitiativeStore,
   MemoryProvider,
   PersonalityConfig,
   SecretRef,
@@ -192,4 +198,139 @@ export function buildReadOnlyRegistry(input: {
     pluginId: registry.getPluginId(name),
   }));
   return registry;
+}
+
+/**
+ * The constitution as the initiative engine reads it. A malformed constitution means SAFE
+ * MODE (build-infrastructure.ts), so the engine is switched off rather than guessed at.
+ */
+export async function readInitiativeConstitution(
+  storage: Storage,
+  dataDir: string,
+): Promise<Constitution> {
+  const load = await loadConstitution(storage, dataDir);
+  return load.status === 'malformed' ? { initiatives: { enabled: false } } : load.constitution;
+}
+
+/**
+ * Whether each personality takes initiatives: `effectiveEnabled(settings.yaml, constitution)`,
+ * cached so `buildPersonalityToolExclude` (synchronous, called every turn) returns the same
+ * answer on every turn. The cache changes only through `reload(id)`.
+ *
+ * Limitations (written down, not enforced): `reload` has no production caller until the
+ * Phase 6 web-api `InitiativesService`, so until then a settings toggle applies at restart;
+ * runs re-read settings each tick (Task 5.5). `isEnabled` is synchronous and storage is not,
+ * so a personality absent from the cache (created after compose) cannot be resolved on its
+ * first ask; it answers on (the settings default when no settings.yaml exists) until a
+ * `reload(id)` reads its file. The kill switch is always honoured.
+ */
+export interface InitiativeEnablement {
+  isEnabled(personalityId: string): boolean;
+  /** Re-read one personality's settings.yaml and the constitution; no id re-reads every known personality. */
+  reload(personalityId?: string): Promise<void>;
+}
+
+export async function createInitiativeEnablement(deps: {
+  storage: Storage;
+  dataDir: string;
+  personalityIds: () => readonly string[];
+  constitution?: () => Promise<Constitution>;
+  /** Receives the reason a settings.yaml was invalid (that personality is paused). */
+  log?: { warn(message: string): void };
+}): Promise<InitiativeEnablement> {
+  const readConstitution =
+    deps.constitution ?? (() => readInitiativeConstitution(deps.storage, deps.dataDir));
+  const enabled = new Map<string, boolean>();
+  let killSwitch = false;
+  const refresh = async (ids: readonly string[]): Promise<void> => {
+    const constitution = await readConstitution();
+    for (const id of ids) {
+      const load = await loadInitiativeSettings(deps.storage, deps.dataDir, id);
+      if (load.status === 'invalid') {
+        deps.log?.warn(`initiatives paused for '${id}': invalid settings.yaml (${load.reason})`);
+      }
+      enabled.set(id, effectiveEnabled(load.settings, constitution));
+    }
+    killSwitch = constitution.initiatives?.enabled === false;
+  };
+  await refresh(deps.personalityIds());
+  return {
+    isEnabled: (id) => !killSwitch && (enabled.get(id) ?? true),
+    reload: async (id) => {
+      const known =
+        id === undefined ? [...new Set([...enabled.keys(), ...deps.personalityIds()])] : [id];
+      await refresh(known);
+    },
+  };
+}
+
+/** A ledger handle that opens `initiatives.db` on first use. */
+export interface LazyInitiativeStore {
+  /** Every call opens the db on first use; a user who never reaches one never gets the file. */
+  store: InitiativeStore;
+  /** Only the `InitiativeLedgerPort` methods, for tools; same lazy open. */
+  ledger: InitiativeLedgerPort;
+  /** Only list/search/get, for recall tools; same lazy open. */
+  recall: InitiativeRecallPort;
+  /** True when the ledger exists (already opened, or the file is on disk). Never creates it. */
+  ready(): Promise<boolean>;
+  /** A no-op until the db has been opened. */
+  close(): void;
+}
+
+/**
+ * `initiatives.db` is created by the first call through `store` (an initiative saved, an idea
+ * added, a ledger read by a tool), never at compose time. Chat turns that only need the index
+ * check `ready()` first, so a user who never uses the feature spends $0 and gets no file.
+ * Pinned by `__tests__/initiative-lazy-store.test.ts`.
+ */
+export function createLazyInitiativeStore(deps: {
+  storage: Storage;
+  dataDir: string;
+  capFor?: (initiativeId: string) => number;
+}): LazyInitiativeStore {
+  const path = initiativesDbPath(deps.dataDir);
+  let opened: SQLiteInitiativeStore | undefined;
+  const open = (): SQLiteInitiativeStore => {
+    opened ??= new SQLiteInitiativeStore(path, deps.capFor ? { capFor: deps.capFor } : {});
+    return opened;
+  };
+  const ledger: InitiativeLedgerPort = {
+    addIdea: (i) => open().addIdea(i),
+    propose: (p) => open().propose(p),
+    proposeInitiativeDraft: (d) => open().proposeInitiativeDraft(d),
+    addFinding: (f) => open().addFinding(f),
+    submitBrief: (b) => open().submitBrief(b),
+    addQuestion: (q) => open().addQuestion(q),
+    ideas: (id) => open().ideas(id),
+    budget: (id, day) => open().budget(id, day),
+    ownerOf: (kind, id) => open().ownerOf(kind, id),
+  };
+  const recall: InitiativeRecallPort = {
+    list: (f) => open().list(f),
+    search: (pid, q, limit) => open().search(pid, q, limit),
+    get: (id) => open().get(id),
+  };
+  const store: InitiativeStore = {
+    ...ledger,
+    ...recall,
+    transitionInitiative: (id, to, why) => open().transitionInitiative(id, to, why),
+    transitionExploration: (id, to, why) => open().transitionExploration(id, to, why),
+    recordDecision: (d) => open().recordDecision(d),
+    upsertInitiative: (row) => open().upsertInitiative(row),
+    appendConfigVersion: (v) => open().appendConfigVersion(v),
+    openWindow: (w) => open().openWindow(w),
+    closeWindow: (id, r) => open().closeWindow(id, r),
+    getInitiative: (id) => open().getInitiative(id),
+    getExploration: (id) => open().getExploration(id),
+    explorations: (id, states) => open().explorations(id, states),
+    indexLines: (pid, max) => open().indexLines(pid, max),
+  };
+  return {
+    store,
+    ledger,
+    recall,
+    ready: async () => opened !== undefined || (await deps.storage.exists(path)),
+    close: () => opened?.close(),
+  };
 }

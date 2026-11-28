@@ -314,8 +314,15 @@ export async function buildAgentLoop(
   const { dataDir, log } = wiringCtx;
   const { infra, toolsResult, pluginsResult, llm, profile, disposers, usageMeter } = deps;
   const { memoryProviders, personalities, hooks, sessionCompose, tools } = infra;
-  const { gatewaySendRef, goalStore, goalRunnerRef, injectors, mcpManager, skillsInjector } =
-    toolsResult;
+  const {
+    gatewaySendRef,
+    goalStore,
+    goalRunnerRef,
+    initiativeEnablement,
+    injectors,
+    mcpManager,
+    skillsInjector,
+  } = toolsResult;
   const {
     pluginLoader,
     pluginRegistries,
@@ -773,10 +780,10 @@ export async function buildAgentLoop(
         };
       })()
     : undefined;
-  const personalityToolExclude = buildPersonalityToolExclude(
-    decisions,
-    config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : undefined,
-  );
+  const personalityToolExclude = buildPersonalityToolExclude(decisions, {
+    ...(config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : {}),
+    initiatives: initiativeEnablement,
+  });
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
   const tierRouter = decisionSites?.tierRouter;

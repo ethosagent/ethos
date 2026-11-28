@@ -2967,6 +2967,9 @@ importers:
       '@ethosagent/initiative-runner':
         specifier: workspace:*
         version: link:../../extensions/initiative-runner
+      '@ethosagent/initiative-store':
+        specifier: workspace:*
+        version: link:../../extensions/initiative-store
       '@ethosagent/job-runner':
         specifier: workspace:*
         version: link:../../extensions/job-runner

@@ -149,7 +149,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
     - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 664, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 671, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 136, contains: "export function checkMessage" }
@@ -177,7 +177,7 @@ register_anchors:
     - { path: packages/storage-fs/src/scoped-storage.ts, line: 334, contains: "this.hitsDenyWhen(next, kind)" }
 
   G-INIT-RO:
-    - { path: packages/wiring/src/initiatives.ts, line: 157, contains: "export function buildReadOnlyRegistry" }
+    - { path: packages/wiring/src/initiatives.ts, line: 163, contains: "export function buildReadOnlyRegistry" }
     - { path: extensions/initiative-runner/src/capability-audit.ts, line: 28, contains: "export function assertReadOnlyCapabilities" }
     - { path: extensions/initiative-runner/src/tool-gate.ts, line: 10, contains: "export function createInitiativeToolGate" }
 

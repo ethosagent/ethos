@@ -21,6 +21,9 @@ const SEARCH_LIMIT_MAX = 25;
 /** Ledger content comes from private runs and chats; a shared room gets none of it. */
 const SHARED_REFUSAL = 'the initiative ledger is not shown in shared rooms';
 
+/** A chat call carries its personality in the context; without one there is no scope to read. */
+const NO_PERSONALITY_REFUSAL = 'no personality in this context; cannot scope the initiative ledger';
+
 function isState(v: unknown): v is InitiativeState {
   return typeof v === 'string' && (STATES as readonly string[]).includes(v);
 }
@@ -54,8 +57,28 @@ export function createInitiativeRecallTools(
   // A run is incognito, so its audience resolves 'shared' although it is a private owner
   // turn; only the run registry factory (wiring initiatives.ts) passes surface 'run'.
   // Both surfaces stay scoped to `personalityId`.
-  const sharedRoom = (ctx: ToolContext): boolean =>
-    opts.surface !== 'run' && ctx.roomAudience === 'shared';
+  return buildRecallTools(port, () => personalityId, opts.surface === 'run');
+}
+
+/**
+ * The chat registry holds one set of recall tools for every personality, so the scope comes
+ * from `ctx.personalityId` at execute time; a call without one is refused. Shared rooms are
+ * refused. The run registry keeps the bound variant above.
+ */
+export function createChatInitiativeRecallTools(port: InitiativeRecallPort): Tool[] {
+  // alwaysInclude like initiative_define: a personality's own toolset must not hide them.
+  return buildRecallTools(port, (ctx) => ctx.personalityId, false).map((t) => ({
+    ...t,
+    alwaysInclude: true,
+  }));
+}
+
+function buildRecallTools(
+  port: InitiativeRecallPort,
+  scopeOf: (ctx: ToolContext) => string | undefined,
+  isRun: boolean,
+): Tool[] {
+  const sharedRoom = (ctx: ToolContext): boolean => !isRun && ctx.roomAudience === 'shared';
   const list: Tool = {
     ...baseTool('initiative_list', "List this personality's initiatives, optionally by state.", {
       type: 'object',
@@ -63,6 +86,8 @@ export function createInitiativeRecallTools(
     }),
     async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
       if (sharedRoom(ctx)) return refused(SHARED_REFUSAL);
+      const personalityId = scopeOf(ctx);
+      if (personalityId === undefined) return refused(NO_PERSONALITY_REFUSAL);
       const a = argsRecord(args ?? {});
       if (failed(a)) return a;
       let states: InitiativeState[] | undefined;
@@ -93,6 +118,8 @@ export function createInitiativeRecallTools(
     ),
     async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
       if (sharedRoom(ctx)) return refused(SHARED_REFUSAL);
+      const personalityId = scopeOf(ctx);
+      if (personalityId === undefined) return refused(NO_PERSONALITY_REFUSAL);
       const a = argsRecord(args);
       if (failed(a)) return a;
       const query = reqString(a, 'query');
@@ -118,6 +145,8 @@ export function createInitiativeRecallTools(
     ),
     async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
       if (sharedRoom(ctx)) return refused(SHARED_REFUSAL);
+      const personalityId = scopeOf(ctx);
+      if (personalityId === undefined) return refused(NO_PERSONALITY_REFUSAL);
       const a = argsRecord(args);
       if (failed(a)) return a;
       const id = reqString(a, 'id');

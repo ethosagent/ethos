@@ -71,6 +71,7 @@
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/initiative-runner": "workspace:*",
+    "@ethosagent/initiative-store": "workspace:*",
     "@ethosagent/job-runner": "workspace:*",
     "@ethosagent/job-store": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
