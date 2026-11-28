@@ -248,19 +248,7 @@ export class WorldsService {
   ) {
     const rt = this.rt();
     const bundle = await rt.service.ownerExport(id);
-    const mountedBy = [];
-    if (id.startsWith('world:')) {
-      for (const [pid, mounts] of mountsOf) {
-        for (const m of mounts.mounts) {
-          if (m.world !== worldSlug(id)) continue;
-          mountedBy.push({
-            personalityId: pid,
-            mode: m.mode,
-            ...effectiveOf(pid, m, worlds),
-          });
-        }
-      }
-    }
+    const mountedBy = mountedOf(id, worlds, mountsOf);
     return {
       id,
       title,
@@ -463,19 +451,11 @@ export class WorldsService {
 
   private async mountedByWorld(world: WorldId) {
     if (!world.startsWith('world:')) return [];
-    const rt = this.rt();
     const [worlds, pids] = await Promise.all([
-      rt.configService.listWorlds(),
+      this.rt().configService.listWorlds(),
       this.deps.personalityIds(),
     ]);
-    const out = [];
-    for (const [pid, mounts] of await this.allMounts(pids)) {
-      for (const m of mounts.mounts) {
-        if (m.world === worldSlug(world))
-          out.push({ personalityId: pid, mode: m.mode, ...effectiveOf(pid, m, worlds) });
-      }
-    }
-    return out;
+    return mountedOf(world, worlds, await this.allMounts(pids));
   }
 
   private async mentions(needles: string[], personalityIds: string[]) {
@@ -978,6 +958,23 @@ export class WorldsService {
     if (last < input.text.length) spans.push({ text: input.text.slice(last) });
     return { spans };
   }
+}
+
+/** The personalities that mount a shared world (a private world has none). */
+function mountedOf(
+  id: WorldId,
+  worlds: ReadonlyMap<string, WorldFile>,
+  mountsOf: ReadonlyMap<string, MountsFile>,
+) {
+  const out = [];
+  if (!id.startsWith('world:')) return out;
+  for (const [pid, mounts] of mountsOf) {
+    for (const m of mounts.mounts) {
+      if (m.world === worldSlug(id))
+        out.push({ personalityId: pid, mode: m.mode, ...effectiveOf(pid, m, worlds) });
+    }
+  }
+  return out;
 }
 
 function wireMount(m: { world: string; mode: Mode; as?: string | undefined }) {
