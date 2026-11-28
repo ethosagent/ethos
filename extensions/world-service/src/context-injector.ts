@@ -7,11 +7,12 @@
 //     the turn's `roomAudience`, so `resolveAccess` (access.ts) decides. Pinned
 //     by world-context-injector.test.ts 'R6 shared turn: owner_only world
 //     dropped, shareable world used'.
-//   - R5, graph context is tail only: priority 5 is below every shipped
-//     injector, so its `append` section renders after all of them, and nothing
-//     per-turn (clock time, "as of today", turn number) is rendered. Pinned by
+//   - R5, graph context is outside the static prefix: `position: 'tail'` is
+//     rendered after the memory block (`## Memory`) by assembleContext
+//     (packages/core/src/agent-loop/stages/context-assembly.ts). Priority 5
+//     keeps a lower-priority tail later. Pinned by
 //     packages/wiring/src/__tests__/world-context-prefix.test.ts 'R5 graph
-//     context is tail only' (a real AgentLoop).
+//     context is tail only' (a real AgentLoop with a memory provider).
 //   - S6, graph text is untrusted: the whole block goes through the injected
 //     `sanitize` (AgentSafety.injection.sanitize, bound in wiring). Pinned by
 //     world-context-injector.test.ts 'sanitize is applied'.
@@ -183,7 +184,7 @@ export class WorldContextInjector implements ContextInjector {
     if (blocks.length === 0) return null;
 
     const content = this.opts.sanitize(`${WORLD_CONTEXT_HEADING}\n${blocks.join('\n')}`);
-    return { content, position: 'append' };
+    return { content, position: 'tail' };
   }
 
   /** One line per live fact in the matches' neighbourhoods, newest first, cut at `budget` chars. */

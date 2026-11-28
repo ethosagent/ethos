@@ -75,7 +75,7 @@ describe('WorldContextInjector', () => {
     const shared = await injector().inject(
       ctx('what do Ravi and Priya do?', { roomAudience: 'shared' }),
     );
-    expect(shared?.position).toBe('append');
+    expect(shared?.position).toBe('tail');
     expect(shared?.content.startsWith(WORLD_CONTEXT_HEADING)).toBe(true);
     expect(shared?.content).toContain('acme:Priya.title = "VP Eng" (from 2025-03-01; source seed)');
     expect(shared?.content).toContain('acme:Priya -owns-> acme:billing-svc');

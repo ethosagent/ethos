@@ -148,6 +148,7 @@ interface Existing {
   id: string;
   author: FactAuthor;
   validFrom: string | null;
+  validTo: string | null;
 }
 
 interface Analysis {
@@ -198,8 +199,26 @@ const allRefused = (facts: readonly unknown[], reason: string): WriteOutcome => 
   refused: facts.map((_, index) => ({ index, reason })),
 });
 
+/** Row-open: valid_to unset and not retired. `closeFact` refuses anything else. */
 const live = (f: { retiredAt: string | null; validTo: string | null }): boolean =>
   f.retiredAt === null && f.validTo === null;
+
+/**
+ * Still true at `asOf` on the world clock. Matches WORLD_SQL in
+ * extensions/world-sqlite/src/store.ts: `(valid_to IS NULL OR valid_to > asOf)`.
+ * Equal means the fact has ended.
+ */
+const holding = (f: { retiredAt: string | null; validTo: string | null }, asOf: string): boolean =>
+  f.retiredAt === null && (f.validTo === null || f.validTo > asOf);
+
+/**
+ * Date a replaced fact is closed on. `requested` is the new fact's validFrom
+ * (or today / the proposal date when it has none). Never earlier than the old
+ * fact's validFrom: `SQLiteWorldGraphProvider.close` refuses validTo < valid_from.
+ */
+function closeDate(requested: string, oldValidFrom: string | null): string {
+  return oldValidFrom !== null && oldValidFrom > requested ? oldValidFrom : requested;
+}
 
 type Picked =
   | { ok: true; w: ResolvedWorld }
@@ -457,11 +476,21 @@ export class WorldService {
       }
     }
 
+    // A fact that already has validTo cannot be closed again. Refuse before
+    // assert so a second overlapping row is never written. Do not call fail.
+    const sealed = found.colliding.find((e) => e.validTo !== null);
+    if (sealed) {
+      return {
+        kind: 'refused',
+        reason: `overlap: fact ${sealed.id} already has validTo ${sealed.validTo}`,
+      };
+    }
+
     const r = await provider.assert(target.id, [fact]);
     if (!r.ok) return { kind: 'refused', reason: `${r.code}: ${r.reason}` };
-    const closeAt = fact.kind === 'entity' ? this.today() : (fact.validFrom ?? this.today());
+    const requested = fact.kind === 'entity' ? this.today() : (fact.validFrom ?? this.today());
     for (const old of found.colliding) {
-      const at = old.validFrom !== null && old.validFrom > closeAt ? old.validFrom : closeAt;
+      const at = closeDate(requested, old.validFrom);
       const closed = await provider.close(target.id, old.id, at, fact.sourceRef, ctx.author);
       if (!closed.ok)
         this.fail(new Error(`could not close ${old.id}: ${closed.code}: ${closed.reason}`));
@@ -509,11 +538,20 @@ export class WorldService {
     fact: FactInput,
     schema: WorldSchema,
   ): Promise<Analysis> {
+    const asOf = this.today();
+    const holds = (f: { retiredAt: string | null; validTo: string | null }): boolean =>
+      holding(f, asOf);
     const none: Analysis = { duplicateOf: null, colliding: [] };
-    const brief = (f: { id: string; author: FactAuthor; validFrom: string | null }): Existing => ({
+    const brief = (f: {
+      id: string;
+      author: FactAuthor;
+      validFrom: string | null;
+      validTo: string | null;
+    }): Existing => ({
       id: f.id,
       author: f.author,
       validFrom: f.validFrom,
+      validTo: f.validTo,
     });
     if (fact.kind === 'entity') {
       const lower = fact.name.toLowerCase();
@@ -534,13 +572,13 @@ export class WorldService {
     }
     if (fact.kind === 'attribute') {
       const h = await provider.history(world, fact.entityId);
-      const same = h.attributes.filter((a) => live(a) && a.key === fact.key);
+      const same = h.attributes.filter((a) => holds(a) && a.key === fact.key);
       const equal = same.find((a) => canonicalJson(a.value) === canonicalJson(fact.value));
       if (equal) return { duplicateOf: equal.id, colliding: [] };
       return { duplicateOf: null, colliding: same.map(brief) };
     }
     const spec = Object.hasOwn(schema.edges, fact.type) ? schema.edges[fact.type] : undefined;
-    const findDup = (r: Facts) => r.edges.find((e) => live(e) && e.toId === fact.toId);
+    const findDup = (r: Facts) => r.edges.find((e) => holds(e) && e.toId === fact.toId);
     const page = await pagedLookup(
       (limit) =>
         provider.query(world, {
@@ -556,7 +594,7 @@ export class WorldService {
     // Not found and the set is cut short: a live duplicate or owner may be unseen.
     if (!page.complete) return { ...none, incomplete: lookupIncomplete('edge') };
     if (spec?.unique === 'from')
-      return { duplicateOf: null, colliding: page.result.edges.filter(live).map(brief) };
+      return { duplicateOf: null, colliding: page.result.edges.filter(holds).map(brief) };
     if (spec?.unique === 'to') {
       const byTo = await pagedLookup(
         (limit) =>
@@ -565,7 +603,7 @@ export class WorldService {
       );
       // Every live colliding edge must be seen: each one is closed or named in the proposal.
       if (!byTo.complete) return { ...none, incomplete: lookupIncomplete('edge') };
-      return { duplicateOf: null, colliding: byTo.result.edges.filter(live).map(brief) };
+      return { duplicateOf: null, colliding: byTo.result.edges.filter(holds).map(brief) };
     }
     return none;
   }
@@ -843,13 +881,19 @@ export class WorldService {
 
   /**
    * Replays a pending proposal with its ORIGINAL author and records `by` as
-   * `decided_by`. A conflict proposal also closes the facts it replaces, on the
-   * fact's `validFrom` or else the proposal's date. Every graph write here (the
-   * assert, the closes it triggers, a close-kind proposal's close) carries the
-   * proposal's author and sourceRef; the accepting owner appears only as
-   * `decided_by`. Pinned by write-routing.test.ts 'accepting a conflict proposal
-   * records the proposal author and source as the closer…'. A failed replay
-   * leaves the proposal pending.
+   * `decided_by`. A conflict proposal closes the facts it replaces on
+   * `closeDate` (the new fact's validFrom, or else the proposal's date, never
+   * earlier than the old fact's validFrom). Each id in `closes` is read with
+   * `getFact` before `assert`: missing, retired, or `validTo` already set
+   * refuses and leaves the proposal pending. A close that still fails after
+   * assert returns the new id plus the refusal and does not decide. Every
+   * graph write here carries the proposal's author and sourceRef; the
+   * accepting owner appears only as `decided_by`. Pinned by write-routing.test.ts
+   * 'accepting a conflict proposal records the proposal author and source as
+   * the closer…', 'accept closes a user fact at its validFrom when the
+   * proposal fact starts earlier', 'a close that fails after the new fact is
+   * asserted leaves the proposal pending', and 'accept refuses before assert
+   * when a close target is already closed'.
    */
   async acceptProposal(id: string, by: string): Promise<WriteOutcome> {
     const refuse = (reason: string): WriteOutcome => allRefused([id], reason);
@@ -863,21 +907,32 @@ export class WorldService {
       if (!payload) return refuse('unreadable proposal payload');
       const fact = await this.resolveRefs(provider, row.world, payload.fact, payload.refs);
       if (typeof fact === 'string') return refuse(fact);
+      const targets: Array<{ id: string; validFrom: string | null }> = [];
+      for (const old of payload.closes) {
+        const existing = await provider.getFact(row.world, old);
+        if (!existing) return refuse(`not_found: fact ${old} not found`);
+        if (existing.retiredAt !== null || existing.validTo !== null) {
+          return refuse(`closed: fact ${old} is already closed or retired`);
+        }
+        targets.push({ id: old, validFrom: existing.validFrom });
+      }
       const r = await provider.assert(row.world, [fact]);
       if (!r.ok) return refuse(`${r.code}: ${r.reason}`);
       out.applied.push(...r.ids);
-      const closeAt =
+      const requested =
         (fact.kind === 'entity' ? undefined : fact.validFrom) ?? row.createdAt.slice(0, 10);
-      for (const old of payload.closes) {
-        const closed = await provider.close(row.world, old, closeAt, fact.sourceRef, fact.author);
-        if (closed.ok) {
-          out.closed = [...(out.closed ?? []), old];
-        } else {
+      for (const old of targets) {
+        const at = closeDate(requested, old.validFrom);
+        const closed = await provider.close(row.world, old.id, at, fact.sourceRef, fact.author);
+        if (!closed.ok) {
           out.refused.push({
             index: 0,
-            reason: `could not close ${old}: ${closed.code}: ${closed.reason}`,
+            reason: `could not close ${old.id}: ${closed.code}: ${closed.reason}`,
           });
+          // The new fact is already in `applied`. Leave the proposal pending.
+          return out;
         }
+        out.closed = [...(out.closed ?? []), old.id];
       }
     } else if (row.kind === 'close') {
       const payload = parseClosePayload(row.payload);

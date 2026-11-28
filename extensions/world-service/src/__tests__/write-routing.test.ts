@@ -113,6 +113,120 @@ describe('write routing', () => {
     expect(closed).toMatchObject({ author: 'agent', sourceRef: 'chat:3' });
   });
 
+  it('accept closes a user fact at its validFrom when the proposal fact starts earlier', async () => {
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const held = h.provider.seedAttribute(PRIVATE, priya.id, 'title', 'VP', {
+      author: 'user',
+      validFrom: '2026-11-20',
+    });
+    const out = await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'attribute',
+          entityId: priya.id,
+          key: 'title',
+          value: 'Director',
+          validFrom: '2026-11-01',
+          sourceRef: 'chat:date',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      'title changed',
+    );
+    expect(out.proposed).toHaveLength(1);
+    const [row] = h.store.inbox(PRIVATE);
+    const accepted = await h.service.acceptProposal(row?.id ?? '', 'owner');
+    expect(accepted.refused).toEqual([]);
+    expect(h.store.get(row?.id ?? '')?.status).toBe('accepted');
+    const attrs = h.provider.all(PRIVATE).attributes;
+    expect(attrs.find((a) => a.id === held.id)?.validTo).toBe('2026-11-20');
+    const opened = attrs.find((a) => a.value === 'Director');
+    expect(opened?.validTo).toBeNull();
+    expect(opened?.author).toBe('agent');
+  });
+
+  it('a close that fails after the new fact is asserted leaves the proposal pending', async () => {
+    const svc = h.provider.seedEntity(PRIVATE, 'Service', 'billing-svc');
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const ravi = h.provider.seedEntity(PRIVATE, 'Person', 'Ravi');
+    const priyaOwns = h.provider.seedEdge(PRIVATE, 'owns', priya.id, svc.id, { author: 'user' });
+    await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'edge',
+          type: 'owns',
+          fromId: ravi.id,
+          toId: svc.id,
+          sourceRef: 'chat:fail-close',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      'Ravi took over',
+    );
+    const [row] = h.store.inbox(PRIVATE);
+    const assertsBefore = h.provider.asserts.length;
+    h.provider.close = async () => ({
+      ok: false,
+      code: 'invalid',
+      reason: 'validTo is before validFrom',
+    });
+    const accepted = await h.service.acceptProposal(row?.id ?? '', 'owner');
+    expect(accepted.applied).toHaveLength(1);
+    expect(accepted.refused.map((r) => r.reason).join('\n')).toContain(
+      `could not close ${priyaOwns.id}`,
+    );
+    expect(accepted.refused.map((r) => r.reason).join('\n')).toContain(
+      'validTo is before validFrom',
+    );
+    expect(h.store.get(row?.id ?? '')?.status).toBe('pending');
+    expect(h.provider.asserts.length).toBe(assertsBefore + 1);
+    expect(h.provider.all(PRIVATE).edges.find((e) => e.id === priyaOwns.id)?.validTo).toBeNull();
+    const opened = h.provider.all(PRIVATE).edges.find((e) => e.fromId === ravi.id);
+    expect(opened?.validTo).toBeNull();
+  });
+
+  it('accept refuses before assert when a close target is already closed', async () => {
+    const svc = h.provider.seedEntity(PRIVATE, 'Service', 'billing-svc');
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const ravi = h.provider.seedEntity(PRIVATE, 'Person', 'Ravi');
+    const priyaOwns = h.provider.seedEdge(PRIVATE, 'owns', priya.id, svc.id, { author: 'user' });
+    await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'edge',
+          type: 'owns',
+          fromId: ravi.id,
+          toId: svc.id,
+          sourceRef: 'chat:preflight',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      'Ravi took over',
+    );
+    const [row] = h.store.inbox(PRIVATE);
+    await h.provider.close(PRIVATE, priyaOwns.id, '2026-11-28', 'owner', 'user');
+    const assertsBefore = h.provider.asserts.length;
+    const edgesBefore = h.provider.all(PRIVATE).edges.length;
+    const accepted = await h.service.acceptProposal(row?.id ?? '', 'owner');
+    expect(accepted.applied).toEqual([]);
+    expect(accepted.refused[0]?.reason).toContain(priyaOwns.id);
+    expect(h.store.get(row?.id ?? '')?.status).toBe('pending');
+    expect(h.provider.asserts.length).toBe(assertsBefore);
+    expect(h.provider.all(PRIVATE).edges).toHaveLength(edgesBefore);
+    expect(h.provider.all(PRIVATE).edges.find((e) => e.id === priyaOwns.id)?.validTo).toBe(
+      '2026-11-28',
+    );
+  });
+
   it('accepting a close proposal from a feed caller records connector as the closer', async () => {
     const e = h.provider.seedEntity(ACME, 'Service', 'billing-svc');
     const p = h.provider.seedEntity(ACME, 'Person', 'Ravi');
@@ -145,6 +259,102 @@ describe('write routing', () => {
     expect(h.provider.closures).toEqual([
       expect.objectContaining({ factId: edge.id, author: 'agent', sourceRef: 'chat:2' }),
     ]);
+  });
+
+  it('a user attribute with a future validTo still forces a conflict proposal', async () => {
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const held = h.provider.seedAttribute(PRIVATE, priya.id, 'title', 'VP', { author: 'user' });
+    held.validTo = '2026-12-31';
+    const out = await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'attribute',
+          entityId: priya.id,
+          key: 'title',
+          value: 'Director',
+          sourceRef: 'chat:future',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      '',
+    );
+    expect(out.applied).toEqual([]);
+    expect(out.proposed).toHaveLength(1);
+    expect(out.refused).toEqual([]);
+    const attrs = h.provider.all(PRIVATE).attributes;
+    expect(attrs).toHaveLength(1);
+    expect(attrs[0]).toMatchObject({ id: held.id, value: 'VP', validTo: '2026-12-31' });
+    expect(h.store.inbox(PRIVATE)[0]?.conflictWith).toBe(held.id);
+    expect(h.store.get(out.proposed[0] ?? '')?.status).toBe('pending');
+  });
+
+  it('a direct write refuses before assert when the occupant already has validTo', async () => {
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const held = h.provider.seedAttribute(PRIVATE, priya.id, 'title', 'VP', { author: 'agent' });
+    held.validTo = '2026-12-31';
+    const assertsBefore = h.provider.asserts.length;
+    const out = await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'attribute',
+          entityId: priya.id,
+          key: 'title',
+          value: 'Director',
+          sourceRef: 'chat:overlap',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      '',
+    );
+    expect(out.applied).toEqual([]);
+    expect(out.proposed).toEqual([]);
+    expect(out.refused[0]?.reason).toContain('overlap');
+    expect(out.refused[0]?.reason).toContain(held.id);
+    expect(h.provider.asserts.length).toBe(assertsBefore);
+    expect(h.errors).toEqual([]);
+    expect(h.provider.all(PRIVATE).attributes).toEqual([
+      expect.objectContaining({ id: held.id, value: 'VP', validTo: '2026-12-31' }),
+    ]);
+  });
+
+  it('an attribute whose validTo is already past is not a collision', async () => {
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const held = h.provider.seedAttribute(PRIVATE, priya.id, 'title', 'VP', {
+      author: 'user',
+      validFrom: '2026-10-01',
+    });
+    held.validTo = '2026-11-01';
+    const out = await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'attribute',
+          entityId: priya.id,
+          key: 'title',
+          value: 'Director',
+          sourceRef: 'chat:past',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      '',
+    );
+    expect(out.proposed).toEqual([]);
+    expect(out.refused).toEqual([]);
+    expect(out.applied).toHaveLength(1);
+    const attrs = h.provider.all(PRIVATE).attributes;
+    expect(attrs.find((a) => a.id === held.id)).toMatchObject({
+      value: 'VP',
+      validTo: '2026-11-01',
+    });
+    expect(attrs.find((a) => a.value === 'Director')?.validTo).toBeNull();
   });
 
   it('R2 an attribute with a different value than a user fact becomes a conflict proposal', async () => {

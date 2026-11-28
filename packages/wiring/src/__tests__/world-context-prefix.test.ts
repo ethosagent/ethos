@@ -1,8 +1,8 @@
-// R5 (plan world-model Task 4.4): the world context lives in the dynamic tail.
-// A real AgentLoop with the real WorldContextInjector over a minimal in-test
-// service: same user text twice → byte-identical `system`; a turn naming a
-// different entity changes only what follows the heading, and the heading
-// appears once, after every other injector's section. The loop is driven as in
+// R5 (plan world-model Task 4.4): the world context lives in the dynamic tail,
+// after `## Memory`, outside the static prefix. A real AgentLoop with the real
+// WorldContextInjector over a minimal in-test service: two turns that change
+// the world block (Ravi vs Priya) keep a byte-identical static prefix
+// (`slice(0, indexOf('## Memory'))`). The loop is driven as in
 // packages/core/src/__tests__/prompt-prefix-stability.test.ts.
 
 import { AgentLoop, DefaultPersonalityRegistry } from '@ethosagent/core';
@@ -12,6 +12,9 @@ import type {
   CompletionOptions,
   ContextInjector,
   LLMProvider,
+  MemoryContext,
+  MemoryProvider,
+  MemorySnapshot,
   Message,
 } from '@ethosagent/types';
 import { WORLD_CONTEXT_HEADING, WorldContextInjector } from '@ethosagent/world-service';
@@ -55,6 +58,31 @@ const section = (id: string, priority: number, content: string): ContextInjector
     return { content, position: 'append' };
   },
 });
+
+const MEMORY_CONTENT = 'Notes about the team stay here.';
+
+function constantMemory(content: string): MemoryProvider {
+  return {
+    async prefetch(): Promise<MemorySnapshot | null> {
+      return { entries: [{ key: 'MEMORY.md', content }] };
+    },
+    async read() {
+      return null;
+    },
+    async search() {
+      return [];
+    },
+    async sync() {},
+    async list(_ctx: MemoryContext) {
+      return [];
+    },
+  };
+}
+
+/** Everything before `## Memory`. Per-turn world text must not sit in here. */
+function staticPrefix(system: string): string {
+  return system.slice(0, system.indexOf('## Memory'));
+}
 
 const facts = { ravi: 'Ravi owns billing', priya: 'Priya leads platform' } as const;
 
@@ -100,7 +128,7 @@ const service: Service = {
           entityId: key,
           key: 'note',
           value: text,
-          validFrom: null,
+          validFrom: '2026-03-01',
           validTo: null,
           recordedAt: '2026-01-01T00:00:00.000Z',
           retiredAt: null,
@@ -131,6 +159,7 @@ describe('R5 world context prefix', () => {
       llm: capturingLLM(captured),
       personalities,
       safety,
+      memory: constantMemory(MEMORY_CONTENT),
       injectors: [
         section('skills', 100, '## Skills\n\nstatic skills index'),
         section('low', 30, '## Low\n\nlowest shipped injector'),
@@ -151,16 +180,22 @@ describe('R5 world context prefix', () => {
 
     expect(t1).toBe(t2);
 
-    const at = (s: string | undefined): number => (s ?? '').indexOf(WORLD_CONTEXT_HEADING);
-    expect(at(t1)).toBeGreaterThan(t1?.indexOf('## Low') ?? Number.POSITIVE_INFINITY);
-    expect(t1?.indexOf('## Low')).toBeGreaterThan(t1?.indexOf('## Skills') ?? -1);
-    expect(t1?.split(WORLD_CONTEXT_HEADING)).toHaveLength(2);
-    expect(t3?.split(WORLD_CONTEXT_HEADING)).toHaveLength(2);
+    const worldAt = (s: string): number => s.indexOf(WORLD_CONTEXT_HEADING);
+    const memoryAt = (s: string): number => s.indexOf('## Memory');
+    expect(worldAt(t1)).toBeGreaterThan(memoryAt(t1));
+    expect(memoryAt(t1)).toBeGreaterThan(t1.indexOf('## Low'));
+    expect(t1.indexOf('## Low')).toBeGreaterThan(t1.indexOf('## Skills'));
+    expect(t1.split(WORLD_CONTEXT_HEADING)).toHaveLength(2);
+    expect(t3.split(WORLD_CONTEXT_HEADING)).toHaveLength(2);
     expect(t1).toContain('Ravi owns billing');
     expect(t3).toContain('Priya leads platform');
     expect(t3).not.toContain('Ravi owns billing');
+    expect(t1).not.toBe(t3);
 
-    expect(t3?.slice(0, at(t3))).toBe(t1?.slice(0, at(t1)));
-    expect(t3).not.toBe(t1);
+    expect(staticPrefix(t1)).toBe(staticPrefix(t3));
+    expect(staticPrefix(t1)).not.toContain(MEMORY_CONTENT);
+    expect(t1).toContain('from 2026-03-01');
+    expect(staticPrefix(t1)).not.toContain('2026-03-01');
+    expect(t1.indexOf('2026-03-01')).toBeGreaterThan(worldAt(t1));
   });
 });

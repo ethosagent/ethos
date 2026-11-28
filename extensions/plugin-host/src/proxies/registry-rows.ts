@@ -30,7 +30,9 @@ function parseInjection(raw: unknown): InjectionResult | null {
   if (!isRecord(raw) || typeof raw.content !== 'string') return null;
   return {
     content: raw.content,
-    ...(raw.position === 'prepend' || raw.position === 'append' ? { position: raw.position } : {}),
+    ...(raw.position === 'prepend' || raw.position === 'append' || raw.position === 'tail'
+      ? { position: raw.position }
+      : {}),
     ...(typeof raw.section === 'string' ? { section: raw.section } : {}),
   };
 }
