@@ -103,7 +103,7 @@ export interface RunReport {
   initiativeId: string;
   explorationId: string | null;
   spentUsd: number;
-  /** 'done', 'day' or 'exploration' (a cap), or 'error'. */
+  /** 'done', 'day', 'window' or 'exploration' (a cap), or 'error'. */
   endReason: string;
   toolsUsed: string[];
   reads: string[];
@@ -130,7 +130,15 @@ export interface InitiativeRunner {
   materialiseDrafts(): Promise<DraftOutcome[]>;
   /** Pauses every self-started initiative with no owner reaction for 14 days; returns their ids. */
   pauseIdle(): string[];
-  runWindow(initiativeId: string, explorationId: string): Promise<RunReport>;
+  /**
+   * `capUsd` is the window's own cap, `planDay`'s `perWindowUsd`; the window also holds the brief
+   * reserve back from the day so a stalled exploration can still hand in a partial brief.
+   */
+  runWindow(
+    initiativeId: string,
+    explorationId: string,
+    opts?: { capUsd?: number },
+  ): Promise<RunReport>;
 }
 
 const READ_ARG_KEYS = ['path', 'url', 'query', 'pattern', 'task_id', 'id'] as const;
@@ -176,6 +184,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     initiativeId: string;
     kind: 'survey' | 'window' | 'scan';
     exploration: ExplorationRow | null;
+    capUsd?: number;
   }): Promise<RunReport> {
     const loaded = await deps.load(input.initiativeId);
     if (!loaded) throw notFound(input.initiativeId);
@@ -200,6 +209,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       initiativeId: string;
       kind: 'survey' | 'window' | 'scan';
       exploration: ExplorationRow | null;
+      capUsd?: number;
     },
     loaded: LoadedInitiative,
     constitution: Constitution['initiatives'],
@@ -272,6 +282,10 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         ),
         explorationRemainingUsd,
         perCallReserveUsd: PER_CALL_RESERVE_USD,
+        ...(kind === 'window'
+          ? { briefReserveUsd: file.budget.usd_per_day * BRIEF_RESERVE_SHARE }
+          : {}),
+        ...(input.capUsd !== undefined ? { windowCapUsd: input.capUsd } : {}),
       },
       abort,
     );
@@ -465,7 +479,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     runScan: (initiativeId) => run({ initiativeId, kind: 'scan', exploration: null }),
     materialiseDrafts: materialise,
     pauseIdle: () => selfStart?.pauseIdle() ?? [],
-    async runWindow(initiativeId, explorationId) {
+    async runWindow(initiativeId, explorationId, opts) {
       const exploration = deps.store.getExploration(explorationId);
       if (!exploration || exploration.initiativeId !== initiativeId) {
         throw new EthosError({
@@ -481,7 +495,12 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
           action: 'Approve the proposal first; a run never approves its own work.',
         });
       }
-      return run({ initiativeId, kind: 'window', exploration });
+      return run({
+        initiativeId,
+        kind: 'window',
+        exploration,
+        ...(opts?.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
+      });
     },
   };
 }

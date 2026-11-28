@@ -31,7 +31,7 @@ The `initiative-tick` system job runs every 5 minutes. For each enabled initiati
 | Pool | `usd_per_day` minus both reserves, floored at $0 |
 | Funded windows | `floor(pool / 0.05)`, where $0.05 is `PER_CALL_RESERVE_USD` |
 | Windows that run | the smaller of the schedule's slots today and the funded windows; none when nothing is open |
-| Per-window share | pool divided by the windows that run (reported by `planDay`) |
+| Per-window share | pool divided by the windows that run; it becomes each window's cap |
 | Skipped | open explorations that get no window |
 
 Slots go to open explorations in rotation: the one that ran longest ago first, never-run first, wrapping round, so one open exploration takes every funded slot. A slot whose start time passed while the process was down is skipped and not replayed.
@@ -40,14 +40,15 @@ Example: `usd_per_day: 3`, three open explorations, two windows today, `selfStar
 
 ### What actually caps a window {#window-caps}
 
-The per-window share is a report, not a cap. `planDay` only decides how many windows run and which explorations get them. Each run is stopped by `createWindowGuard` when either remaining amount drops below $0.05:
+The tick passes the per-window share to the run as its own cap, and the run holds the brief reserve back from the day. `createWindowGuard` stops a window when any remaining amount drops below $0.05:
 
-| Cap | Remaining amount |
-|---|---|
-| Day | the smallest of `usd_per_day` minus today's spend, the self-start pool left (agent origin) and the operator totals left |
-| Exploration | exploration budget minus its spend. A brief window gets `usd_per_day` x 0.15. A survey gets $1 (`SURVEY_CAP_USD`) and a scan $0.25. |
+| Cap | Remaining amount | Ends as |
+|---|---|---|
+| Day | the smallest of `usd_per_day` minus today's spend, the self-start pool left (agent origin) and the operator totals left, less the brief reserve (`usd_per_day` x 0.15) for an exploration window | `day` |
+| Window | the per-window share from `planDay` (`windowCapUsd`); a run started by hand has none | `window` |
+| Exploration | exploration budget minus its spend. A brief window gets `usd_per_day` x 0.15. A survey gets $1 (`SURVEY_CAP_USD`) and a scan $0.25. | `exploration` |
 
-The reserve is not held back from the day cap. A long window may spend the whole remaining day, and the brief window then finds little left. An invalid or negative cost ends the window as a day stop (`budget.test.ts`, "invalid cost").
+When more than one is out, `day` wins over `window`, and `window` over `exploration`. A brief window and a survey or scan do not hold the reserve back, so a stalled exploration can still hand in its partial brief after exploration windows have used up the rest of the day. The in-flight call still finishes, so a window overshoots by at most one call. An invalid or negative cost ends the window as a day stop (`budget.test.ts`, "invalid cost"). The window cap and the reserve are pinned by `budget.test.ts` and `window-budget.test.ts`.
 
 The original design page assumed a flat $0.35 per window with a $0.40 scan reserve. The code does not do that. Only model `usage` is metered, so [per-call tools](../explanation/initiatives.md#trade-offs) such as `engine_ask` add no cost to these caps.
 

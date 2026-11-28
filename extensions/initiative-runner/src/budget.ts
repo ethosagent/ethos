@@ -70,27 +70,39 @@ export interface WindowGuard {
   onUsage(costUsd: number): void;
   spentUsd(): number;
   /**
-   * 'day' or 'exploration' once aborted, else null. Day wins when both are out. A non-finite or
+   * 'day', 'window' or 'exploration' once aborted, else null. Day wins over window, window over
+   * exploration, when more than one is out. A non-finite or
    * negative cost cannot be trusted to stay under a cap, so it ends the window as 'day'
    * (pinned by budget.test.ts, 'invalid cost').
    */
-  endReason(): 'day' | 'exploration' | null;
+  endReason(): 'day' | 'window' | 'exploration' | null;
+}
+
+export interface WindowCaps {
+  dayRemainingUsd: number;
+  explorationRemainingUsd: number;
+  perCallReserveUsd: number;
+  /** This window's own cap (`planDay`'s `perWindowUsd`). Absent = no per-window cap. */
+  windowCapUsd?: number;
+  /** Held back from the day so the brief window still has money (`DayPlan.briefReserveUsd`). Absent = 0. */
+  briefReserveUsd?: number;
 }
 
 /**
- * Aborts when either remaining cap drops below one call's reserve. The in-flight call still
- * finishes and is counted, so overshoot is at most one call (R10).
+ * Aborts when a remaining cap drops below one call's reserve: the day (less the brief reserve),
+ * the window's own cap, or the exploration. The in-flight call still finishes and is counted, so
+ * overshoot is at most one call (R10).
  */
-export function createWindowGuard(
-  caps: { dayRemainingUsd: number; explorationRemainingUsd: number; perCallReserveUsd: number },
-  abort: AbortController,
-): WindowGuard {
+export function createWindowGuard(caps: WindowCaps, abort: AbortController): WindowGuard {
   let spent = 0;
-  let reason: 'day' | 'exploration' | null = null;
+  let reason: 'day' | 'window' | 'exploration' | null = null;
+  const dayUsableUsd = caps.dayRemainingUsd - Math.max(0, caps.briefReserveUsd ?? 0);
 
   const check = (): void => {
     if (reason) return;
-    if (caps.dayRemainingUsd - spent < caps.perCallReserveUsd) reason = 'day';
+    if (dayUsableUsd - spent < caps.perCallReserveUsd) reason = 'day';
+    else if (caps.windowCapUsd !== undefined && caps.windowCapUsd - spent < caps.perCallReserveUsd)
+      reason = 'window';
     else if (caps.explorationRemainingUsd - spent < caps.perCallReserveUsd) reason = 'exploration';
     if (reason) abort.abort();
   };

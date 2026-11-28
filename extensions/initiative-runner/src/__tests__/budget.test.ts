@@ -183,4 +183,41 @@ describe('createWindowGuard', () => {
     expect(g.endReason()).toBe('day');
     expect(Number.isFinite(g.spentUsd())).toBe(true);
   });
+
+  it('stops at the per-window cap before the day or exploration caps', () => {
+    const abort = new AbortController();
+    const g = createWindowGuard(
+      {
+        dayRemainingUsd: 10,
+        explorationRemainingUsd: 10,
+        perCallReserveUsd: 0.1,
+        windowCapUsd: 1,
+      },
+      abort,
+    );
+    g.onUsage(0.5);
+    expect(abort.signal.aborted).toBe(false);
+    g.onUsage(0.45); // 0.05 left under the window cap < 0.1 reserve
+    expect(abort.signal.aborted).toBe(true);
+    expect(g.endReason()).toBe('window');
+  });
+
+  it('holds the brief reserve back from the day so the brief can still be written', () => {
+    const abort = new AbortController();
+    const g = createWindowGuard(
+      {
+        dayRemainingUsd: 1,
+        explorationRemainingUsd: 10,
+        perCallReserveUsd: 0.1,
+        briefReserveUsd: 0.25,
+      },
+      abort,
+    );
+    g.onUsage(0.6); // 0.15 usable left, still above one call
+    expect(abort.signal.aborted).toBe(false);
+    g.onUsage(0.1); // 0.05 usable left < 0.1, although 0.3 of the day remains
+    expect(abort.signal.aborted).toBe(true);
+    expect(g.endReason()).toBe('day');
+    expect(1 - g.spentUsd()).toBeGreaterThanOrEqual(0.25 - 1e-9);
+  });
 });

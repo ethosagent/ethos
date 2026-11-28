@@ -367,7 +367,9 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
         })[0]?.e;
       if (!next) break;
       lastRunAt[next.id] = now.toISOString();
-      await attempt('window', () => runner.runWindow(row.id, next.id));
+      await attempt('window', () =>
+        runner.runWindow(row.id, next.id, { capUsd: plan.perWindowUsd }),
+      );
     }
   }
 
