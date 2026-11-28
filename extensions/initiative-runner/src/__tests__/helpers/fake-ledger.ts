@@ -77,6 +77,7 @@ export function fakeLedger() {
   const caps = new Map<string, number>();
   const transitions: Array<{ id: string; to: string; why: string }> = [];
   const decisions: unknown[] = [];
+  const configVersions: unknown[] = [];
 
   const must = (id: string): ExplorationRow => {
     const e = explorations.find((x) => x.id === id);
@@ -240,6 +241,21 @@ export function fakeLedger() {
       };
       drafts.push(row);
       return { draftId: row.id };
+    },
+
+    // ---- written by InitiativeConfigService ----
+    configVersions,
+    upsertInitiative(row: InitiativeRow) {
+      const prev = initiatives.get(row.id);
+      initiatives.set(row.id, {
+        ...row,
+        createdAt: prev?.createdAt ?? NOW.toISOString(),
+        lastReactionAt: prev?.lastReactionAt ?? null,
+        stopReason: prev?.stopReason ?? null,
+      });
+    },
+    appendConfigVersion(v: unknown) {
+      configVersions.push(v);
     },
 
     // ---- self-start bookkeeping (Task 5.4) ----

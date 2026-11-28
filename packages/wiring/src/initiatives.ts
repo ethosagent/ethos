@@ -6,6 +6,7 @@ import {
   checkSources,
   createInitiativeRunner,
   effectiveEnabled,
+  InitiativeConfigService,
   type InitiativeRunner,
   loadInitiativeSettings,
   parseInitiativeFile,
@@ -347,6 +348,9 @@ export function createLazyInitiativeStore(deps: {
     appendConfigVersion: (v) => open().appendConfigVersion(v),
     openWindow: (w) => open().openWindow(w),
     extendExploration: (id, e) => open().extendExploration(id, e),
+    drafts: (status) => open().drafts(status),
+    settleDraft: (id, status, refusal) => open().settleDraft(id, status, refusal),
+    reactionClock: (id) => open().reactionClock(id),
     closeWindow: (id, r) => open().closeWindow(id, r),
     getInitiative: (id) => open().getInitiative(id),
     getExploration: (id) => open().getExploration(id),
@@ -427,8 +431,23 @@ export function createInitiativeRunnerFor(deps: {
       ...(deps.config.searxngUrl ? { searxngUrl: deps.config.searxngUrl } : {}),
       ...(deps.config.toolSettings ? { toolSettings: deps.config.toolSettings } : {}),
     });
+  // The same class that saves a chat-made initiative saves an agent-made one: the runner calls
+  // it with confirmedBy 'runner' and it refuses anything an owner would not be shown.
+  const readSettings = async (id: string) =>
+    (await loadInitiativeSettings(deps.storage, deps.dataDir, id)).settings;
+  const readConstitution = () => readInitiativeConstitution(deps.storage, deps.dataDir);
+  const config = new InitiativeConfigService({
+    storage: deps.storage,
+    dataDir: deps.dataDir,
+    store,
+    constitution: readConstitution,
+    settings: readSettings,
+    toolset: (id) => deps.personalities.get(id)?.toolset ?? [],
+    schedule: () => {},
+  });
   return createInitiativeRunner({
     store,
+    selfStart: { store, config, settings: readSettings, constitution: readConstitution },
     llm: deps.llm,
     safety: deps.safety,
     personalities: deps.personalities,

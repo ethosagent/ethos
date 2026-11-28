@@ -22,8 +22,15 @@ import {
 } from './autonomy';
 import { createWindowGuard } from './budget';
 import type { InitiativeFile } from './config-schema';
-import { briefWindowPrompt, surveyPrompt, windowPrompt } from './prompts';
+import { briefWindowPrompt, scanPrompt, surveyPrompt, windowPrompt } from './prompts';
 import { createReadOnlyLoop, createReadOnlyLoopParts, readOnlyRunOptions } from './run-loop';
+import {
+  createSelfStart,
+  type DraftOutcome,
+  SCAN_CAP_USD,
+  type SelfStart,
+  type SelfStartDeps,
+} from './self-start';
 import { INITIATIVE_READ_TOOLS, runToolNames } from './tool-classes';
 
 /** A survey is charged to the day but never costs more than this. */
@@ -70,6 +77,12 @@ export interface InitiativeRunnerDeps {
   clock?: () => Date;
   model?: string;
   onError?: (err: unknown) => void;
+  /**
+   * Agent-started initiatives (Task 5.4): the config service that saves them, the settings and
+   * constitution they obey, and the store reads they need. Without it a scan still runs but its
+   * drafts stay pending (suggestions), no pool is enforced and nothing auto-pauses.
+   */
+  selfStart?: Omit<SelfStartDeps, 'load' | 'now' | 'personalityIds' | 'onError'>;
 }
 
 export interface RunReport {
@@ -94,11 +107,19 @@ export interface RunReport {
   outcome: WindowOutcome | null;
   /** A "dig deeper" had reopened the exploration and it ran on a new budget. */
   reopened: boolean;
+  /** Scan only: what became of each pending draft after the run (materialised, refused, suggested). */
+  drafts: DraftOutcome[];
   error?: string;
 }
 
 export interface InitiativeRunner {
   runSurvey(initiativeId: string): Promise<RunReport>;
+  /** Looks for topics worth their own initiative; its drafts are materialised after the run. */
+  runScan(initiativeId: string): Promise<RunReport>;
+  /** Materialises pending drafts now (the scan does it after its own run). */
+  materialiseDrafts(): Promise<DraftOutcome[]>;
+  /** Pauses every self-started initiative with no owner reaction for 14 days; returns their ids. */
+  pauseIdle(): string[];
   runWindow(initiativeId: string, explorationId: string): Promise<RunReport>;
 }
 
@@ -128,16 +149,34 @@ function notFound(initiativeId: string): EthosError {
 export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRunner {
   const now = deps.clock ?? (() => new Date());
   const pricedModel = deps.model ?? deps.llm.model;
+  const selfStart: SelfStart | undefined = deps.selfStart
+    ? createSelfStart({
+        ...deps.selfStart,
+        load: async (id) => deps.load(id),
+        now,
+        personalityIds: () => deps.personalities.list().map((p) => p.id),
+        ...(deps.onError ? { onError: deps.onError } : {}),
+      })
+    : undefined;
+  const materialise = async (): Promise<DraftOutcome[]> => selfStart?.materialiseDrafts() ?? [];
 
   async function run(input: {
     initiativeId: string;
-    kind: 'survey' | 'window';
+    kind: 'survey' | 'window' | 'scan';
     exploration: ExplorationRow | null;
   }): Promise<RunReport> {
     const loaded = await deps.load(input.initiativeId);
     if (!loaded) throw notFound(input.initiativeId);
     const { personalityId, file, sourcePaths } = loaded;
     const { initiativeId } = input;
+    const idle = selfStart?.pauseIfIdle(initiativeId) ?? null;
+    if (idle !== null) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `initiative "${initiativeId}" was ${idle}`,
+        action: 'React to it (keep, make mine or stop) or resume it; a run never resumes one.',
+      });
+    }
     const row = deps.store.getInitiative(initiativeId);
     if (row?.state !== 'active' && row?.state !== 'self_started') {
       throw new EthosError({
@@ -164,16 +203,25 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
 
     const day = now().toISOString().slice(0, 10);
     const budget = deps.store.budget(initiativeId, day);
+    // An agent initiative also draws on the shared pool: the day's pool total (every agent
+    // initiative's spend so far) caps it beside its own cap. A human initiative's budget is
+    // never touched: each initiative's spend is its own windows.
+    const poolLeft =
+      file.origin === 'agent' && selfStart
+        ? await selfStart.poolRemainingTodayUsd(day)
+        : Number.POSITIVE_INFINITY;
     const explorationRemainingUsd = exploration
       ? kind === 'brief'
         ? file.budget.usd_per_day * BRIEF_RESERVE_SHARE
         : exploration.budgetUsd - exploration.spentUsd
-      : SURVEY_CAP_USD;
+      : input.kind === 'scan'
+        ? SCAN_CAP_USD
+        : SURVEY_CAP_USD;
     const abort = new AbortController();
     const guard = createWindowGuard(
       {
         // One source: the store's cap (`capFor`, bound by wiring to the clamped `usd_per_day`).
-        dayRemainingUsd: Math.max(0, budget.capUsd - budget.spentUsd),
+        dayRemainingUsd: Math.max(0, Math.min(budget.capUsd - budget.spentUsd, poolLeft)),
         explorationRemainingUsd,
         perCallReserveUsd: PER_CALL_RESERVE_USD,
       },
@@ -201,7 +249,15 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
             ),
           })
         : windowPrompt({ ...promptInput, exploration })
-      : surveyPrompt(promptInput);
+      : input.kind === 'scan'
+        ? scanPrompt({
+            file,
+            explorations: promptInput.explorations,
+            pending: (deps.selfStart?.store.drafts('pending') ?? [])
+              .filter((d) => d.parentId === initiativeId)
+              .map((d) => `- ${d.id}: ${d.why}`),
+          })
+        : surveyPrompt(promptInput);
 
     const registry = deps.buildRegistry({ initiativeId, personalityId, sourcePaths });
     // The registry layer rejects any tool outside `personality.toolset`, and a personality's own
@@ -285,6 +341,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     // Autonomy and stalls are the runner's own moves, applied after the window is closed and
     // charged. They are plain transitions, never decision rows (autonomy.ts).
     const autonomy = applyAutonomy(deps.store, file, after.proposals);
+    // The run has ended and its window is closed; only now do the drafts it left become files.
+    const drafts = input.kind === 'scan' ? await materialise() : [];
     const outcome = exploration
       ? settleWindow(
           deps.store,
@@ -314,12 +372,16 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       waiting: autonomy.waiting,
       outcome,
       reopened: prepared?.reopened ?? false,
+      drafts,
       ...(error ? { error } : {}),
     };
   }
 
   return {
     runSurvey: (initiativeId) => run({ initiativeId, kind: 'survey', exploration: null }),
+    runScan: (initiativeId) => run({ initiativeId, kind: 'scan', exploration: null }),
+    materialiseDrafts: materialise,
+    pauseIdle: () => selfStart?.pauseIdle() ?? [],
     async runWindow(initiativeId, explorationId) {
       const exploration = deps.store.getExploration(explorationId);
       if (!exploration || exploration.initiativeId !== initiativeId) {

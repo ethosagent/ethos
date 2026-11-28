@@ -56,6 +56,16 @@ export {
   type RunReport,
   SURVEY_CAP_USD,
 } from './runner';
+export {
+  AUTO_PAUSE_DAYS,
+  createSelfStart,
+  type DraftOutcome,
+  MIN_SELF_START_USD,
+  SCAN_CAP_USD,
+  type SelfStart,
+  type SelfStartDeps,
+  type SelfStartStore,
+} from './self-start';
 export { checkSources, repoSourcePaths } from './sources';
 export {
   INITIATIVE_CHAT_TOOLS,

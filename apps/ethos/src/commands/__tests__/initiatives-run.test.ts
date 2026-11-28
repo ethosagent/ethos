@@ -85,10 +85,16 @@ describe('ethos initiatives run', () => {
         waiting: [],
         outcome: null,
         reopened: false,
+        drafts: [],
       }),
       runWindow: async () => {
         throw new Error('unused');
       },
+      runScan: async () => {
+        throw new Error('unused');
+      },
+      materialiseDrafts: async () => [],
+      pauseIdle: () => [],
     };
     await runInitiativesCommand(['run', 'a', '--survey'], runner);
     spy.mockRestore();

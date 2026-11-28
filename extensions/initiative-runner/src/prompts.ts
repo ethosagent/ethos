@@ -98,3 +98,31 @@ export function briefWindowPrompt(
     'End with a two-line summary of what the brief says.',
   ].join('\n');
 }
+
+/**
+ * The scan: look at the parent's sources for a topic that deserves its own initiative and
+ * suggest it as a draft. A draft is only a suggestion; whether it ever becomes an initiative is
+ * decided after the run (self-start setting, pool, limits), never here.
+ */
+export function scanPrompt(
+  i: Pick<RunPromptInput, 'file' | 'explorations'> & { pending: string[] },
+): string {
+  const open = i.explorations
+    .filter((e) => e.state !== 'rejected')
+    .map((e) => `- ${e.id} (${e.state}): ${e.question}`);
+  return [
+    ...header(i.file),
+    '',
+    'This is the scan window. Do these steps in order:',
+    '1. Read each source once.',
+    '2. Look for a topic the owner has not asked about that clearly bears on the outcome and deserves its own initiative. Skip anything the ledger already covers.',
+    '3. For at most two such topics, call initiative_propose with kind "new_initiative", a draft_yaml and a why.',
+    '   draft_yaml is a YAML mapping with: title, outcome, sources (a subset of yours, never more), and optionally autonomy and budget.usd_per_day. Anything you leave out is inherited from this initiative. It can only be narrower than this initiative, never wider.',
+    'Nothing is created by this call. The owner sees it as a suggestion unless they have let you start your own initiatives.',
+    'If nothing deserves one, propose nothing. Keep the whole scan under $0.25.',
+    ...(open.length ? ['', 'Already on the ledger:', ...open] : []),
+    ...(i.pending.length ? ['', 'Already suggested (do not repeat):', ...i.pending] : []),
+    '',
+    'End with a one-line summary of what you suggested.',
+  ].join('\n');
+}

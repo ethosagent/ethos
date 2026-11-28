@@ -51,3 +51,76 @@ describe('extendExploration', () => {
     expect(() => open().extendExploration('EXP-9', { addBudgetUsd: 1, deadline: 'x' })).toThrow();
   });
 });
+
+describe('settleDraft', () => {
+  it('settles a pending draft once and keeps the refusal', () => {
+    const store = open();
+    const { draftId } = store.proposeInitiativeDraft({
+      parentId: 'ini-1',
+      draftYaml: 'title: t',
+      why: 'w',
+    });
+    store.settleDraft(draftId, 'refused', 'pool is empty');
+    store.settleDraft(draftId, 'materialised', null);
+    expect(store.drafts('pending')).toEqual([]);
+    expect(store.drafts('refused')).toEqual([
+      expect.objectContaining({ id: draftId, refusal: 'pool is empty' }),
+    ]);
+    expect(store.drafts('materialised')).toEqual([]);
+  });
+});
+
+describe('reactionClock', () => {
+  it('starts with no reaction and moves only on a decision', () => {
+    const store = open();
+    expect(store.reactionClock('ini-1')).toEqual({
+      createdAt: '2026-11-28T10:00:00.000Z',
+      lastReactionAt: null,
+      stopReason: null,
+    });
+    const e = store.propose({
+      initiativeId: 'ini-1',
+      ideaId: null,
+      question: 'q',
+      estimateUsd: 0.1,
+      days: 1,
+    });
+    // An automatic start is a plain transition: the owner has not reacted.
+    store.transitionExploration(e.id, 'exploring', 'auto-started');
+    expect(store.reactionClock('ini-1')?.lastReactionAt).toBeNull();
+
+    store.recordDecision({
+      target: e.id,
+      gate: 'gate1_explore',
+      verdict: 'snooze',
+      reason: null,
+      option: null,
+      decidedBy: 'owner_ui',
+    });
+    expect(store.reactionClock('ini-1')?.lastReactionAt).toBe('2026-11-28T10:00:00.000Z');
+  });
+
+  it('keeps the stop reason', () => {
+    const store = open();
+    store.upsertInitiative({
+      id: 'kid',
+      personalityId: 'ada',
+      origin: 'agent',
+      parentId: 'ini-1',
+      state: 'self_started',
+      configPath: 'k.yaml',
+      configHash: 'h',
+      version: 1,
+    });
+    store.recordDecision({
+      target: 'kid',
+      gate: 'self_start',
+      verdict: 'stop',
+      reason: 'not useful',
+      option: null,
+      decidedBy: 'owner_ui',
+    });
+    expect(store.reactionClock('kid')).toMatchObject({ stopReason: 'not useful' });
+    expect(store.reactionClock('nope')).toBeNull();
+  });
+});

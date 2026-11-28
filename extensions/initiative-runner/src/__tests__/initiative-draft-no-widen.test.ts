@@ -1,6 +1,8 @@
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { parseInitiativeFile } from '../config-schema';
 import { checkSources } from '../index';
+import { DATA, draft, PERSONALITY, selfStartHarness } from './helpers/self-start-harness';
 
 const HOME = homedir();
 const base = { readableRoots: [`${HOME}/code`], blocked: [] as string[] };
@@ -29,5 +31,42 @@ describe('checkSources parent subset', () => {
 
   it('a parent with no sources lets the child read nothing', () => {
     expect(checkSources(['memory'], { ...base, parentSources: [] }).ok).toBe(false);
+  });
+});
+
+describe('materialiseDrafts parent subset', () => {
+  const dir = `${DATA}/personalities/${PERSONALITY}/initiatives`;
+
+  it('R6 a draft cannot loosen autonomy or the budget over its parent', async () => {
+    const h = selfStartHarness();
+    await h.seed(h.parentFile({ autonomy: { mode: 'ask' } }));
+    const loosened = await h.scan('growth', [draft('Loose topic', 'autonomy: { mode: free }\n')]);
+    expect(loosened.drafts[0]).toMatchObject({
+      status: 'refused',
+      reason: expect.stringContaining('looser than the parent'),
+    });
+    expect(await h.storage.list(dir)).toEqual([]);
+  });
+
+  it('what a draft leaves out is inherited from its parent, so it can only narrow', async () => {
+    const h = selfStartHarness();
+    await h.seed(
+      h.parentFile({
+        exclude: ['secrets.md'],
+        autonomy: { mode: 'free_under', ask_above_usd: 0.5 },
+      }),
+    );
+    await h.scan('growth', [draft('Narrow topic', 'budget: { usd_per_day: 0.1 }\n')]);
+    const saved = parseInitiativeFile((await h.storage.read(`${dir}/narrow-topic.yaml`)) ?? '');
+    expect(saved.ok && saved.file).toMatchObject({
+      exclude: ['secrets.md'],
+      autonomy: { mode: 'free_under', ask_above_usd: 0.5 },
+    });
+    // A draft that drops the parent's exclude list is refused, not defaulted.
+    const dropped = await h.scan('growth', [draft('Dropped topic', 'exclude: []\n')]);
+    expect(dropped.drafts[0]).toMatchObject({
+      status: 'refused',
+      reason: expect.stringContaining('secrets.md'),
+    });
   });
 });

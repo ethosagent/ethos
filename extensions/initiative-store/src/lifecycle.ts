@@ -19,3 +19,18 @@ export function extendExplorationRow(
     .run(e.addBudgetUsd, e.deadline, at, id);
   return r.changes > 0;
 }
+
+/** Creation time, last owner reaction and stop reason of one initiative; null when it does not exist. */
+export function reactionClockRow(
+  db: Database.Database,
+  id: string,
+): { createdAt: string; lastReactionAt: string | null; stopReason: string | null } | null {
+  const r = db
+    .prepare('SELECT created_at, last_reaction_at, stop_reason FROM initiatives WHERE id = ?')
+    .get(id) as
+    | { created_at: string; last_reaction_at: string | null; stop_reason: string | null }
+    | undefined;
+  return r
+    ? { createdAt: r.created_at, lastReactionAt: r.last_reaction_at, stopReason: r.stop_reason }
+    : null;
+}

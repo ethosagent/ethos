@@ -212,6 +212,19 @@ export interface InitiativeStore extends InitiativeLedgerPort {
    * what it has spent plus `addBudgetUsd`, and the deadline moves. Not a decision.
    */
   extendExploration(id: string, e: { addBudgetUsd: number; deadline: string }): ExplorationRow;
+  /** Drafts in one status, oldest first. The runner's materialiser reads `pending`. */
+  drafts(status: DraftStatus): DraftRow[];
+  /** Runner only. Settles a pending draft once; a draft already settled is left as it is. */
+  settleDraft(id: string, status: 'materialised' | 'refused', refusal: string | null): void;
+  /**
+   * When an initiative started, when its owner last reacted (a decision on it or on one of its
+   * explorations; null = never) and why it was stopped. The auto-pause clock reads this.
+   */
+  reactionClock(id: string): {
+    createdAt: string;
+    lastReactionAt: string | null;
+    stopReason: string | null;
+  } | null;
   openWindow(w: { initiativeId: string; explorationId: string | null; kind: WindowKind }): string;
   closeWindow(
     id: string,

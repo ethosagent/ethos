@@ -25,8 +25,8 @@ import {
   type WindowKind,
   type WindowRow,
 } from '@ethosagent/types';
-import { selectDrafts } from './drafts';
-import { extendExplorationRow } from './lifecycle';
+import { selectDrafts, settleDraftRow } from './drafts';
+import { extendExplorationRow, reactionClockRow } from './lifecycle';
 import { INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
 
 /** `<dataDir>/initiatives.db`. */
@@ -710,6 +710,14 @@ export class SQLiteInitiativeStore implements InitiativeStore {
 
   drafts(status: DraftStatus): DraftRow[] {
     return selectDrafts(this.db, status);
+  }
+
+  settleDraft(id: string, status: 'materialised' | 'refused', refusal: string | null): void {
+    this.write(() => settleDraftRow(this.db, id, status, refusal));
+  }
+
+  reactionClock(id: string): ReturnType<typeof reactionClockRow> {
+    return reactionClockRow(this.db, id);
   }
 
   addQuestion(q: { initiativeId: string; explorationId: string | null; text: string }): string {
