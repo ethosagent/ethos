@@ -123,13 +123,21 @@ describe('emit_card rejects with repairable detail', () => {
 });
 
 describe('emit_card off-surface backstop', () => {
-  it('refuses politely on a channel platform', async () => {
+  it('refuses politely on a channel that cannot draw cards', async () => {
     const result = await emitCardTool.execute({ kind: 'text', payload: PAYLOADS.text }, {
-      platform: 'telegram',
+      platform: 'slack',
     } as unknown as ToolContext);
     expect(result).toMatchObject({ ok: false, code: 'not_available' });
     if (result.ok) return;
     expect(result.error).toMatch(/prose/i);
+  });
+
+  // plan telegram-live-cards D7: Telegram's adapter implements `CardCapableAdapter`.
+  it('renders on telegram', async () => {
+    const result = await emitCardTool.execute({ kind: 'text', payload: PAYLOADS.text }, {
+      platform: 'telegram',
+    } as unknown as ToolContext);
+    expect(result.ok).toBe(true);
   });
 
   it('renders on desktop', async () => {

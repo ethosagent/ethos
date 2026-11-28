@@ -5,7 +5,7 @@ import {
   EMIT_CARD_PAYLOAD_SCHEMAS,
   type EmitCardKind,
 } from '@ethosagent/web-contracts';
-import { isUiPlatform, offSurfaceRefusal } from './ui-platform';
+import { isCardPlatform, offSurfaceRefusal } from './ui-platform';
 import { issueField, issueLines } from './zod-issues';
 
 export interface EmitCardArgs {
@@ -18,7 +18,7 @@ export interface EmitCardArgs {
 // per-field caps and hints live in the zod source (web-contracts/src/cards.ts)
 // and are enforced there; this is the one-line-per-kind shape reminder that
 // gets the model to the right kind.
-const DESCRIPTION = `Render a typed UI card on the web surface. Cards are additive: always give the full answer in prose too — a card never replaces the explanation.
+const DESCRIPTION = `Render a typed UI card on the web, desktop or Telegram surface. Cards are additive: always give the full answer in prose too — a card never replaces the explanation.
 
 Pick the kind that matches the shape of the data:
 - text: { title?, text } — markdown body, max 8000 chars.
@@ -65,7 +65,7 @@ export const emitCardTool: Tool<EmitCardArgs> = {
     required: ['kind', 'payload'],
   },
   async execute(args, ctx: ToolContext): Promise<ToolResult> {
-    if (!isUiPlatform(ctx.platform)) return offSurfaceRefusal();
+    if (!isCardPlatform(ctx.platform)) return offSurfaceRefusal();
 
     const kind = args?.kind;
     if (typeof kind !== 'string' || !(EMIT_CARD_KINDS as readonly string[]).includes(kind)) {

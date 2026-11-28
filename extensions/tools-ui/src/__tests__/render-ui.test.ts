@@ -195,6 +195,17 @@ describe('render_ui argument validation', () => {
 });
 
 describe('render_ui off-surface backstop', () => {
+  // plan telegram-live-cards D7: Telegram draws cards but has no canvas surface.
+  it('still refuses on telegram', async () => {
+    const { ctx, reads } = makeCtx();
+    const result = await tool.execute({ template: 'brief' }, {
+      ...ctx,
+      platform: 'telegram',
+    } as unknown as ToolContext);
+    expect(result).toMatchObject({ ok: false, code: 'not_available' });
+    expect(reads).toEqual([]);
+  });
+
   it('refuses politely on a channel platform', async () => {
     const { ctx, reads } = makeCtx();
     const result = await tool.execute({ template: 'brief' }, {
