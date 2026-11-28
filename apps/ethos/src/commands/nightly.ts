@@ -668,3 +668,11 @@ export async function runNightly(argv: string[]): Promise<void> {
     surface(err);
   }
 }
+
+/** `ethos nightly <sub>`: only `run` exists; anything else prints the usage line. */
+export async function runNightlyCommand(argv: string[]): Promise<void> {
+  if (argv[0] === 'run') return runNightly(argv.slice(1));
+  const usage = 'Usage: ethos nightly run [<id>] [--json]';
+  if (argv.includes('--json')) writeJsonError('INVALID_INPUT', usage);
+  console.log(usage);
+}

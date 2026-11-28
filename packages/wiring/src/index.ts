@@ -39,12 +39,7 @@ import type {
   UsageGate,
 } from '@ethosagent/types';
 
-export {
-  buildReadOnlyRegistry,
-  defaultInitiativeToolFactories,
-  type InitiativeToolDeps,
-  type InitiativeToolFactories,
-} from './initiatives';
+export * from './initiative-exports';
 export type { WiringContext } from './types';
 
 import { buildAgentLoop, type JobAffinityOptions } from './build-agent-loop';
@@ -53,6 +48,7 @@ import { buildInfrastructure } from './build-infrastructure';
 import { selectServingProviderEntries } from './chain-hops';
 import { composeAllTools, type OutboxWiring } from './compose-tools';
 import { DisposerStack } from './disposer-stack';
+import type { InitiativeResult } from './initiative-runtime';
 import { loadPlugins } from './load-plugins';
 import {
   detectLocalRuntime,
@@ -1659,9 +1655,8 @@ async function createLLMFromRegistry(
   return tagProviderEntry(primary, topKey);
 }
 
-// Part 3 (plan/phases/trust-before-reach.md) — honouring `mcp_export`: the pure
-// declaration→scope resolver and the per-client bearer check the export server
-// runs on every call.
+// Part 3 (plan/phases/trust-before-reach.md) — honouring `mcp_export`: the pure declaration→scope
+// resolver and the per-client bearer check the export server runs on every call.
 export {
   type CreateMcpClientAuthenticatorOptions,
   createMcpClientAuthenticator,
@@ -1676,20 +1671,16 @@ export {
 // Skill passthrough helpers live in a separate file so tests can import them
 // without pulling in the heavy plugin-loader / docker / mcp dependency chain.
 export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
-// Tool-scope helper — turns an allowlist into the `toolsetExclude` denylist
-// that also reaches MCP, plugin and `alwaysInclude` tools. Separate file, no
-// heavy imports, so a caller can take it without the composition chain.
+// Tool-scope helper: an allowlist to the `toolsetExclude` denylist, which also reaches MCP,
+// plugin and `alwaysInclude` tools. Separate file, no heavy imports (no composition chain).
 export { complementExclude } from './tool-scope';
 
 // ---------------------------------------------------------------------------
 // AgentLoop assembly
 // ---------------------------------------------------------------------------
 
-export interface CreateAgentLoopResult {
+export interface CreateAgentLoopResult extends InitiativeResult {
   loop: AgentLoop;
-  /** On-demand survey or window (`ethos initiatives run`) and the scheduled tick; spend lives in the ledger only (O-7). */
-  initiativeRunner: import('@ethosagent/initiative-runner').InitiativeRunner;
-  initiativeRuntime: import('./initiative-runtime').InitiativeRuntime;
   /**
    * The ONE owner of how a model call outside a turn's own `streamStep` is
    * recorded (plan background-usage-accounting §5.4, D4): `meter(provider,

@@ -125,9 +125,8 @@ export interface AgentLoopConfig {
    * observability writes occur.
    */
   observability?: AgentLoopObservability;
-  // D7 — registry + role bindings + `modelRouting` + (team) manifest slots,
-  // read by `resolveTurnModel`; replaces the bare `modelRouting` map. Absent →
-  // the D11b legacy path, exactly as today.
+  // D7 — registry + role bindings + `modelRouting` + (team) manifest slots, read by
+  // `resolveTurnModel`; replaces the bare `modelRouting` map. Absent → the D11b legacy path.
   modelResolution?: ModelResolutionContext;
   modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
   // biome-ignore format: §5 gate + Phase 3 turn-end/overflow/engine + Lane 1a knobs; one line keeps agent-loop.ts under the size guardrail.
@@ -304,7 +303,7 @@ export interface RunOptions extends MemoryPrefetchGate {
   roomAudience?: import('@ethosagent/types').TurnAudience;
   /** Plan incognito-sessions D5 — run incognito: stamped sticky (`isIncognitoSession`), `'shared'` for memory, shell kept, no paged compaction, no stored tool args; ignored for a shared caller. The STAMP reaches descendants (`<key>:sub:…`/`:job:…` children are stamped by turn-setup, so readers refuse them); the shell re-admission never does (a child is a shared caller). Pinned in `__tests__/incognito.test.ts`. */
   incognito?: boolean;
-  /** Opt-in, only honoured on an incognito owner turn: also re-admit `INCOGNITO_READ_READMITTABLE_TOOLS` (`memory_read`, `session_list_by_date`; never a write tool). Ignored on a caller-shared, non-incognito or inherited-incognito turn; a caller `toolsetExclude` naming them still wins. Set only by the initiative runner (`readOnlyRunOptions`), pinned by `__tests__/incognito-read-readmit.test.ts`. */
+  /** Incognito owner turns only: also re-admit `INCOGNITO_READ_READMITTABLE_TOOLS` (read tools, never writes); a caller `toolsetExclude` still wins. Set only by the initiative runner; pinned by `__tests__/incognito-read-readmit.test.ts`. */
   readmitReadTools?: boolean;
   /** Verification round E5 — the caller JUDGED the live room (only the gateway, `Gateway.runTurn`); only then does a private turn on an unstamped channel-shaped session record the judged `'private'` stamp (`sessionAudienceStampFor`, ./chat-audience.ts), so a client-supplied key never turns a pre-upgrade group lane private. Pinned in `__tests__/shared-audience.test.ts`. */
   judgeAudience?: boolean;
@@ -737,10 +736,9 @@ export class AgentLoop {
     const effectiveMaxToolCalls = opts.maxToolCallsPerTurn ?? this.maxToolCallsPerTurn;
     const effectiveMaxIdentical = opts.maxIdenticalToolCalls ?? this.maxIdenticalToolCalls;
 
-    // Tool-call budget tracking — prevents runaway loops (see IMPROVEMENT.md P1-3).
-    // Counted across all iterations within a single user turn; one mutable
-    // object so per-call enforcement shares the SAME counters (see
-    // agent-loop/stages/per-call-enforcement.ts + agent-loop/budgets.ts).
+    // Tool-call budget tracking — prevents runaway loops (see IMPROVEMENT.md P1-3), counted across
+    // a user turn; one mutable object so per-call enforcement shares the SAME counters
+    // (agent-loop/stages/per-call-enforcement.ts + agent-loop/budgets.ts).
     const budgetCounters = createTurnBudgetCounters();
     let successfulToolCalls = 0;
     let denialStreak = 0;

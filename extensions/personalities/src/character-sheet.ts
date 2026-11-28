@@ -7,6 +7,7 @@ import {
   type PersonalityConfig,
   resolveModelDisplay,
 } from '@ethosagent/types';
+import { INITIATIVE_GUARANTEE_ROWS } from './initiative-guarantees';
 import { parseLivingSoul } from './living-soul';
 import {
   bulletList,
@@ -870,26 +871,15 @@ function guaranteeRows(
       detail:
         'a shared-audience turn neither reads nor writes private memory; no personality field narrows it',
     },
-    'G-INIT-RO': {
-      status: 'enforced',
-      detail:
-        'initiative runs get a fresh read-only registry (buildReadOnlyRegistry); no personality field widens it',
-    },
-    'G-INIT-CFG': {
-      status: 'enforced',
-      detail:
-        'initiatives/*.yaml is written only by InitiativeConfigService; the folder is a definition floor turns cannot write',
-    },
+    ...INITIATIVE_GUARANTEE_ROWS,
   };
 }
 
 /**
- * Render the `## Boundary` block — which published guarantees are enforced,
- * narrowed, relaxed, or inapplicable for THIS personality.
+ * Render the `## Boundary` block: which guarantees are enforced, narrowed, relaxed or n/a here.
  *
- * A table rather than bullets: fifteen rows read as a scan for the `relaxed`
- * ones, which is the operator's actual question, and the status column stays
- * aligned in a terminal as well as in the Web tab's Markdown.
+ * A table, not bullets: fifteen rows read as a scan for the `relaxed` ones (the operator's
+ * actual question), and the status column stays aligned in a terminal and the Web tab's Markdown.
  */
 function boundarySection(rows: Record<GuaranteeId, GuaranteeRow>): string[] {
   const width = Math.max(...GUARANTEE_IDS.map((id) => id.length));

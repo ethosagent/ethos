@@ -83,7 +83,7 @@ import type {
   WiringConfig,
   WiringProfile,
 } from './index';
-import { createInitiativeRuntime } from './initiative-runtime';
+import { buildInitiativeRuntime } from './initiative-runtime';
 import { resolveJobAffinity } from './job-affinity';
 import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
@@ -315,16 +315,8 @@ export async function buildAgentLoop(
   const { dataDir, log } = wiringCtx;
   const { infra, toolsResult, pluginsResult, llm, profile, disposers, usageMeter } = deps;
   const { memoryProviders, personalities, hooks, sessionCompose, tools } = infra;
-  const {
-    gatewaySendRef,
-    goalStore,
-    goalRunnerRef,
-    initiativeEnablement,
-    initiativeLedger,
-    injectors,
-    mcpManager,
-    skillsInjector,
-  } = toolsResult;
+  const { gatewaySendRef, goalStore, goalRunnerRef, injectors, mcpManager, skillsInjector } =
+    toolsResult;
   const {
     pluginLoader,
     pluginRegistries,
@@ -784,7 +776,7 @@ export async function buildAgentLoop(
     : undefined;
   const personalityToolExclude = buildPersonalityToolExclude(decisions, {
     ...(config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : {}),
-    initiatives: initiativeEnablement,
+    initiatives: toolsResult.initiativeEnablement,
   });
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
@@ -2000,30 +1992,13 @@ export async function buildAgentLoop(
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
   });
   if (voiceStack) disposers.push('voice stack', () => voiceStack.close());
-
-  const initiativeRuntime = createInitiativeRuntime({
-    storage: wiringCtx.storage,
-    dataDir,
-    ledger: initiativeLedger,
-    enablement: initiativeEnablement,
-    personalities,
-    llm,
-    safety,
-    model: config.model,
-    log,
-    config,
-    toolsConfig: (id) => personalities.getToolsConfig(id),
-    memory,
-    session,
-    goalStore,
-  });
-  disposers.push('initiative runtime', () => initiativeRuntime.dispose());
+  const initiatives = buildInitiativeRuntime(wiringCtx, config, deps, { safety, memory, session });
 
   return {
     loop,
     usageMeter,
-    initiativeRunner: initiativeRuntime.runner,
-    initiativeRuntime,
+    initiativeRunner: initiatives.runner,
+    initiativeRuntime: initiatives,
     dispose: () => disposers.dispose(),
     drain: async () => {
       // Jobs first: a running job can start a goal run, never the reverse

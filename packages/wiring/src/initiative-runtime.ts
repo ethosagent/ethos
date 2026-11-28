@@ -11,11 +11,13 @@ import {
   planDay,
   SCAN_CAP_USD,
 } from '@ethosagent/initiative-runner';
-import type { Constitution, InitiativeRow, WindowKind } from '@ethosagent/types';
+import type { Constitution, InitiativeRow, Logger, Storage, WindowKind } from '@ethosagent/types';
+import type { DisposerStack } from './disposer-stack';
 import {
   createInitiativeLoader,
   createInitiativeRunnerFor,
   type InitiativeEnablement,
+  type LazyInitiativeStore,
   readInitiativeConstitution,
 } from './initiatives';
 
@@ -41,6 +43,13 @@ export interface InitiativeTickReport {
   resumed: string[];
   /** Why the tick did nothing at all. */
   skipped?: 'busy' | 'disposed' | 'no-ledger';
+}
+
+/** The initiative half of `CreateAgentLoopResult`. */
+export interface InitiativeResult {
+  /** On-demand survey or window (`ethos initiatives run`) and the scheduled tick; spend lives in the ledger only (O-7). */
+  initiativeRunner: InitiativeRunner;
+  initiativeRuntime: InitiativeRuntime;
 }
 
 export interface InitiativeRuntime {
@@ -279,4 +288,46 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       disposed = true;
     },
   };
+}
+
+/**
+ * Build-time entry: derives the runtime's deps from the compose result and ties its disposal to
+ * the build's `disposers`. `createInitiativeRuntime` stays the unit-testable seam.
+ */
+export function buildInitiativeRuntime(
+  wiringCtx: { storage: Storage; dataDir: string; log: Logger },
+  config: InitiativeRuntimeDeps['config'] & { model: string },
+  deps: {
+    infra: {
+      personalities: InitiativeRuntimeDeps['personalities'] & {
+        getToolsConfig: InitiativeRuntimeDeps['toolsConfig'];
+      };
+    };
+    toolsResult: {
+      initiativeLedger: LazyInitiativeStore;
+      initiativeEnablement: InitiativeEnablement;
+      goalStore: InitiativeRuntimeDeps['goalStore'];
+    };
+    llm: InitiativeRuntimeDeps['llm'];
+    disposers: DisposerStack;
+  },
+  stores: Pick<InitiativeRuntimeDeps, 'safety' | 'memory' | 'session'>,
+): InitiativeRuntime {
+  const { personalities } = deps.infra;
+  const runtime = createInitiativeRuntime({
+    storage: wiringCtx.storage,
+    dataDir: wiringCtx.dataDir,
+    ledger: deps.toolsResult.initiativeLedger,
+    enablement: deps.toolsResult.initiativeEnablement,
+    personalities,
+    llm: deps.llm,
+    model: config.model,
+    log: wiringCtx.log,
+    config,
+    toolsConfig: (id) => personalities.getToolsConfig(id),
+    goalStore: deps.toolsResult.goalStore,
+    ...stores,
+  });
+  deps.disposers.push('initiative runtime', () => runtime.dispose());
+  return runtime;
 }

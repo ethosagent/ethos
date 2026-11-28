@@ -1020,16 +1020,8 @@ try {
     }
 
     case 'nightly': {
-      const sub = args[1];
-      if (sub === 'run') {
-        const { runNightly } = await import('./commands/nightly');
-        await runNightly(args.slice(2));
-      } else {
-        if (args.includes('--json')) {
-          writeJsonError('INVALID_INPUT', 'Usage: ethos nightly run [<id>] [--json]');
-        }
-        console.log('Usage: ethos nightly run [<id>] [--json]');
-      }
+      const { runNightlyCommand } = await import('./commands/nightly');
+      await runNightlyCommand(args.slice(1));
       break;
     }
 

@@ -8,11 +8,6 @@ import {
 } from '@ethosagent/core';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
-import {
-  InitiativeConfigService,
-  InitiativeIndexInjector,
-  loadInitiativeSettings,
-} from '@ethosagent/initiative-runner';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
 import type { PendingNotify, PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
@@ -49,10 +44,6 @@ import { buildDebugTools } from '@ethosagent/tools-debug';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createGoalTools } from '@ethosagent/tools-goals';
 import { createImageTools } from '@ethosagent/tools-image';
-import {
-  createChatInitiativeRecallTools,
-  createInitiativeChatTools,
-} from '@ethosagent/tools-initiatives';
 import { compose as composeInteractive } from '@ethosagent/tools-interactive/compose';
 import {
   type AutonomyTierOf,
@@ -118,6 +109,7 @@ import type {
 } from '@ethosagent/types';
 import { createAmendmentIntake } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
+import { composeInitiativeChat } from './compose-initiatives';
 import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
@@ -129,13 +121,7 @@ import {
   kanbanChecksEnabled,
 } from './grounding';
 import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './index';
-import {
-  createInitiativeEnablement,
-  createLazyInitiativeStore,
-  type InitiativeEnablement,
-  type LazyInitiativeStore,
-  readInitiativeConstitution,
-} from './initiatives';
+import type { InitiativeEnablement, LazyInitiativeStore } from './initiatives';
 import { resolveKanbanDbPath } from './kanban-path';
 import {
   freezeLatestUserTurnCase,
@@ -1666,36 +1652,17 @@ export async function composeAllTools(
       tools.register(tool);
   }
 
-  // Initiative engine, chat side: the ledger opens lazily (`createLazyInitiativeStore`), so a
-  // user who never uses the feature gets no `initiatives.db` and spends $0. YAML goes through
-  // `InitiativeConfigService`, the only writer.
-  const initiativeLedger = createLazyInitiativeStore({ storage: wiringCtx.storage, dataDir });
-  if (kanbanStore) initiativeLedger.readSources.kanbanStore = kanbanStore;
-  disposers.push('initiative ledger', () => initiativeLedger.close());
-  const initiativeEnablement = await createInitiativeEnablement({
-    storage: wiringCtx.storage,
-    dataDir,
-    personalityIds: () => personalities.list().map((p) => p.id),
-    log,
-  });
-  const initiativeConfig = new InitiativeConfigService({
-    storage: wiringCtx.storage,
-    dataDir,
-    store: initiativeLedger.store,
-    constitution: () => readInitiativeConstitution(wiringCtx.storage, dataDir),
-    settings: async (id) => (await loadInitiativeSettings(wiringCtx.storage, dataDir, id)).settings,
-    toolset: (id) => personalities.get(id)?.toolset ?? [],
-    // No runner yet: the schedule hook lands with the runner (plan Task 5.x).
-    schedule: () => {},
-  });
-  for (const tool of createInitiativeChatTools({
-    config: initiativeConfig,
-    ideas: () => initiativeLedger.ledger,
-    recall: initiativeLedger.recall,
-  }))
-    tools.register(tool);
-  // initiative_list/search/get in chat: scoped by ctx.personalityId, hidden with the chat tools above.
-  for (const tool of createChatInitiativeRecallTools(initiativeLedger.recall)) tools.register(tool);
+  // Initiative engine, chat side (see `composeInitiativeChat`).
+  const { initiativeLedger, initiativeEnablement, initiativeIndexInjector } =
+    await composeInitiativeChat({
+      storage: wiringCtx.storage,
+      dataDir,
+      log,
+      personalities,
+      tools,
+      disposers,
+      kanbanStore,
+    });
 
   for (const tool of composeProcess(wiringCtx, {
     hookRegistry: hooks,
@@ -1875,18 +1842,7 @@ export async function composeAllTools(
   });
   const { skillPool, injectors, scanner: skillScanner, skillsInjector } = skillsCompose;
   for (const tool of skillsCompose.tools) tools.register(tool);
-  // The ledger index is a prompt-tail `append`; see the initiative block above.
-  injectors.push(
-    new InitiativeIndexInjector({
-      store: initiativeLedger.store,
-      ready: initiativeLedger.ready,
-      isEnabled: initiativeEnablement.isEnabled,
-      onError: (err) =>
-        log.warn(
-          `initiative index unavailable: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-    }),
-  );
+  injectors.push(initiativeIndexInjector); // prompt-tail `append`
 
   const bootToolNames = new Set(activePerson.toolset ?? []);
   const attachedServers = new Set(activePerson.mcp_servers ?? []);
