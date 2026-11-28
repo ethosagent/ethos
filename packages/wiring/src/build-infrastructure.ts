@@ -15,6 +15,7 @@ import {
   DefaultStorageRegistry,
   DefaultToolRegistry,
   DefaultToolResultReducerRegistry,
+  DefaultWorldGraphProviderRegistry,
   deriveFsReachPaths,
   FileClarifyStore,
   personalityWriteDeny,
@@ -76,7 +77,9 @@ import type {
   StorageRegistry,
   SttProviderRegistry,
   TtsProviderRegistry,
+  WorldGraphProviderRegistry,
 } from '@ethosagent/types';
+import { SQLiteWorldGraphProvider, worldGraphDbPath } from '@ethosagent/world-sqlite';
 import { activateFirstPartyPlugins } from './activate-first-party';
 import { validateCallCaptureBinding } from './call-capture-binding';
 import type { DisposerStack } from './disposer-stack';
@@ -95,6 +98,7 @@ export interface InfrastructureResult {
   llmProviders: LLMProviderRegistry;
   executionBackends: ExecutionBackendRegistry;
   memoryProviders: MemoryProviderRegistry;
+  worldProviders: WorldGraphProviderRegistry;
   storageBackends: StorageRegistry;
   personalities: PersonalityCompose['personalities'];
   activePerson: PersonalityConfig;
@@ -399,6 +403,18 @@ export async function buildInfrastructure(
     }).provider;
   });
 
+  // World graph provider registry — 'sqlite' is the built-in backend; its file
+  // is <dataDir>/worlds/graph.db. Resolved by name via `resolveWorldProvider`.
+  const worldProviders = new DefaultWorldGraphProviderRegistry();
+  worldProviders.register(
+    'sqlite',
+    ({ dataDir: dir, logger }) =>
+      new SQLiteWorldGraphProvider(worldGraphDbPath(dir), {
+        onError: (err) =>
+          logger.warn(`world-sqlite: ${err instanceof Error ? err.message : String(err)}`),
+      }),
+  );
+
   // Storage backend registry — built-ins registered here; plugins add more
   // via registerStorage.
   const storageBackends = new DefaultStorageRegistry();
@@ -580,6 +596,7 @@ export async function buildInfrastructure(
     llmProviders,
     executionBackends,
     memoryProviders,
+    worldProviders,
     storageBackends,
     personalities,
     activePerson: effectiveActivePerson,

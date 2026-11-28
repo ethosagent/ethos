@@ -3215,6 +3215,9 @@ importers:
       '@ethosagent/worker-router':
         specifier: workspace:*
         version: link:../worker-router
+      '@ethosagent/world-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/world-sqlite
     devDependencies:
       '@ethosagent/tools-a2a':
         specifier: workspace:*

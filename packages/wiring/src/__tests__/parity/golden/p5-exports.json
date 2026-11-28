@@ -469,6 +469,7 @@
       "DefaultToolRegistry": "value",
       "DefaultToolResultReducerRegistry": "value",
       "DefaultTtsProviderRegistry": "value",
+      "DefaultWorldGraphProviderRegistry": "value",
       "DropOldestEngine": "value",
       "DryRunToolPlan": "type",
       "EagerPrefetchPolicy": "value",
@@ -6096,7 +6097,6 @@
       "createSecretHandler": "value"
     }
   },
-  "@ethosagent/world-sqlite": {
   "@ethosagent/world-service": {
     "entry": "extensions/world-service/src/index.ts",
     "exports": {
@@ -6121,6 +6121,7 @@
       "worldSlug": "value"
     }
   },
+  "@ethosagent/world-sqlite": {
     "entry": "extensions/world-sqlite/src/index.ts",
     "exports": {
       "SQLiteWorldGraphProvider": "value",

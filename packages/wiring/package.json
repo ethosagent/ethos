@@ -160,7 +160,8 @@
     "@ethosagent/voice-session": "workspace:*",
     "@ethosagent/voice-text": "workspace:*",
     "@ethosagent/watchers": "workspace:*",
-    "@ethosagent/worker-router": "workspace:*"
+    "@ethosagent/worker-router": "workspace:*",
+    "@ethosagent/world-sqlite": "workspace:*"
   },
   "devDependencies": {
     "@ethosagent/tools-a2a": "workspace:*",
