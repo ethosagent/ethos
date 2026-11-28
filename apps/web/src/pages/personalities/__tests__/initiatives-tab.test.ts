@@ -1,5 +1,6 @@
 import {
   INITIATIVE_SETTINGS_FIELD_KEYS,
+  type InitiativeMetricsOutputSchema,
   type InitiativesSettingsOutputSchema,
 } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -10,6 +11,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { initiativeSettingsKeys } from '../../../features/initiative-settings/api/keys';
+import { initiativesKeys } from '../../../features/initiatives/api/keys';
 import { InitiativesTab } from '../InitiativesTab';
 
 // Task 6.3 — the Personality → Initiatives tab. Static markup, like the other
@@ -35,9 +37,22 @@ function response(over: Partial<SettingsResponse> = {}): SettingsResponse {
   };
 }
 
-function markup(data: SettingsResponse): string {
+type MetricsResponse = z.infer<typeof InitiativeMetricsOutputSchema>;
+
+function metrics(over: Partial<MetricsResponse> = {}): MetricsResponse {
+  return {
+    since: '2026-11-01T00:00:00.000Z',
+    gate1: { asked: 0, approved: 0, rate: 0 },
+    gate2: { briefs: 0, adopted: 0, rate: 0 },
+    selfStart: { started: 0, kept: 0, stopped: 0 },
+    ...over,
+  };
+}
+
+function markup(data: SettingsResponse, m?: MetricsResponse): string {
   const queryClient = new QueryClient();
   queryClient.setQueryData(initiativeSettingsKeys.personality('researcher'), data);
+  if (m) queryClient.setQueryData(initiativesKeys.metrics('researcher'), m);
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -121,5 +136,25 @@ describe('Personality Initiatives tab', () => {
     expect(html).toContain('$2');
     expect(html).toContain('$5');
     expect(html).toContain('href="/settings/automation/initiatives"');
+  });
+
+  it('tab shows gate 1 and gate 2 rates', () => {
+    const html = markup(
+      response(),
+      metrics({
+        gate1: { asked: 8, approved: 6, rate: 0.75 },
+        gate2: { briefs: 4, adopted: 1, rate: 0.25 },
+      }),
+    );
+    expect(html).toContain('data-initiative-metrics');
+    expect(html).toMatch(/Gate 1: 6 of 8 approved \(75%\)/);
+    expect(html).toMatch(/Gate 2: 1 of 4 adopted \(25%\)/);
+  });
+
+  it('metrics block shows an empty state when nothing was asked', () => {
+    const html = markup(response(), metrics());
+    expect(html).toContain('data-initiative-metrics');
+    expect(html).toContain('Nothing asked yet');
+    expect(html).not.toContain('NaN');
   });
 });

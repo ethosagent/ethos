@@ -16,6 +16,7 @@ import { Link } from 'react-router-dom';
 import { TabSaveBar } from '../../components/personality/TabSaveBar';
 import { useInitiativeSettingsSave } from '../../features/initiative-settings/api/mutations';
 import { useInitiativeSettings } from '../../features/initiative-settings/api/queries';
+import { InitiativeMetrics } from './InitiativeMetrics';
 
 // Personality → Initiatives (plan initiative-engine Task 6.3). Every
 // `settings.yaml` key has a labeled control here; each control's wrapper carries
@@ -142,6 +143,7 @@ export function InitiativesTab({
 
   return (
     <Form layout="vertical">
+      <InitiativeMetrics id={id} />
       {data.status === 'missing' ? (
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           No settings file yet. These are the defaults; saving creates it.

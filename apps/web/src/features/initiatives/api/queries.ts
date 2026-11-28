@@ -35,3 +35,10 @@ export function useExploringNow(personalityId: string | undefined) {
     refetchInterval: EXPLORING_NOW_POLL_MS,
   });
 }
+
+export function useInitiativeMetrics(personalityId: string) {
+  return useQuery({
+    queryKey: initiativesKeys.metrics(personalityId),
+    queryFn: () => rpc.initiatives.metrics({ personalityId }),
+  });
+}

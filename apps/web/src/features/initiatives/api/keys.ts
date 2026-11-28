@@ -6,4 +6,5 @@ export const initiativesKeys = {
   activity: (id: string) => [...initiativesKeys.all(), 'activity', id] as const,
   exploringNow: (personalityId: string | undefined) =>
     [...initiativesKeys.all(), 'exploringNow', personalityId ?? null] as const,
+  metrics: (personalityId: string) => [...initiativesKeys.all(), 'metrics', personalityId] as const,
 };
