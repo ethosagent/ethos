@@ -79,12 +79,25 @@ export function isClarifySurfaceType(platform: string): platform is ClarifySurfa
 }
 
 /**
- * Tools that render typed UI cards on the web surface. Channel adapters get
- * prose instead — by design, not by omission — so they are excluded from every
- * channel turn's tool definitions. The tools' own `ctx.platform` check is a
- * backstop, not the gate.
+ * Tools that render typed UI cards on the web surface. An adapter that cannot draw cards gets
+ * prose instead — by design, not by omission — so these are excluded from its turn's tool
+ * definitions. The tools' own `ctx.platform` check (`extensions/tools-ui/src/ui-platform.ts`)
+ * is a backstop, not the gate.
+ *
+ * A card-capable adapter (`isCardCapable`, `./card-post.ts`) keeps `emit_card` and excludes only
+ * `CANVAS_EXCLUDED_TOOLS` — the choice is made in `Gateway.runTurn`, pinned by
+ * `__tests__/card-post.test.ts` ('Gateway tool exclusion per adapter') and
+ * `__tests__/channel-toolsets.test.ts`.
  */
 export const CHANNEL_EXCLUDED_TOOLS: readonly string[] = ['emit_card', 'render_ui'];
+
+/**
+ * Floor, in ms, for the gap between draft edits in a GROUP chat, on every platform. Telegram
+ * allows about 20 messages a minute per group, which a 2500 ms cadence exceeds (plan
+ * telegram-live-cards D15). Applied in `Gateway.runTurn`; pinned by the clamp cases in
+ * `__tests__/streaming-integration.test.ts`.
+ */
+export const GROUP_MIN_EDIT_INTERVAL_MS = 3000;
 
 /**
  * §4.6 rung 3 — how often the escalation sweep looks for a question that has

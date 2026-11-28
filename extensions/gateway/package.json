@@ -33,7 +33,8 @@
     "@ethosagent/session-lane": "workspace:*",
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/surface-kit": "workspace:*",
-    "@ethosagent/voice-text": "workspace:*"
+    "@ethosagent/voice-text": "workspace:*",
+    "@ethosagent/web-contracts": "workspace:*"
   },
   "devDependencies": {
     "@ethosagent/config": "workspace:*",

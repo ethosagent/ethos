@@ -30,6 +30,16 @@ export interface PromptContext {
    */
   initiator?: import('./audience').TurnInitiator;
   roomAudience?: import('./audience').TurnAudience;
+  /**
+   * Where this turn came from, `platform:chatId` for a channel turn (`RunOptions.origin`, stamped
+   * by `Gateway.runTurn`), copied verbatim by `assembleContext`; absent for web, CLI and other
+   * non-channel runs. `platform` above is the LOOP's wiring profile, the same for every turn a
+   * gateway process serves, so an injector that depends on the channel reads this instead
+   * (`createUiGuidanceInjector` via `surfaceOf`). It is stable per lane, so it is safe in the
+   * static prefix. It is a hint, not a gate: any run site may set it, so a
+   * guarantee about a surface must come from `toolsetExclude`, not from this field.
+   */
+  origin?: string;
   jobId?: string;
   reviewOfJobId?: string;
   agentId?: string;

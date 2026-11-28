@@ -449,6 +449,7 @@ const sidebars: SidebarsConfig = {
               '/review-and-delivery',
             ]),
             'building/reference/card-catalog',
+            'building/reference/card-catalog-telegram',
             'building/reference/skills-tools',
             splitDoc('building/reference/cron-tools', 'Cron tools reference', ['/examples']),
             'building/reference/watcher-tools',

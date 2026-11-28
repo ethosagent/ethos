@@ -322,6 +322,23 @@ export interface ApprovalCapableAdapter {
 }
 
 /**
+ * An adapter that can draw a typed UI card (`emit_card`) natively (plan telegram-live-cards D2).
+ *
+ * The gateway is the only caller: it validates `tool_end.structured.card` and posts it here, so
+ * an adapter never reads agent events. `card` is `unknown` because `contracts` may import
+ * nothing — the adapter `safeParse`s it against `CardEnvelopeSchema` and never casts. A card post
+ * is best-effort and owes no delivery-ledger obligation (D4): prose is the durable answer.
+ */
+export interface CardCapableAdapter {
+  postCard(input: {
+    chatId: string;
+    threadId?: string;
+    /** A `CardEnvelope` the gateway already validated; the adapter validates it again. */
+    card: unknown;
+  }): Promise<DeliveryResult>;
+}
+
+/**
  * Declarative capability manifest for platform adapters. Exported at module
  * level alongside the adapter class so the gateway and tooling can introspect
  * what a platform supports without reading source or checking instanceof.

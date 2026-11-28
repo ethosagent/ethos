@@ -76,7 +76,7 @@ import { buildCredentialCheck } from './credential-check';
 import { cwdReachWarning } from './cwd-reach-warning';
 import type { DisposerStack } from './disposer-stack';
 import { composeFirstContact } from './first-contact';
-import { goalRoomAudience } from './goal-audience';
+import { goalRoomAudience, goalToolsetExclude } from './goal-audience';
 import type {
   CreateAgentLoopOptions,
   CreateAgentLoopResult,
@@ -1700,6 +1700,7 @@ export async function buildAgentLoop(
     runAttempt: (sessionKey, firstMessage, o) => {
       const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
       const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
+      const toolsetExclude = goalToolsetExclude(o.origin);
       return loop.run(firstMessage, {
         sessionKey,
         // Derived from the goal's origin on every attempt (`goalRoomAudience`):
@@ -1717,11 +1718,13 @@ export async function buildAgentLoop(
           : {}),
         ...(o.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
         ...(toolsetOverride ? { toolsetOverride } : {}),
+        ...(toolsetExclude ? { toolsetExclude } : {}),
       });
     },
     runPlan: (sessionKey, firstMessage, o) => {
       const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
       const readOnlyToolset = (ptoolset ?? []).filter((t) => GOAL_PLAN_READONLY_TOOLS.has(t));
+      const toolsetExclude = goalToolsetExclude(o.origin);
       return loop.run(firstMessage, {
         sessionKey,
         // Same derivation as `runAttempt`; a shared planning turn also loses
@@ -1732,6 +1735,7 @@ export async function buildAgentLoop(
         ...(o.personalityId ? { personalityId: o.personalityId } : {}),
         ...(o.userId ? { userId: o.userId } : {}),
         toolsetOverride: readOnlyToolset,
+        ...(toolsetExclude ? { toolsetExclude } : {}),
       });
     },
   });

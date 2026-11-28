@@ -211,6 +211,29 @@ describe('Gateway — the four covered reply paths each record an obligation', (
     expect(adapter.edits[0]?.text).toBe('Hello world');
     expect(await store.listPending(['bot-a'])).toHaveLength(0);
   });
+
+  // A terminal edit the adapter answers `ok: true` confirms its obligation, so the sweep has
+  // nothing to re-send as a second message. This pins the GATEWAY half only. That Telegram maps
+  // "message is not modified" to `ok: true` (plan telegram-live-cards D14) is proven by
+  // `extensions/platform-telegram/src/__tests__/edit-not-modified.test.ts`, not here.
+  it('4c. a terminal edit the adapter confirms is delivered, not re-sent', async () => {
+    const gw = gatewayWith(
+      loopYielding([
+        { type: 'text_delta', text: 'Hello world' },
+        // Differs from the streamed body by a trailing space only.
+        { type: 'done', text: 'Hello world ', turnCount: 1 },
+      ]),
+      store,
+      { streamingEditIntervalMs: 600_000 },
+    );
+    const adapter = editAdapter();
+    await gw.handleMessage(msg(), adapter);
+
+    expect(adapter.edits).toHaveLength(1);
+    expect(await store.listPending(['bot-a'])).toHaveLength(0);
+    expect(await gw.sweepPendingDeliveries()).toEqual({ redelivered: 0, failed: 0 });
+    expect(adapter.sent).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

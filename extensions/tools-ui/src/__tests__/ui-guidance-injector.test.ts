@@ -40,7 +40,52 @@ describe('ui-guidance injector', () => {
     const injector = createUiGuidanceInjector({ personalityId: 'trader', templates: [] });
     expect(injector.shouldInject?.({ ...ctx, platform: 'desktop' } as PromptContext)).toBe(true);
     expect(injector.shouldInject?.({ ...ctx, platform: 'cli' } as PromptContext)).toBe(false);
-    expect(injector.shouldInject?.({ ...ctx, platform: 'telegram' } as PromptContext)).toBe(false);
+    expect(
+      injector.shouldInject?.({ ...ctx, platform: 'cli', origin: 'slack:C1' } as PromptContext),
+    ).toBe(false);
+  });
+
+  // plan telegram-live-cards D8
+  describe('on telegram', () => {
+    // A gateway loop's `platform` is its wiring profile; the turn's surface is its `origin`.
+    const tgCtx = { ...ctx, platform: 'cli', origin: 'telegram:77' } as unknown as PromptContext;
+    const make = () =>
+      createUiGuidanceInjector({
+        personalityId: 'trader',
+        templates: [{ name: 'market-brief', description: 'Daily brief' }],
+      });
+
+    it('injects for the personality', () => {
+      expect(make().shouldInject?.(tgCtx)).toBe(true);
+    });
+
+    it('omits the canvas and template lines it cannot honour', async () => {
+      const content = (await make().inject(tgCtx))?.content ?? '';
+      expect(content).not.toContain('render_ui');
+      expect(content).not.toContain('Canvas');
+      expect(content).not.toContain('market-brief');
+      expect(content).toContain('recommend_actions');
+      expect(content).toContain('data_table');
+    });
+
+    it('says charts and wide tables arrive as text, and to name the options in prose too', async () => {
+      const content = (await make().inject(tgCtx))?.content ?? '';
+      expect(content).toContain('charts and wide tables arrive as text summaries');
+      expect(content).toMatch(/name the options in prose/i);
+    });
+
+    it('is byte-identical across turns and across two builds (static prefix)', async () => {
+      const a = await make().inject(tgCtx);
+      const b = await make().inject({ ...tgCtx, turnNumber: 9 } as PromptContext);
+      expect(a?.content).toBe(b?.content);
+    });
+
+    it('leaves the web content untouched', async () => {
+      const web = (await make().inject(ctx))?.content ?? '';
+      expect(web).toContain('render_ui');
+      expect(web).toContain('market-brief');
+      expect(web).not.toContain('text summaries');
+    });
   });
 
   it('lists the template catalog', async () => {

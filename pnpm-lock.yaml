@@ -1332,6 +1332,9 @@ importers:
       '@ethosagent/voice-text':
         specifier: workspace:*
         version: link:../../packages/voice-text
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../../packages/web-contracts
     devDependencies:
       '@ethosagent/config':
         specifier: workspace:*
@@ -1917,6 +1920,9 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../../packages/web-contracts
       grammy:
         specifier: ^1.46.0
         version: 1.46.0(encoding@0.1.14)

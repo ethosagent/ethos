@@ -14,6 +14,7 @@ import type {
   ApprovalDecisionEvent,
   Attachment,
   AttachmentCache,
+  CardCapableAdapter,
   DeliveryResult,
   InboundMessage,
   InitiativeDigest,
@@ -25,8 +26,12 @@ import type {
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
 import { INITIATIVE_ACTION_PREFIX, parseInitiativeAction } from '@ethosagent/types';
+import { CardEnvelopeSchema } from '@ethosagent/web-contracts';
 import type { Bot, InputFile } from 'grammy';
 import { formatApprovalCardText } from './blocks/approval';
+import { CARD_ACTION_PREFIX, parseCardCallback } from './cards/callback';
+import { htmlToPlainText, renderCardForTelegram, renderSettledChoice } from './cards/render';
+import { chunkText } from './chunk';
 import {
   CHANNEL_MODES,
   type ChannelMode,
@@ -50,6 +55,7 @@ import {
   parseOutboxCallback,
 } from './outbox-card';
 import { grammy } from './sdk';
+import { CardActionStore } from './store/card-actions';
 import { ThreadStateStore } from './store/thread-state';
 
 // ---------------------------------------------------------------------------
@@ -133,73 +139,6 @@ export function truncateWithEllipsis(text: string, limit: number): string {
 // ---------------------------------------------------------------------------
 // Text chunking — Telegram has a 4096 char limit per message
 // ---------------------------------------------------------------------------
-
-/**
- * The opening line of a ``` fence left open at the end of `text`, or
- * `undefined` when every fence in it is closed. A fence line is one whose
- * first non-blank characters are three backticks.
- */
-function openFenceAtEnd(text: string): string | undefined {
-  let open: string | undefined;
-  for (const line of text.split('\n')) {
-    const trimmed = line.trimStart();
-    if (!trimmed.startsWith('```')) continue;
-    open = open === undefined ? trimmed : undefined;
-  }
-  return open;
-}
-
-/** Where to cut `text` so the head fits `limit`: a newline, else a space. */
-function cutPoint(text: string, limit: number): number {
-  const newlineAt = text.lastIndexOf('\n', limit);
-  if (newlineAt > limit * 0.6) return newlineAt + 1;
-  const spaceAt = text.lastIndexOf(' ', limit);
-  if (spaceAt > limit * 0.6) return spaceAt + 1;
-  return limit;
-}
-
-/** Room a chunk reserves for the "\n```" that closes a fence it splits. */
-const FENCE_CLOSE_RESERVE = 4;
-
-/**
- * Split `text` into chunks of at most `maxLength`.
- *
- * Fence-aware (UBP-051): a chunk boundary that falls inside a ``` block
- * closes the fence at the end of that chunk and reopens it — language tag
- * included — at the start of the next, so each chunk renders its code as code
- * on its own. Pinned by `__tests__/format-code.test.ts`.
- */
-export function chunkText(text: string, maxLength = 4096): string[] {
-  if (text.length <= maxLength) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
-
-    let cutAt = cutPoint(remaining, maxLength);
-    if (openFenceAtEnd(remaining.slice(0, cutAt)) !== undefined) {
-      cutAt = cutPoint(remaining, maxLength - FENCE_CLOSE_RESERVE);
-    }
-    let chunk = remaining.slice(0, cutAt);
-    let rest = remaining.slice(cutAt);
-    const opener = openFenceAtEnd(chunk);
-    // Reopen only when the next chunk still makes progress past the opener.
-    if (opener !== undefined && cutAt > opener.length + 1) {
-      chunk += chunk.endsWith('\n') ? '```' : '\n```';
-      rest = `${opener}\n${rest}`;
-    }
-
-    chunks.push(chunk);
-    remaining = rest;
-  }
-
-  return chunks;
-}
 
 /**
  * Re-flow `newChunks` over `existingIds`. Edits the first N chunks in place,
@@ -629,6 +568,16 @@ function telegramTokenRejected(err: unknown): Error & { permanent: true } {
   });
 }
 
+/**
+ * Telegram's 400 for an edit whose text and markup equal what is on screen.
+ * The content is already there, so callers treat it as success (plan
+ * telegram-live-cards D14; pinned by `__tests__/edit-not-modified.test.ts`).
+ */
+export function isNotModifiedTelegramError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  return /message is not modified/i.test(message);
+}
+
 /** `{ ok: false }` for a failed Bot API call, marked `permanent` when it is. */
 function telegramFailure(err: unknown): DeliveryResult {
   const error = err instanceof Error ? err.message : String(err);
@@ -659,7 +608,7 @@ function telegramMenuCommands(): Array<{ command: string; description: string }>
 }
 
 export class TelegramAdapter
-  implements PlatformAdapter, ApprovalCapableAdapter, VoiceOutboundAdapter
+  implements PlatformAdapter, ApprovalCapableAdapter, CardCapableAdapter, VoiceOutboundAdapter
 {
   readonly id: string;
   readonly displayName = 'Telegram';
@@ -756,6 +705,8 @@ export class TelegramAdapter
   private readonly channelOverrides?: ChannelOverrideStore<ChannelMode>;
   /** JSONL-backed thread-follow tracking (Gap 4). */
   private readonly threadState?: ThreadStateStore;
+  /** `rca:` token map for `recommend_actions` cards; memory-only without `config.storage` (D12). */
+  private readonly cardActions: CardActionStore;
   /** Startup diagnostics sink. Absent = the diagnostics do not run at all. */
   private readonly logger?: Logger;
   /** Webhook callback for external HTTP server wiring (Gap 6). */
@@ -783,9 +734,18 @@ export class TelegramAdapter
     // logger means no startup diagnostics.
     this.logger = config.logger?.child({ component: 'telegram' });
 
+    const baseDir = join(config.telegramDir ?? 'telegram', this.botKey);
+    this.cardActions = new CardActionStore(config.storage, baseDir, {
+      onLoadError: (err) =>
+        this.logger?.warn(
+          `[telegram] card buttons are memory-only this run (card-actions.jsonl unreadable): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+    });
+
     // --- Persistence stores (Gap 4) ---
     if (config.storage) {
-      const baseDir = join(config.telegramDir ?? 'telegram', this.botKey);
       // The shared store (`@ethosagent/core`) takes the PER-BOT directory —
       // which Telegram's deleted copy already did — plus the adapter's own
       // mode enum, which is new.
@@ -1036,6 +996,7 @@ export class TelegramAdapter
     // --- Load persistence stores (Gap 4) ---
     await this.channelOverrides?.load();
     await this.threadState?.load();
+    await this.cardActions.load();
 
     // --- Observe-mode prerequisite (R11) --- after the override store loads,
     // because a per-chat `observe` override is one of the two things that make
@@ -1300,6 +1261,7 @@ export class TelegramAdapter
     //   approve:*     → approval handler
     //   deny:*        → approval handler
     //   obx:*         → outbox handler
+    //   rca:*         → live-card tap (settle, edit in place, user turn)
     //   (other)       → clarify surface (backward compat)
     this.bot.on('callback_query:data', (ctx) => {
       const cq = ctx.callbackQuery;
@@ -1359,6 +1321,17 @@ export class TelegramAdapter
         } else {
           void event.answer('No approval handler registered.');
         }
+        return;
+      }
+
+      // `recommend_actions` buttons: the tap is a user message (plan telegram-live-cards D9).
+      if (data.startsWith(`${CARD_ACTION_PREFIX}:`)) {
+        void this.handleCardTap(event, cq.message?.chat?.type === 'private').catch((err) => {
+          // handleCardTap answers its own failures; this is the last line if even that threw.
+          this.logger?.warn(
+            `[telegram] card tap failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
         return;
       }
 
@@ -1794,9 +1767,14 @@ export class TelegramAdapter
       const updatedIds = await reflowChunks(newChunks, existingIds, {
         edit: async (id, chunk) => {
           const body = useHtml ? markdownToTelegramHtml(chunk) : chunk;
-          await this.bot.api.editMessageText(Number(chatId), Number(id), body, {
-            ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
-          });
+          try {
+            await this.bot.api.editMessageText(Number(chatId), Number(id), body, {
+              ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
+            });
+          } catch (err) {
+            // D14: already on screen is success, not a failed delivery.
+            if (!isNotModifiedTelegramError(err)) throw err;
+          }
           return id;
         },
         append: async (chunk) => {
@@ -1946,6 +1924,8 @@ export class TelegramAdapter
       });
       return { ok: true, messageId };
     } catch (err) {
+      // D14: the settled text is already on screen.
+      if (isNotModifiedTelegramError(err)) return { ok: true, messageId };
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -2037,6 +2017,8 @@ export class TelegramAdapter
       );
       return { ok: true, messageId: input.messageTs };
     } catch (err) {
+      // D14: the decision text is already on screen.
+      if (isNotModifiedTelegramError(err)) return { ok: true, messageId: input.messageTs };
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -2142,6 +2124,199 @@ export class TelegramAdapter
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Live cards (CardCapableAdapter) — plan telegram-live-cards
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Draw an `emit_card` card as Telegram HTML. The gateway is the only caller
+   * (`Gateway` card hook); a failure here loses the card, never the answer (D4).
+   * A `recommend_actions` card also registers its buttons in `CardActionStore`,
+   * keyed by the id of the message that carries the keyboard.
+   */
+  async postCard(input: {
+    chatId: string;
+    threadId?: string;
+    card: unknown;
+  }): Promise<DeliveryResult> {
+    const parsed = CardEnvelopeSchema.safeParse(input.card);
+    if (!parsed.success) return { ok: false, error: 'postCard: not a valid card envelope' };
+    const card = parsed.data;
+    const token = card.kind === 'recommend_actions' ? this.cardActions.newToken() : undefined;
+    const rendered = renderCardForTelegram(card, {
+      maxLength: this.maxMessageLength,
+      ...(token ? { token } : {}),
+    });
+    const threadOpt = input.threadId ? { message_thread_id: Number(input.threadId) } : {};
+    const ids: string[] = [];
+    const failed = (err: unknown): DeliveryResult =>
+      ids.length > 0 ? telegramPartial(ids, rendered.chunks.length, err) : telegramFailure(err);
+    for (let i = 0; i < rendered.chunks.length; i++) {
+      const html = rendered.chunks[i] ?? '';
+      const last = i === rendered.chunks.length - 1;
+      const markup = last && rendered.keyboard ? this.keyboardMarkup(rendered.keyboard) : undefined;
+      const opts = { ...threadOpt, ...(markup ? { reply_markup: markup } : {}) };
+      try {
+        const sent = await this.bot.api.sendMessage(Number(input.chatId), html, {
+          parse_mode: 'HTML' as const,
+          ...opts,
+        });
+        ids.push(String(sent.message_id));
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('parse')) return failed(err);
+        // D18: Telegram rejected the markup — send the same chunk as plain text.
+        this.logger?.warn(
+          `[telegram] card HTML parse fallback chunk=${i + 1}/${rendered.chunks.length} kind=${card.kind}`,
+        );
+        try {
+          const sent = await this.bot.api.sendMessage(
+            Number(input.chatId),
+            htmlToPlainText(html),
+            opts,
+          );
+          ids.push(String(sent.message_id));
+        } catch (fallbackErr) {
+          return failed(fallbackErr);
+        }
+      }
+    }
+    const messageId = ids[ids.length - 1];
+    if (messageId === undefined) return { ok: false, error: 'postCard: nothing to send' };
+    if (input.threadId && this.threadState)
+      void this.threadState.recordPost(input.chatId, input.threadId);
+    if (token && card.kind === 'recommend_actions') {
+      try {
+        await this.cardActions.put(token, {
+          chatId: input.chatId,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+          messageId,
+          ...(card.payload.question ? { question: card.payload.question } : {}),
+          actions: card.payload.actions,
+        });
+      } catch (err) {
+        // The card is on screen but its buttons will read as expired (D12 limitation).
+        this.logger?.warn(
+          `[telegram] card buttons not persisted: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return { ok: true, messageId };
+  }
+
+  private keyboardMarkup(
+    rows: Array<Array<{ label: string; data: string }>>,
+  ): InstanceType<ReturnType<typeof grammy>['InlineKeyboard']> {
+    const { InlineKeyboard } = grammy();
+    const kb = new InlineKeyboard();
+    rows.forEach((row, r) => {
+      for (const btn of row) kb.text(btn.label, btn.data);
+      if (r < rows.length - 1) kb.row();
+    });
+    return kb;
+  }
+
+  /**
+   * An `rca:<token>:<index>` tap. Every path answers the callback query. A valid first tap
+   * settles the card (single-use, D11), edits it to `question → label` with no keyboard, and
+   * emits the action's prompt as a user message from the tapper (D9, D16). The message id is
+   * `cbq:<callback_query.id>` so a redelivered update is dropped by gateway inbound dedup
+   * (D10); the adapter adds no dedup of its own. Pinned by `__tests__/live-card.test.ts`.
+   */
+  private async handleCardTap(event: CallbackQueryEvent, isDm: boolean): Promise<void> {
+    try {
+      await this.settleCardTap(event, isDm);
+    } catch (err) {
+      this.logger?.warn(
+        `[telegram] card tap failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await event.answer('Something went wrong — type the request instead.');
+    }
+  }
+
+  // Limitation (D16): admission is the gateway's and runs after this. A group member the gateway
+  // will not admit still spends the card here, so the buttons settle and no turn runs. There is
+  // no admission pre-check by design; see docs/content/building/reference/card-catalog-telegram.md.
+  private async settleCardTap(event: CallbackQueryEvent, isDm: boolean): Promise<void> {
+    const parsed = parseCardCallback(event.data);
+    if (!parsed) {
+      await event.answer('Unrecognised button.');
+      return;
+    }
+    await this.cardActions.load();
+    const result = await this.cardActions.settle(parsed.token, parsed.index);
+    if (result.status === 'invalid') {
+      await event.answer('Unrecognised button.');
+      return;
+    }
+    if (result.status === 'already') {
+      await event.answer('Already chosen.');
+      return;
+    }
+    if (result.status === 'expired') {
+      await event.answer('This button has expired — type the request instead.');
+      await this.stripKeyboard(event.chatId, event.messageId);
+      return;
+    }
+    await event.answer();
+    const { record } = result;
+    const action = record.actions[parsed.index];
+    if (!action) return;
+    await this.editSettledCard(event.chatId, event.messageId, record.question, action.label);
+    this.messageHandler?.({
+      platform: 'telegram',
+      botKey: this.botKey,
+      chatId: event.chatId,
+      userId: event.userId,
+      username: event.username,
+      text: action.prompt,
+      isDm,
+      // The tapper chose this in a room the bot is already in; it must pass mention-only gating.
+      isGroupMention: true,
+      messageId: `cbq:${event.queryId}`,
+      threadId: record.threadId,
+      replyToId: record.messageId,
+      ...(this.me?.id !== undefined ? { replyToUserId: String(this.me.id) } : {}),
+      raw: event,
+    });
+  }
+
+  private async editSettledCard(
+    chatId: string,
+    messageId: string,
+    question: string | undefined,
+    label: string,
+  ): Promise<void> {
+    try {
+      await this.bot.api.editMessageText(
+        Number(chatId),
+        Number(messageId),
+        renderSettledChoice(question, label),
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
+      );
+    } catch (err) {
+      // D14: not-modified is done. Anything else leaves the buttons up; the store still says
+      // settled, so a later tap reads "Already chosen." and the turn is not lost.
+      if (isNotModifiedTelegramError(err)) return;
+      this.logger?.warn(
+        `[telegram] card settle edit failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async stripKeyboard(chatId: string, messageId: string): Promise<void> {
+    try {
+      await this.bot.api.editMessageReplyMarkup(Number(chatId), Number(messageId), {
+        reply_markup: { inline_keyboard: [] },
+      });
+    } catch (err) {
+      if (isNotModifiedTelegramError(err)) return;
+      this.logger?.warn(
+        `[telegram] card keyboard strip failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   /** Register the initiative digest / brief button handler (`init:<verb>:<target>` taps). */
   onInitiativeAction(handler: (event: InitiativeActionEvent) => void | Promise<void>): void {
     this.initiativeActionHandler = handler;
@@ -2173,6 +2348,7 @@ export class TelegramAdapter
   }
 }
 
+export { chunkText } from './chunk';
 export { CHANNEL_MODES, type RoomModeDefault } from './config';
 export type { InitiativeActionEvent } from './initiative-card';
 export type {

@@ -2572,6 +2572,7 @@
       "TelegramAdapterConfig": "type",
       "chunkText": "value",
       "downloadTelegramFile": "value",
+      "isNotModifiedTelegramError": "value",
       "loadTelegramSdk": "value",
       "mentionsBot": "value",
       "reflowChunks": "value",
@@ -4077,11 +4078,12 @@
     "entry": "extensions/tools-ui/src/index.ts",
     "exports": {
       "AssetDirResolver": "type",
+      "CANVAS_PLATFORMS": "value",
+      "CARD_PLATFORMS": "value",
       "DashboardToolStore": "type",
       "EmitCardArgs": "type",
       "PersonalityDirResolver": "type",
       "RenderUiArgs": "type",
-      "UI_PLATFORMS": "value",
       "UiGuidanceInjectorOptions": "type",
       "UiTemplateEntry": "type",
       "buildCardTools": "value",
@@ -4095,8 +4097,10 @@
       "createUiGuidanceInjector": "value",
       "dashboardSaveTool": "value",
       "emitCardTool": "value",
-      "isUiPlatform": "value",
-      "renderHtmlTool": "value"
+      "isCanvasPlatform": "value",
+      "isCardPlatform": "value",
+      "renderHtmlTool": "value",
+      "surfaceOf": "value"
     }
   },
   "@ethosagent/tools-vision": {
@@ -4295,6 +4299,7 @@
       "CallCaptureBindingError": "value",
       "CallTreatment": "type",
       "CapsHonestyResult": "type",
+      "CardCapableAdapter": "type",
       "CatalogCapabilities": "type",
       "CatalogEntry": "type",
       "CatalogKind": "type",

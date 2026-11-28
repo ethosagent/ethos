@@ -344,7 +344,13 @@ export type { EmitCardArgs } from './emit-card';
 export type { RenderUiArgs } from './render-ui';
 export type { UiGuidanceInjectorOptions, UiTemplateEntry } from './ui-guidance-injector';
 export { createUiGuidanceInjector } from './ui-guidance-injector';
-export { isUiPlatform, UI_PLATFORMS } from './ui-platform';
+export {
+  CANVAS_PLATFORMS,
+  CARD_PLATFORMS,
+  isCanvasPlatform,
+  isCardPlatform,
+  surfaceOf,
+} from './ui-platform';
 export type { PersonalityDirResolver };
 export { createRenderUiTool, emitCardTool };
 

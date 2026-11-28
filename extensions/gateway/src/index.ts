@@ -75,6 +75,7 @@ import {
 } from '@ethosagent/voice-text';
 import { GatewayAudience } from './audience';
 import { handleBudgetCommand } from './budget-command';
+import { CANVAS_EXCLUDED_TOOLS, isCardCapable, TurnCardPoster } from './card-post';
 import {
   CHANNEL_DIGEST_LOCK_FILE,
   CHANNEL_DIGEST_WATERMARK_FILE,
@@ -120,6 +121,7 @@ import {
   EMPTY_COMPLETION_CODE,
   EMPTY_REPLY_NOTICE,
   emptyCompletionNotice,
+  GROUP_MIN_EDIT_INTERVAL_MS,
   INCOGNITO_REFUSED_TEXT,
   initiatorFor,
   isClarifySurfaceType,
@@ -3904,7 +3906,9 @@ export class Gateway {
               inboundId: replyScope.inboundId,
               ...(streamDelivery ? { delivery: streamDelivery } : {}),
               ...(bot.replyPrefix ? { prefixBody: prefixReply } : {}),
-              minEditIntervalMs: this.streamingEditIntervalMs,
+              minEditIntervalMs: message.isDm
+                ? this.streamingEditIntervalMs
+                : Math.max(this.streamingEditIntervalMs, GROUP_MIN_EDIT_INTERVAL_MS),
               silentHold: () => roomSilent,
               onFloodDisable: () => {
                 this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);
@@ -3988,9 +3992,31 @@ export class Gateway {
       // any later text (a folded steer's next iteration wrote the ending).
       let cutOffAtCap = false;
 
+      // Cards (plan telegram-live-cards): `emit_card` envelopes post to a card-capable adapter.
+      // Never for a review turn (no user is waiting on it) or a silent-opt-in room.
+      const cards =
+        !review && isCardCapable(adapter)
+          ? new TurnCardPoster({
+              adapter,
+              platform: message.platform,
+              botKey: bot.botKey,
+              chatId: message.chatId,
+              threadId,
+              sessionKey,
+              scope: replyScope,
+              dedup: this.outboundDedup,
+              observability: this.observability,
+              silent: () => roomSilent,
+            })
+          : undefined;
+
       // Deliver the reply exactly once. Called at the turn's terminal event,
       // or after the loop when the iterator ends without one.
+      // False once the final answer's own send was refused: held cards then stay held-and-dropped.
+      let answerSent = true;
       const deliverAnswer = async (): Promise<void> => {
+        // A data card made before the answer reaches the chat before it.
+        await cards?.drain();
         // A `returnDirect` tool result reaches the turn only as `done.text`,
         // after whatever preamble the model streamed before the call. The
         // whole reply is the streamed text plus `answerSuffix` (the one rule,
@@ -4149,6 +4175,7 @@ export class Gateway {
               },
               { text: reply, parseMode: 'markdown', threadId },
             );
+            if (!delivered) answerSent = false;
           } else {
             // Suppressed by the dedup cache: this exact text already answered
             // THIS inbound message inside the TTL (the key is scoped to it,
@@ -4251,9 +4278,13 @@ export class Gateway {
           ...(toolsetNarrow ? { toolsetNarrow } : {}),
           ...(room?.prompt ? { roomPrompt: room.prompt } : {}),
           ...this.rooms.loopOptions(room),
-          // Unconditional, not config-driven: UI-card tools have no rendering on
-          // any channel adapter, so they never reach a channel turn's tool list.
-          toolsetExclude: [...CHANNEL_EXCLUDED_TOOLS],
+          // Unconditional, not config-driven: an adapter that cannot draw cards never
+          // sees the UI-card tools. A card-capable one keeps `emit_card` (canvas has no
+          // channel rendering, so `render_ui` is always excluded).
+          // A review turn has no user waiting on a card, so it keeps neither UI tool.
+          toolsetExclude: [
+            ...(isCardCapable(adapter) && !review ? CANVAS_EXCLUDED_TOOLS : CHANNEL_EXCLUDED_TOOLS),
+          ],
           // One review hop (D10/D30): `delegate_task` refuses `deliver:'parent'`
           // from inside a review turn by reading this off its ToolContext.
           ...(review ? { reviewOfJobId: review.jobId } : {}),
@@ -4293,6 +4324,7 @@ export class Gateway {
           // H1/H2 — feed the liveness timers before the terminal check below
           // disposes them, so a tool_end always cancels its own timer.
           feedback?.onEvent(event);
+          if (event.type === 'tool_end' && !signal.aborted) cards?.onToolEnd(event);
           translator.push(event);
           if (event.type === 'text_delta') cutOffAtCap = false;
           else if (
@@ -4360,6 +4392,9 @@ export class Gateway {
       // An iterator that ends without `done` or `error` — AgentLoop always
       // yields one, test fakes need not: deliver what accumulated.
       else await deliverAnswer();
+      // `recommend_actions` goes under the answer (D13). An errored or stopped turn, or one whose
+      // answer was not delivered, offers no next step, so its held cards are dropped.
+      if (cards && answerSent && !signal.aborted && !translator.error) await cards.flushHeld();
       if (!review) await this.rooms.notePolicyDigest(sessionKey, message, room);
       completed = true;
     } finally {

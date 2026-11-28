@@ -37,6 +37,7 @@
     "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/types": "workspace:*",
+    "@ethosagent/web-contracts": "workspace:*",
     "grammy": "^1.46.0",
     "zod": "^4.3.6"
   }
