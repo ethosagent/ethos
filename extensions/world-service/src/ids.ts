@@ -19,16 +19,8 @@ export function isSafeSlug(s: string): boolean {
  * pinned by world-access.test.ts 'parseWorldId rejects unsafe ids'.
  */
 export function parseWorldId(s: string): WorldId {
-  if (s.startsWith(SHARED_PREFIX)) {
-    const slug = s.slice(SHARED_PREFIX.length);
-    assertSafeId(slug, 'world id');
-    return `world:${slug}`;
-  }
-  if (s.startsWith(PRIVATE_PREFIX)) {
-    const pid = s.slice(PRIVATE_PREFIX.length);
-    assertSafeId(pid, 'world id');
-    return `personality:${pid}`;
-  }
+  if (s.startsWith(SHARED_PREFIX)) return sharedWorldId(s.slice(SHARED_PREFIX.length));
+  if (s.startsWith(PRIVATE_PREFIX)) return privateWorldId(s.slice(PRIVATE_PREFIX.length));
   throw new Error(`invalid world id "${s}": expected world:<slug> or personality:<pid>`);
 }
 
