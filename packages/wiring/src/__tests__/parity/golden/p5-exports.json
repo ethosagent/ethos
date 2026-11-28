@@ -6016,6 +6016,7 @@
       "evaluateContextFit": "value",
       "evaluateToolPayloadGuard": "value",
       "evaluateToolSchemaBudget": "value",
+      "expandWorldFeedPrefix": "value",
       "externalMemoryNotice": "value",
       "familyRootKey": "value",
       "farEndRefusalReason": "value",
@@ -6169,6 +6170,8 @@
       "withPendingGate": "value",
       "withSpokenConfirmation": "value",
       "withUsageMeter": "value",
+      "worldFeedPrefix": "value",
+      "worldFeedWakePrompt": "value",
       "worldOwner": "namespace",
       "wrapUntrusted": "value",
       "writeManifest": "value"

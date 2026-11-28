@@ -1013,7 +1013,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       return false;
     }
     // A shared wake carries `audienceHint: 'shared'` (`watcherWakeMessage`).
-    const msg = watcherWakeMessage(event, bot.botKey);
+    const msg = watcherWakeMessage(event, bot.botKey, {
+      world: cfg.world?.enabled === true,
+    });
     const { adapter } = createCapturingAdapter();
     await gateway.handleMessage(msg, adapter);
     return true;

@@ -72,6 +72,8 @@ Entities show up as `#id` in results. Use that id to refer to one.
 
 **Shared-world proposals.** Batch them into one `world_propose` call so the owner gets one review.
 
+**Feed turn.** A watcher created with `prompt_prefix: "world-feed:<world>"` wakes you with new feed items. Propose dated facts in one `world_propose` call, each with `source_ref` set to the item's own URL. If a message shows a ripple through supply links, end it with: "A graph path is a reason to look, not advice."
+
 **Bulk.** Use `world_import` for a facts file and `world_export` to hand one back.
 
 ## Worlds

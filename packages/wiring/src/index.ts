@@ -2534,4 +2534,11 @@ export * from './room-policy'; // per-room prompts and policy; also the `@ethosa
 export * from './share'; // share-links store + redacted snapshot builder (plan share-links)
 export * from './system-jobs';
 export * as worldOwner from './world-owner'; // owner-surface codecs and access (plan world-model 7.2)
-export { createWorldRuntime, type WorldRuntime, type WorldRuntimeDeps } from './worlds'; // world model runtime (plan world-model 4.6)
+export {
+  createWorldRuntime,
+  expandWorldFeedPrefix,
+  type WorldRuntime,
+  type WorldRuntimeDeps,
+  worldFeedPrefix,
+  worldFeedWakePrompt,
+} from './worlds'; // world model runtime (plan world-model 4.6) and feed wake prompt (8.2)

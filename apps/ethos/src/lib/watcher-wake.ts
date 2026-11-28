@@ -6,21 +6,24 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { AgentEvent, InboundMessage } from '@ethosagent/types';
 import type { WatcherWakeEvent } from '@ethosagent/watchers';
-import { sanitize, wrapUntrusted } from '@ethosagent/wiring';
+import { expandWorldFeedPrefix, sanitize, wrapUntrusted } from '@ethosagent/wiring';
 
 /**
  * The prompt a woken turn sees. The diff summary is external observation —
  * wrapped as untrusted content and the assembled prompt sanitized before it
- * enters the loop (same treatment as the cron precheck path).
+ * enters the loop (same treatment as the cron precheck path). With `opts.world`
+ * (`config.world.enabled`) a `world-feed:<world>` prefix expands to the world-feed
+ * prompt (`@ethosagent/wiring` `worldFeedWakePrompt`); pinned by
+ * `packages/wiring/src/__tests__/world-feed.test.ts` and `watcher-audience.test.ts`.
  */
-export function watcherWakePrompt(event: WatcherWakeEvent): string {
+export function watcherWakePrompt(event: WatcherWakeEvent, opts: { world?: boolean } = {}): string {
   const wrapped = wrapUntrusted({
     content: event.summary,
     toolName: 'watcher',
     source: `${event.watcherId}:${event.target}`,
   });
   return sanitize(
-    `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
+    `${expandWorldFeedPrefix(event.promptPrefix, opts.world === true) ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
   );
 }
 
@@ -31,11 +34,15 @@ export function watcherWakePrompt(event: WatcherWakeEvent): string {
  * (`WatcherManager.wakeAudience`) carries `audienceHint: 'shared'`, which
  * `Gateway.audienceFor` reads — the watcher came from, or reports to, a room.
  */
-export function watcherWakeMessage(event: WatcherWakeEvent, botKey: string): InboundMessage {
+export function watcherWakeMessage(
+  event: WatcherWakeEvent,
+  botKey: string,
+  opts: { world?: boolean } = {},
+): InboundMessage {
   return {
     platform: 'watcher',
     chatId: `watcher:${event.watcherId}`,
-    text: watcherWakePrompt(event),
+    text: watcherWakePrompt(event, opts),
     isDm: true,
     isGroupMention: false,
     botKey,
@@ -52,8 +59,9 @@ export function watcherWakeMessage(event: WatcherWakeEvent, botKey: string): Inb
 export function runWatcherWakeTurn(
   loop: Pick<AgentLoop, 'run'>,
   event: WatcherWakeEvent,
+  opts: { world?: boolean } = {},
 ): AsyncIterable<AgentEvent> {
-  return loop.run(watcherWakePrompt(event), {
+  return loop.run(watcherWakePrompt(event, opts), {
     sessionKey: `watcher:${event.watcherId}:${new Date().toISOString()}`,
     personalityId: event.personalityId,
     roomAudience: event.roomAudience,

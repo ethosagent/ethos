@@ -621,7 +621,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     if (!loop) return false;
     // Under the wake's own audience (`WatcherManager.wakeAudience`); a
     // call-capture wake passes `'private'` (`callCaptureWake`).
-    for await (const _event of runWatcherWakeTurn(loop, event)) {
+    for await (const _event of runWatcherWakeTurn(loop, event, {
+      world: config.world?.enabled === true,
+    })) {
       // Drain — a woken agent acts through its tools; no surface consumes
       // this stream in `ethos serve`.
     }

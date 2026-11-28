@@ -1429,7 +1429,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       return false;
     }
     // A shared wake carries `audienceHint: 'shared'` (`watcherWakeMessage`).
-    const msg = watcherWakeMessage(event, bot.botKey);
+    const msg = watcherWakeMessage(event, bot.botKey, {
+      world: config.world?.enabled === true,
+    });
     const { adapter } = createCapturingAdapter();
     await gateway.handleMessage(msg, adapter);
     return true;
