@@ -1332,6 +1332,9 @@ importers:
       '@ethosagent/voice-text':
         specifier: workspace:*
         version: link:../../packages/voice-text
+      '@ethosagent/web-contracts':
+        specifier: workspace:*
+        version: link:../../packages/web-contracts
     devDependencies:
       '@ethosagent/config':
         specifier: workspace:*
