@@ -244,7 +244,7 @@ export function buildSystemTaskHandlers(
     // Cron grants nothing here: no prompt, no toolset. The tick reads each personality's
     // own settings (packages/wiring/src/initiative-runtime.ts).
     'initiative-tick': async () => {
-      const { runInitiativeTickOnce } = await import('./commands/initiative-tick');
+      const { runInitiativeTickOnce } = await import('./lib/initiative-tick');
       return { output: await runInitiativeTickOnce(config) };
     },
     'weekly-digest': async () => {

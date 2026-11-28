@@ -138,6 +138,11 @@ export const COMMAND_TABLE: readonly CommandTableEntry[] = [
   // Automate
   { name: 'cron', group: 'Automate', description: 'Schedule and manage recurring jobs' },
   { name: 'batch', group: 'Automate', description: 'Run a batch of prompts non-interactively' },
+  {
+    name: 'initiatives',
+    group: 'Automate',
+    description: 'Run a read-only initiative survey or exploration window',
+  },
   { name: 'nightly', group: 'Automate', description: 'Run a nightly maintenance job' },
   { name: 'digest', group: 'Automate', description: 'Produce an activity digest' },
   // Data

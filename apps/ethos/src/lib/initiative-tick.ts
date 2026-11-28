@@ -1,4 +1,4 @@
-// The `initiative-tick` system cron job (plan Task 5.5): one `InitiativeRuntime.tick`.
+// The `initiative-tick` system cron job (plan Task 5.5; a system-task handler, so it lives in lib/): one `InitiativeRuntime.tick`.
 //
 // The job carries no prompt and no toolset. Nothing is built until `initiatives.db` exists, so an
 // install that never saved an initiative spends $0 and opens no extra loop. After that the loop is
