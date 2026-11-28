@@ -183,12 +183,9 @@ export class SkillHistory {
     const target = this.resolve(dest);
     const rows = await this.readRows(target);
     const live = await this.storage.read(target.live);
-    const liveHash = live === null ? null : sha256Hex(live);
-    const head = rows.at(-1);
-    const pending = head === undefined ? live !== null : head.hash !== liveHash;
     return {
       locked: await this.readLock(target),
-      versionCount: rows.length + (pending ? 1 : 0),
+      versionCount: rows.length + (hasDrifted(rows, live) ? 1 : 0),
     };
   }
 
@@ -237,9 +234,7 @@ export class SkillHistory {
   /** Append an `external` row when the live bytes differ from the head row (D10). */
   private async captureDrift(target: Target, rows: SkillVersion[]): Promise<SkillVersion[]> {
     const live = await this.storage.read(target.live);
-    const liveHash = live === null ? null : sha256Hex(live);
-    const head = rows.at(-1);
-    if (head === undefined ? live === null : head.hash === liveHash) return rows;
+    if (!hasDrifted(rows, live)) return rows;
     await this.storage.mkdir(target.historyDir);
     const row = this.makeRow(rows, live, { source: 'external', actor: 'external' });
     if (live !== null) await this.storage.writeAtomic(blobPath(target, row.versionId), live);
@@ -363,6 +358,13 @@ interface Target {
 const rowsPath = (t: Target): string => join(t.historyDir, 'versions.jsonl');
 const lockPath = (t: Target): string => join(t.historyDir, 'lock.json');
 const blobPath = (t: Target, versionId: string): string => join(t.historyDir, `${versionId}.md`);
+
+/** Whether the live bytes differ from the head row (no rows: whether a file exists). */
+function hasDrifted(rows: SkillVersion[], live: string | null): boolean {
+  const head = rows.at(-1);
+  if (head === undefined) return live !== null;
+  return head.hash !== (live === null ? null : sha256Hex(live));
+}
 
 function sha256Hex(s: string): string {
   return createHash('sha256').update(s).digest('hex');
