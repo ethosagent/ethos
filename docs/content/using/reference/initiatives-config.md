@@ -61,7 +61,7 @@ delivery: { owner_channel: "slack:C123", digest_time: "08:30" }
 | `origin` | `human` or `agent` | `agent` is saved only by the runner and needs `parent_id`. |
 | `created_in` | string | The session that created it. |
 | `state` | `active`, `self_started`, `paused`, `review`, `ended`, `stopped` | New human initiatives start `active`, agent ones `self_started`. |
-| `sources[]` | `sessions`, `kanban`, `memory`, `web`, `slack_read`, or `{ repo: <path> }` | What a run may read. A `repo` path must be absolute or start with `~`, sit inside `readableRoots`, and avoid `~/.ssh`, `.env*`, `*.pem` and `id_*`. `slack_read` has no read tool, so it reads nothing. |
+| `sources[]` | `sessions`, `kanban`, `memory`, `web`, `slack_read`, or `{ repo: <path> }` | What a run may read. A `repo` path must be absolute or start with `~`, sit inside `readableRoots`, and avoid `~/.ssh`, `.env*`, `*.pem` and `id_*`. `slack_read` has no read tool, so it reads nothing. World graph reads are not a source key: they follow `world.enabled` and the personality's toolset, and cover `shareable` worlds only. |
 | `exclude[]` | string list | Topics to leave out. A child draft may not drop its parent's entries. |
 | `guidance[]` | `{ text, maps_to?, status? }` | Advice, never permission. `status` is `mapped`, `unreachable` (no tool for it in the toolset, or no connector) or `refused` (it asks to act or reach a path). A refused line blocks the save. |
 | `autonomy.mode` | `ask`, `free_under`, `free` | `ask` always waits for you. `free_under` starts a proposal at or below `ask_above_usd`. `free` never asks. |

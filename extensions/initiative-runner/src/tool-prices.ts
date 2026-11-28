@@ -49,6 +49,10 @@ export const INITIATIVE_FREE_READ_TOOLS = Object.freeze([
   'goal_status',
   'read_file',
   'search_files',
+  // Free because the only registered world backend is local 'sqlite' (packages/wiring/src/build-infrastructure.ts:410); a remote backend must add a price here.
+  'world_query',
+  'world_neighbours',
+  'world_history',
 ] as const);
 
 /** USD charged for one call to `toolName`; 0 for a free, ledger or unknown tool. */

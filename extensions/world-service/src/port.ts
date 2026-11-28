@@ -21,6 +21,9 @@ import type {
   WriteOutcome,
 } from './service';
 
+/** The read-only slice of the port: all a run's world read tools may reach (no write method). */
+export type WorldReadPort = Pick<WorldToolPort, 'visible' | 'query' | 'neighbours' | 'history'>;
+
 export interface WorldToolPort {
   visible(c: Caller): Promise<ResolvedWorld[]>;
   query(c: Caller, world: string | null, q: GraphQuery, slice?: TimeSlice): Promise<TaggedFacts>;

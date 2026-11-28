@@ -47,7 +47,9 @@ import { createKanbanTools } from '@ethosagent/tools-kanban';
 import { createTeamMemoryTools } from '@ethosagent/tools-memory';
 import { buildDashboardTools, dashboardSaveTool } from '@ethosagent/tools-ui';
 import { createWatcherTools } from '@ethosagent/tools-watchers';
-import type { InitiativeLedgerPort, Tool } from '@ethosagent/types';
+import { composeReadTools, compose as composeWorld } from '@ethosagent/tools-world/compose';
+import type { InitiativeLedgerPort, Tool, WiringContext } from '@ethosagent/types';
+import type { WorldToolPort } from '@ethosagent/world-service';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentLoop, type WiringConfig, type WiringProfile } from '../index';
 
@@ -103,6 +105,9 @@ function buildHostWired(dataDir: string): { tools: Tool[]; close: () => void } {
     createRunClarifyTool(ledger, 'INI-1'),
     ...createInitiativeRecallTools(inert, 'census'),
     ...createInitiativeChatTools({ config: inert, ideas: () => ledger, recall: inert }),
+    // World tools exist only under `world.enabled`, which this census does not turn on; the ten
+    // are built over an inert port (construction closes over it) so each name is classified.
+    ...composeWorld(inert as WiringContext, { port: inert as WorldToolPort }).tools,
   ];
   return {
     tools,
@@ -200,6 +205,12 @@ describe('initiative read-only census (L7)', () => {
     const all = Object.values(CLASSES).flatMap((s) => [...s]);
     const unknown = all.filter((n) => !tools.has(n) && NOT_COMPOSED[n] === undefined).sort();
     expect(unknown).toEqual([]);
+  });
+
+  it('every tool the run registry constructs via composeReadTools is a READ tool', () => {
+    const built = composeReadTools({ port: {} as WorldToolPort }).map((t) => t.name);
+    expect(built.length).toBeGreaterThan(0);
+    expect(built.filter((n) => !CLASSES.READ?.has(n))).toEqual([]);
   });
 
   it('NOT_COMPOSED has no stale entries', () => {

@@ -18,6 +18,21 @@ import type {
 import { WorldContextInjector, type WorldToolPort } from '@ethosagent/world-service';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createAgentLoop, type WiringConfig } from '../index';
+import type { LazyInitiativeStore } from '../initiatives';
+
+// Captures each ledger composeAllTools builds so a test can read what the compose stage set on it.
+const ledgers = vi.hoisted(() => [] as unknown[]);
+vi.mock('../initiatives', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../initiatives')>();
+  return {
+    ...actual,
+    createLazyInitiativeStore: (...args: Parameters<typeof actual.createLazyInitiativeStore>) => {
+      const store = actual.createLazyInitiativeStore(...args);
+      ledgers.push(store);
+      return store;
+    },
+  };
+});
 
 type Runtime = Awaited<ReturnType<typeof createAgentLoop>>;
 
@@ -59,6 +74,8 @@ describe('world runtime wiring', () => {
   let dataDir: string;
   let off: Runtime;
   let on: Runtime;
+  let offLedger: LazyInitiativeStore;
+  let onLedger: LazyInitiativeStore;
   const prevEnv: Record<string, string | undefined> = {};
 
   async function build(world: WiringConfig['world']): Promise<Runtime> {
@@ -86,7 +103,9 @@ describe('world runtime wiring', () => {
     process.env.HOME = home;
     process.env.ETHOS_STATE_DIR = dataDir;
     off = await build(undefined);
+    offLedger = ledgers.at(-1) as LazyInitiativeStore;
     on = await build({ enabled: true });
+    onLedger = ledgers.at(-1) as LazyInitiativeStore;
   }, 180_000);
 
   afterAll(async () => {
@@ -108,6 +127,12 @@ describe('world runtime wiring', () => {
   it('world.enabled true registers the ten tools and one injector', () => {
     expect(registered(on.toolRegistry)).toEqual([...WORLD_TOOL_NAMES].sort());
     expect(injectorsOf(on).filter((i) => i instanceof WorldContextInjector)).toHaveLength(1);
+  });
+
+  it('compose stage hands the initiative ledger a world port only when world is enabled', () => {
+    expect(onLedger).not.toBe(offLedger);
+    expect(onLedger.readSources.worldPort).toBeDefined();
+    expect(offLedger.readSources.worldPort).toBeUndefined();
   });
 
   it('tools reach the model only when toolset.yaml lists them', () => {

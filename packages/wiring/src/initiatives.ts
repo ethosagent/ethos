@@ -38,6 +38,7 @@ import {
   createYouTubeSearchTool,
 } from '@ethosagent/tools-social-search';
 import { createWebTools } from '@ethosagent/tools-web';
+import { composeReadTools as composeWorldReadTools } from '@ethosagent/tools-world/compose';
 import { createXSearchTool } from '@ethosagent/tools-x-search';
 import {
   type AgentSafety,
@@ -61,6 +62,7 @@ import {
   type Tool,
   type WindowRow,
 } from '@ethosagent/types';
+import type { WorldReadPort, WorldToolPort } from '@ethosagent/world-service';
 
 /**
  * The constructors an initiative run draws its tools from. Injectable so a test
@@ -92,6 +94,8 @@ export interface InitiativeToolDeps {
   teamMemory?: MemoryProvider;
   kanbanStore?: KanbanStore;
   goalStore?: GoalStore;
+  /** Present only when `world.enabled`; absent means a run gets no world tool. */
+  worldPort?: WorldToolPort;
 }
 
 /** The default factories: the same constructors compose-tools.ts and build-agent-loop.ts call. */
@@ -142,10 +146,20 @@ export function defaultInitiativeToolFactories(deps: InitiativeToolDeps): Initia
     ],
     () => createMemoryTools(deps.memory, deps.session),
   ];
-  const { teamMemory, kanbanStore, goalStore } = deps;
+  const { teamMemory, kanbanStore, goalStore, worldPort } = deps;
   if (teamMemory) read.push(() => createTeamMemoryTools(teamMemory));
   if (kanbanStore) read.push(() => createKanbanTools({ store: kanbanStore }));
   if (goalStore) read.push(() => createGoalTools(goalStore));
+  if (worldPort) {
+    // Only the four read methods leave this scope: a run's tools cannot reach a write method.
+    const port: WorldReadPort = Object.freeze({
+      visible: worldPort.visible.bind(worldPort),
+      query: worldPort.query.bind(worldPort),
+      neighbours: worldPort.neighbours.bind(worldPort),
+      history: worldPort.history.bind(worldPort),
+    });
+    read.push(() => composeWorldReadTools({ port }));
+  }
   return {
     read,
     ledger: (port, initiativeId, explorationId) => [
@@ -317,7 +331,11 @@ export interface LazyInitiativeStore {
   /** Binds `usd_per_exploration` (clamped) the same way; a proposal's budget never exceeds it. Unbound = 0. */
   setExplorationCap(initiativeId: string, usdPerExploration: number): void;
   /** Stores a run's read tools may use besides the ledger; compose fills them when the host has them. */
-  readSources: { kanbanStore?: KanbanStore; teamMemory?: MemoryProvider };
+  readSources: {
+    kanbanStore?: KanbanStore;
+    teamMemory?: MemoryProvider;
+    worldPort?: WorldToolPort;
+  };
   /** A no-op until the db has been opened. */
   close(): void;
 }
@@ -437,7 +455,7 @@ export function createInitiativeRunnerFor(deps: {
   log?: { warn(message: string): void };
 }): InitiativeRunner {
   const store = deps.ledger.store;
-  const { kanbanStore, teamMemory } = deps.ledger.readSources;
+  const { kanbanStore, teamMemory, worldPort } = deps.ledger.readSources;
   const resolver = deps.config.secretsResolver;
   const secretsBackend = resolver
     ? async (ref: SecretRef): Promise<string> => {
@@ -456,6 +474,7 @@ export function createInitiativeRunnerFor(deps: {
       ...(deps.goalStore ? { goalStore: deps.goalStore } : {}),
       ...(kanbanStore ? { kanbanStore } : {}),
       ...(teamMemory ? { teamMemory } : {}),
+      ...(worldPort ? { worldPort } : {}),
       ...(deps.config.webSearchBackend ? { webSearchBackend: deps.config.webSearchBackend } : {}),
       ...(deps.config.searxngUrl ? { searxngUrl: deps.config.searxngUrl } : {}),
       ...(deps.config.toolSettings ? { toolSettings: deps.config.toolSettings } : {}),

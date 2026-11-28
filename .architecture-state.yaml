@@ -188,7 +188,7 @@ register_anchors:
     - { path: extensions/world-service/src/access.ts, line: 38, contains: "export function resolveAccess" }
 
   G-INIT-RO:
-    - { path: packages/wiring/src/initiatives.ts, line: 179, contains: "export function buildReadOnlyRegistry" }
+    - { path: packages/wiring/src/initiatives.ts, line: 193, contains: "export function buildReadOnlyRegistry" }
     - { path: extensions/initiative-runner/src/capability-audit.ts, line: 28, contains: "export function assertReadOnlyCapabilities" }
     - { path: extensions/initiative-runner/src/tool-gate.ts, line: 11, contains: "export function createInitiativeToolGate" }
 

@@ -2157,10 +2157,9 @@ export async function composeAllTools(
 
   // -------------------------------------------------------------------------
   // World model (plan world-model 4.6). Off by default: nothing below runs, no store is
-  // opened, no tool is registered and no injector is pushed. This is the only place the
-  // world runtime is created; its store and provider handles close with this stage's
-  // DisposerStack. The tools get a port (never a provider) and reach the model only for a
-  // personality whose toolset.yaml lists them (build-agent-loop.ts `worldTools` exclude).
+  // opened, no tool is registered and no injector is pushed. This is the only place the world
+  // runtime is created; its handles close with this stage's DisposerStack. Tools get a port, never
+  // a provider, and only a personality listing them in toolset.yaml sees them (`worldTools`).
   // -------------------------------------------------------------------------
   let worldCapture: RouteFactFn | undefined;
   let worlds: ComposeToolsResult['worlds'];
@@ -2190,6 +2189,7 @@ export async function composeAllTools(
       tools.register(tool);
     }
     injectors.push(worldRuntime.injector());
+    initiativeLedger.readSources.worldPort = worldRuntime.toolPort();
     worlds = {
       service: worldRuntime.service,
       schema: worldRuntime.schema,

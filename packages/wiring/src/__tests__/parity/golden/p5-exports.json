@@ -6524,6 +6524,7 @@
       "WorldContextInjectorOptions": "type",
       "WorldFile": "type",
       "WorldFileSchema": "value",
+      "WorldReadPort": "type",
       "WorldSchemaService": "value",
       "WorldSchemaServiceDeps": "type",
       "WorldService": "value",

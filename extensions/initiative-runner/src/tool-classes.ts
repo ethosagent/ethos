@@ -28,6 +28,10 @@ export const INITIATIVE_READ_TOOLS = Object.freeze([
   'goal_status',
   'read_file',
   'search_files',
+  // World reads; registered only with a world port, R6 audience filter: world-service access.ts.
+  'world_query',
+  'world_neighbours',
+  'world_history',
 ] as const);
 
 /** Engine tools: always available to a run, regardless of the personality toolset. */
@@ -201,6 +205,20 @@ export const INITIATIVE_NEVER_TOOLS: ReadonlySet<string> = new FrozenSet<string>
   'video_analyze',
   'vision_analyze',
   'think_deeper',
+  // world writes and bulk tools; world_export writes an export artifact
+  'world_assert',
+  'world_propose',
+  'world_close',
+  'world_schema_change',
+  'world_import',
+  'world_build',
+  'world_export',
+]);
+
+const WORLD_READ_TOOLS: ReadonlySet<string> = new Set([
+  'world_query',
+  'world_neighbours',
+  'world_history',
 ]);
 
 /**
@@ -211,11 +229,17 @@ export const INITIATIVE_NEVER_TOOLS: ReadonlySet<string> = new FrozenSet<string>
  * (packages/core/src/tool-registry.ts): `undefined` is unrestricted, so the whole
  * read allowlist; `[]` allows nothing (only ledger tools remain); there is no
  * wildcard, so `'*'` matches no tool name. A toolset can only remove READ
- * entries, never add one.
+ * entries, never add one. One exception: the world reads are opt-in, included
+ * only when the toolset lists them (even when it is `undefined`), matching chat,
+ * which hides every `world_*` tool the toolset does not list
+ * (packages/wiring/src/personality-tool-exclude.ts). Pinned by
+ * `initiative-allowlist.test.ts` 'world reads are opt-in'.
  */
 export function runToolNames(personalityToolset: readonly string[] | undefined): string[] {
-  const read = personalityToolset
-    ? INITIATIVE_READ_TOOLS.filter((n) => personalityToolset.includes(n))
-    : [...INITIATIVE_READ_TOOLS];
+  const read = INITIATIVE_READ_TOOLS.filter((n) =>
+    WORLD_READ_TOOLS.has(n)
+      ? (personalityToolset?.includes(n) ?? false)
+      : !personalityToolset || personalityToolset.includes(n),
+  );
   return [...read, ...INITIATIVE_LEDGER_TOOLS];
 }

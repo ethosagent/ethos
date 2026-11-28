@@ -1,5 +1,5 @@
 // world_query, world_neighbours, world_history: reads through the narrow
-// WorldToolPort. Service-mediated like memory_read (`capabilities: {}`), so
+// WorldReadPort (visible/query/neighbours/history only). Service-mediated like memory_read (`capabilities: {}`), so
 // the tool holds no provider and no Storage. The port resolves which worlds
 // the turn may see (mounts, grants, audience), so an owner_only world is
 // already absent in a shared turn (R6: world-tools.test.ts 'shared turn drops
@@ -7,7 +7,7 @@
 // 'R8 unscoped queries are tagged and span only mounted worlds').
 
 import type { GraphQuery, TimeSlice } from '@ethosagent/types';
-import type { WorldToolPort } from '@ethosagent/world-service';
+import type { WorldReadPort } from '@ethosagent/world-service';
 import {
   AS_OF,
   callerOf,
@@ -43,7 +43,7 @@ function sliceOf(asOf: unknown): TimeSlice | undefined | 'bad' {
   return AS_OF.test(v) ? { asOf: v } : 'bad';
 }
 
-export function createReadTools(port: WorldToolPort): ToolDef[] {
+export function createReadTools(port: WorldReadPort): ToolDef[] {
   const query: ToolDef = {
     name: 'world_query',
     description:
