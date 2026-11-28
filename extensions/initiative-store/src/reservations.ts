@@ -75,16 +75,50 @@ function scopes(
   ];
 }
 
+const HOLDER_PID = /^pid:(\d+)$/;
+
+/**
+ * A holder is `pid:N`. A hold whose process no longer exists on this host (a Ctrl-C or kill the
+ * runner never saw) is dropped now instead of waiting out its TTL. Pinned by reservations.test.ts,
+ * 'a hold whose process is gone is pruned'.
+ */
+function pruneDeadHolders(db: Database.Database, isPidAlive: (pid: number) => boolean): void {
+  const rows = db.prepare('SELECT window_id, holder FROM window_reservations').all() as Array<{
+    window_id: string;
+    holder: string;
+  }>;
+  const gone = db.prepare('DELETE FROM window_reservations WHERE window_id = ?');
+  const dead = new Map<number, boolean>();
+  for (const row of rows) {
+    const m = HOLDER_PID.exec(row.holder);
+    if (!m?.[1]) continue;
+    const pid = Number(m[1]);
+    let isDead = dead.get(pid);
+    if (isDead === undefined) {
+      isDead = !isPidAlive(pid);
+      dead.set(pid, isDead);
+    }
+    if (isDead) gone.run(row.window_id);
+  }
+}
+
 /** Call only inside a `BEGIN IMMEDIATE` transaction. `windowId` is minted by the caller. */
 export function reserveWindow(
   db: Database.Database,
   r: WindowReservationRequest,
-  input: { windowId: string; initiativeCap: number; nowMs: number; holder: string },
+  input: {
+    windowId: string;
+    initiativeCap: number;
+    nowMs: number;
+    holder: string;
+    isPidAlive: (pid: number) => boolean;
+  },
 ): WindowReservationResult | null {
   const at = new Date(input.nowMs).toISOString();
   const day = at.slice(0, 10);
   // Dead reservations are dropped, never counted.
   db.prepare('DELETE FROM window_reservations WHERE expires_at <= ?').run(at);
+  pruneDeadHolders(db, input.isPidAlive);
   if (r.reserveUsd > 0) {
     const exploration =
       r.kind === 'window' && r.explorationId

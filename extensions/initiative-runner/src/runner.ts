@@ -126,10 +126,15 @@ export interface RunReport {
   error?: string;
 }
 
+/** `signal` stops the run the way a cap does: the loop drains and the window closes, which releases its reservation. */
+export interface RunOptions {
+  signal?: AbortSignal;
+}
+
 export interface InitiativeRunner {
-  runSurvey(initiativeId: string): Promise<RunReport>;
+  runSurvey(initiativeId: string, opts?: RunOptions): Promise<RunReport>;
   /** Looks for topics worth their own initiative; its drafts are materialised after the run. */
-  runScan(initiativeId: string): Promise<RunReport>;
+  runScan(initiativeId: string, opts?: RunOptions): Promise<RunReport>;
   /** Materialises pending drafts now (the scan does it after its own run). */
   materialiseDrafts(): Promise<DraftOutcome[]>;
   /** Pauses every self-started initiative with no owner reaction for 14 days; returns their ids. */
@@ -141,7 +146,7 @@ export interface InitiativeRunner {
   runWindow(
     initiativeId: string,
     explorationId: string,
-    opts?: { capUsd?: number },
+    opts?: RunOptions & { capUsd?: number },
   ): Promise<RunReport>;
 }
 
@@ -158,6 +163,10 @@ function readRef(toolName: string, args: unknown): string | null {
     }
   }
   return toolName;
+}
+
+function signalOf(opts: RunOptions | undefined): { signal?: AbortSignal } {
+  return opts?.signal ? { signal: opts.signal } : {};
 }
 
 function notFound(initiativeId: string): EthosError {
@@ -189,6 +198,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     kind: 'survey' | 'window' | 'scan';
     exploration: ExplorationRow | null;
     capUsd?: number;
+    signal?: AbortSignal;
   }): Promise<RunReport> {
     const loaded = await deps.load(input.initiativeId);
     if (!loaded) throw notFound(input.initiativeId);
@@ -217,6 +227,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       kind: 'survey' | 'window' | 'scan';
       exploration: ExplorationRow | null;
       capUsd?: number;
+      signal?: AbortSignal;
     },
     loaded: LoadedInitiative,
     constitution: Constitution['initiatives'],
@@ -280,6 +291,10 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       day,
     });
     const abort = new AbortController();
+    // An outside stop (Ctrl-C) aborts the same controller a cap does, so the loop drains and the
+    // window closes below; closeWindow is what releases the reservation.
+    if (input.signal?.aborted) abort.abort();
+    else input.signal?.addEventListener('abort', () => abort.abort(), { once: true });
     const guard = createWindowGuard(
       {
         // One source: the store's cap (`capFor`, bound by wiring to the clamped `usd_per_day`).
@@ -472,7 +487,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     // The abort surfaces as an empty-completion error; the real reason is the missing price.
     if (unpriced) error = `unpriced model "${pricedModel}": stopped, its cost cannot be capped`;
     // A cap abort ends the run with an empty-completion error event; the cap is the reason.
-    const endReason = guard.endReason() ?? (error ? 'error' : 'done');
+    const endReason =
+      guard.endReason() ?? (input.signal?.aborted ? 'aborted' : error ? 'error' : 'done');
 
     deps.store.closeWindow(windowId, {
       spentUsd: guard.spentUsd(),
@@ -540,8 +556,10 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
   }
 
   return {
-    runSurvey: (initiativeId) => run({ initiativeId, kind: 'survey', exploration: null }),
-    runScan: (initiativeId) => run({ initiativeId, kind: 'scan', exploration: null }),
+    runSurvey: (initiativeId, opts) =>
+      run({ initiativeId, kind: 'survey', exploration: null, ...signalOf(opts) }),
+    runScan: (initiativeId, opts) =>
+      run({ initiativeId, kind: 'scan', exploration: null, ...signalOf(opts) }),
     materialiseDrafts: materialise,
     pauseIdle: () => selfStart?.pauseIdle() ?? [],
     async runWindow(initiativeId, explorationId, opts) {
@@ -565,6 +583,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         kind: 'window',
         exploration,
         ...(opts?.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
+        ...signalOf(opts),
       });
     },
   };

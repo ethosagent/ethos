@@ -1,7 +1,8 @@
 import { createInitiativeRunner, type InitiativeRunner } from '@ethosagent/initiative-runner';
 import { EthosError } from '@ethosagent/types';
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { parseRunArgs, runInitiativesCommand } from '../initiatives';
+import { abortOnSignals, parseRunArgs, runInitiativesCommand } from '../initiatives';
 
 // A real runner whose `load` finds nothing: the unknown-id error comes from the runner, not a double.
 function runnerWithNoInitiatives(): InitiativeRunner {
@@ -103,5 +104,62 @@ describe('ethos initiatives run', () => {
     expect(out).toContain('tools:  initiative_propose, read_file');
     expect(out).toContain('read_file: /repo/README.md');
     expect(out).toContain('cost: $0.1234');
+  });
+});
+
+describe('stopping a manual run', () => {
+  const report = {
+    windowId: 'W-1',
+    kind: 'survey' as const,
+    initiativeId: 'a',
+    explorationId: null,
+    spentUsd: 0,
+    endReason: 'aborted',
+    toolsUsed: [],
+    reads: [],
+    proposals: [],
+    ideas: [],
+    findings: [],
+    text: '',
+    started: [],
+    waiting: [],
+    outcome: null,
+    drafts: [],
+  };
+
+  it('SIGINT and SIGTERM abort the run signal once, and the listeners are removable', () => {
+    for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+      const proc = new EventEmitter();
+      const ctl = new AbortController();
+      const detach = abortOnSignals(ctl, proc as unknown as NodeJS.Process);
+      expect(ctl.signal.aborted).toBe(false);
+      proc.emit(sig);
+      expect(ctl.signal.aborted).toBe(true);
+      detach();
+      expect(proc.listenerCount('SIGINT') + proc.listenerCount('SIGTERM')).toBe(0);
+    }
+  });
+
+  it('the run is handed the signal, so a signal during the run reaches the runner', async () => {
+    const proc = new EventEmitter();
+    const ctl = new AbortController();
+    abortOnSignals(ctl, proc as unknown as NodeJS.Process);
+    let seen: AbortSignal | undefined;
+    const runner: InitiativeRunner = {
+      runSurvey: async (_id, opts) => {
+        seen = opts?.signal;
+        proc.emit('SIGINT'); // Ctrl-C while the window is open
+        return report;
+      },
+      runWindow: async () => report,
+      runScan: async () => report,
+      materialiseDrafts: async () => [],
+      pauseIdle: () => [],
+    };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runInitiativesCommand(['run', 'a', '--survey'], runner, { signal: ctl.signal });
+    vi.restoreAllMocks();
+    expect(seen).toBe(ctl.signal);
+    expect(seen?.aborted).toBe(true);
   });
 });

@@ -69,6 +69,20 @@ export interface SQLiteInitiativeStoreOptions {
   capFor?: (initiativeId: string) => number;
   /** `usd_per_exploration` per initiative; a proposal's budget is clamped to it. Unset = no clamp. */
   explorationCapFor?: (initiativeId: string) => number;
+  /** This process's id, written as the reservation holder (`pid:N`). Defaults to `process.pid`. */
+  processId?: number;
+  /** Whether a process still exists on this host; a reservation held by a dead one is pruned. Tests inject it. */
+  isPidAlive?: (pid: number) => boolean;
+}
+
+/** `kill(pid, 0)` sends nothing: ESRCH means no such process, EPERM means it exists. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
 }
 
 const DAY_MS = 86_400_000;
@@ -127,11 +141,15 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   private readonly now: () => number;
   private readonly capFor: (initiativeId: string) => number;
   private readonly explorationCapFor: ((initiativeId: string) => number) | undefined;
+  private readonly processId: number;
+  private readonly isPidAlive: (pid: number) => boolean;
 
   constructor(dbPath: string, opts: SQLiteInitiativeStoreOptions = {}) {
     this.now = opts.now ?? Date.now;
     this.capFor = opts.capFor ?? (() => 0);
     this.explorationCapFor = opts.explorationCapFor;
+    this.processId = opts.processId ?? process.pid;
+    this.isPidAlive = opts.isPidAlive ?? pidAlive;
     // mkdir -p the parent: the same raw-fs carve-out the other SQLite stores use
     // (.claude/rules/fs-carveouts-sqlite.md). `:memory:` has no parent.
     if (dbPath !== ':memory:') {
@@ -577,7 +595,8 @@ export class SQLiteInitiativeStore implements InitiativeStore {
           windowId: id,
           initiativeCap: this.capFor(w.initiativeId),
           nowMs: this.now(),
-          holder: `pid:${process.pid}`,
+          holder: `pid:${this.processId}`,
+          isPidAlive: this.isPidAlive,
         },
       );
       if (refused) return refused;

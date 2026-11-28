@@ -68,19 +68,39 @@ function printReport(report: RunReport, say: Say): void {
   if (report.error) say(`  note: ${report.error}`);
 }
 
+/**
+ * Aborts `ctl` on the first SIGINT or SIGTERM. The runner then drains its loop and closes the
+ * window, which releases the day's reservation (runner.ts; pinned by run-abort.test.ts). The
+ * handlers are `once`, so a second Ctrl-C takes Node's default and kills the process. Returns a
+ * function that removes them.
+ */
+export function abortOnSignals(
+  ctl: AbortController,
+  proc: Pick<NodeJS.Process, 'once' | 'off'>,
+): () => void {
+  const stop = (): void => ctl.abort();
+  proc.once('SIGINT', stop);
+  proc.once('SIGTERM', stop);
+  return () => {
+    proc.off('SIGINT', stop);
+    proc.off('SIGTERM', stop);
+  };
+}
+
 /** Parse, run, print. Throws `EthosError` for bad input or an unknown initiative. */
 export async function runInitiativesCommand(
   args: readonly string[],
   runner: InitiativeRunner,
-  opts: { json?: boolean } = {},
+  opts: { json?: boolean; signal?: AbortSignal } = {},
 ): Promise<RunReport> {
   const req = parseRunArgs(args);
+  const run = opts.signal ? { signal: opts.signal } : {};
   const report =
     req.kind === 'survey'
-      ? await runner.runSurvey(req.initiativeId)
+      ? await runner.runSurvey(req.initiativeId, run)
       : req.kind === 'scan'
-        ? await runner.runScan(req.initiativeId)
-        : await runner.runWindow(req.initiativeId, req.explorationId);
+        ? await runner.runScan(req.initiativeId, run)
+        : await runner.runWindow(req.initiativeId, req.explorationId, run);
   if (opts.json) writeJson({ ok: true, ...report });
   else printReport(report, sayFor(false));
   return report;
@@ -111,9 +131,14 @@ export async function runInitiatives(argv: string[], config: EthosConfig): Promi
   // Reject bad input before building a runtime (an LLM client, the stores).
   parseRunArgs(args);
   const runtime = await createAgentLoop(config);
+  const ctl = new AbortController();
+  const detach = abortOnSignals(ctl, process);
   try {
-    await runInitiativesCommand(args, runtime.initiativeRunner, { json });
+    await runInitiativesCommand(args, runtime.initiativeRunner, { json, signal: ctl.signal });
+    // Exit after the run drained and its window closed, with the conventional "interrupted" code.
+    if (ctl.signal.aborted) process.exitCode = 130;
   } finally {
+    detach();
     await releaseCommandRuntime(runtime, { drainMs: 0 });
   }
 }

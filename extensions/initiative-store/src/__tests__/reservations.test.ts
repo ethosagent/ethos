@@ -34,10 +34,20 @@ const req = (over: Partial<Reserve> = {}): Reserve => ({
   ...over,
 });
 
-function open(path: string, over: { now?: () => number; cap?: number } = {}) {
+function open(
+  path: string,
+  over: {
+    now?: () => number;
+    cap?: number;
+    processId?: number;
+    isPidAlive?: (pid: number) => boolean;
+  } = {},
+) {
   return new SQLiteInitiativeStore(path, {
     now: over.now ?? (() => NOW),
     capFor: () => over.cap ?? 1,
+    ...(over.processId !== undefined ? { processId: over.processId } : {}),
+    ...(over.isPidAlive ? { isPidAlive: over.isPidAlive } : {}),
   });
 }
 
@@ -88,6 +98,26 @@ describe('SQLiteInitiativeStore: cross-process window reservations', () => {
     expect(b.reserveAndOpenWindow(req({ reserveUsd: 0.5 })).ok).toBe(true);
     a.close();
     b.close();
+  });
+
+  it('a hold whose process is gone is pruned on reserve; a live one is kept', () => {
+    const path = tmpDb();
+    const a = open(path, { processId: 4242 });
+    expect(a.reserveAndOpenWindow(req({ reserveUsd: 1 })).ok).toBe(true);
+    const alive = open(path, { isPidAlive: () => true });
+    expect(alive.reserveAndOpenWindow(req({ reserveUsd: 0.5 })).ok).toBe(false);
+    const checked: number[] = [];
+    const reaper = open(path, {
+      isPidAlive: (pid) => {
+        checked.push(pid);
+        return pid !== 4242;
+      },
+    });
+    expect(reaper.reserveAndOpenWindow(req({ reserveUsd: 0.5 })).ok).toBe(true);
+    expect(checked).toContain(4242);
+    a.close();
+    alive.close();
+    reaper.close();
   });
 
   it('closing a window frees its reservation and records the spend', () => {
