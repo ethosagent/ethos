@@ -5,7 +5,7 @@
 // Pinned by write-routing.test.ts 'accepting a shared-world proposal applies it
 // with the original author and records decided_by'.
 
-import type { FactInput } from '@ethosagent/types';
+import type { FactAuthor, FactInput } from '@ethosagent/types';
 import { z } from 'zod';
 import type { SchemaChange } from './schema-diff';
 
@@ -129,8 +129,15 @@ export interface ClosePayload {
   factId: string;
   validTo: string;
   sourceRef: string;
+  /** The proposer's author (agent, or connector for a feed): accept closes with it, never the accepter. Required: a row without it is unreadable. */
+  author: FactAuthor;
 }
-const closeZ = z.object({ factId: z.string(), validTo: z.string(), sourceRef: z.string() });
+const closeZ = z.object({
+  factId: z.string(),
+  validTo: z.string(),
+  sourceRef: z.string(),
+  author,
+});
 export function parseClosePayload(raw: unknown): ClosePayload | null {
   const p = closeZ.safeParse(raw);
   return p.success ? p.data : null;

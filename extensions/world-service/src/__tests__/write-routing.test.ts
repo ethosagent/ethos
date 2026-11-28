@@ -79,6 +79,74 @@ describe('write routing', () => {
     expect(h.store.get(row?.id ?? '')?.status).toBe('accepted');
   });
 
+  it('accepting a conflict proposal records the proposal author and source as the closer, not the accepter or the old fact author', async () => {
+    const svc = h.provider.seedEntity(PRIVATE, 'Service', 'billing-svc');
+    const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const ravi = h.provider.seedEntity(PRIVATE, 'Person', 'Ravi');
+    const priyaOwns = h.provider.seedEdge(PRIVATE, 'owns', priya.id, svc.id, { author: 'user' });
+    await h.service.writeFacts(
+      caller(),
+      'private',
+      [
+        {
+          kind: 'edge',
+          type: 'owns',
+          fromId: ravi.id,
+          toId: svc.id,
+          sourceRef: 'chat:3',
+          author: 'agent',
+          confidence: 0.9,
+        },
+      ],
+      'Ravi took over',
+    );
+    const [row] = h.store.inbox(PRIVATE);
+    await h.service.acceptProposal(row?.id ?? '', 'owner');
+
+    const closure = h.provider.closures.find((c) => c.factId === priyaOwns.id);
+    expect(closure).toMatchObject({ kind: 'closed', author: 'agent', sourceRef: 'chat:3' });
+    // The accepting owner lives in decided_by only.
+    expect(h.store.get(row?.id ?? '')?.decidedBy).toBe('owner');
+    const closed = (await h.provider.changes(PRIVATE, '2000-01-01', 50)).find(
+      (c) => c.kind === 'closed' && c.factId === priyaOwns.id,
+    );
+    expect(closed).toMatchObject({ author: 'agent', sourceRef: 'chat:3' });
+  });
+
+  it('accepting a close proposal from a feed caller records connector as the closer', async () => {
+    const e = h.provider.seedEntity(ACME, 'Service', 'billing-svc');
+    const p = h.provider.seedEntity(ACME, 'Person', 'Ravi');
+    const edge = h.provider.seedEdge(ACME, 'owns', p.id, e.id, { author: 'agent' });
+    const out = await h.service.closeFact(
+      caller({ surface: 'feed' }),
+      'acme',
+      edge.id,
+      '2026-11-01',
+      'feed:hr',
+    );
+    expect(out.proposed).toHaveLength(1);
+    await h.service.acceptProposal(out.proposed[0] ?? '', 'owner');
+    expect(h.provider.closures).toEqual([
+      expect.objectContaining({
+        kind: 'closed',
+        factId: edge.id,
+        author: 'connector',
+        sourceRef: 'feed:hr',
+      }),
+    ]);
+  });
+
+  it('accepting a close proposal from the agent records agent as the closer', async () => {
+    const e = h.provider.seedEntity(ACME, 'Service', 'billing-svc');
+    const p = h.provider.seedEntity(ACME, 'Person', 'Ravi');
+    const edge = h.provider.seedEdge(ACME, 'owns', p.id, e.id, { author: 'agent' });
+    const out = await h.service.closeFact(caller(), 'acme', edge.id, '2026-11-01', 'chat:2');
+    await h.service.acceptProposal(out.proposed[0] ?? '', 'owner');
+    expect(h.provider.closures).toEqual([
+      expect.objectContaining({ factId: edge.id, author: 'agent', sourceRef: 'chat:2' }),
+    ]);
+  });
+
   it('R2 an attribute with a different value than a user fact becomes a conflict proposal', async () => {
     const priya = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
     const a = h.provider.seedAttribute(PRIVATE, priya.id, 'title', 'VP', { author: 'user' });

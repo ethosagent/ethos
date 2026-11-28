@@ -110,6 +110,83 @@ describe('SQLiteWorldGraphProvider — store', () => {
     ).toThrow(/never rewritten/);
   });
 
+  it('R3 closer and retirer columns are set once, with the close or retire, and never rewritten', () => {
+    const db = rawDb(store);
+    insertEntity(db, 'e-a');
+    insertEntity(db, 'e-b');
+    insertEdge(db, 'r-1', 'e-a', 'e-b');
+
+    // Not on a live fact: closer columns alone, without closing, are refused.
+    expect(() =>
+      db
+        .prepare(`UPDATE edges SET closed_by = 'agent', closed_source_ref = 'x' WHERE id = 'r-1'`)
+        .run(),
+    ).toThrow(/never rewritten/);
+    expect(() =>
+      db
+        .prepare(`UPDATE edges SET retired_by = 'agent', retired_source_ref = 'x' WHERE id = 'r-1'`)
+        .run(),
+    ).toThrow(/never rewritten/);
+    // An author outside the enum is refused.
+    expect(() =>
+      db
+        .prepare(
+          `UPDATE edges SET valid_to = ?, closed_by = 'root', closed_source_ref = 'x' WHERE id = 'r-1'`,
+        )
+        .run('2026-11-21T00:00:00.000Z'),
+    ).toThrow();
+
+    // With the first close: allowed. Afterwards: frozen.
+    db.prepare(
+      `UPDATE edges SET valid_to = ?, closed_by = 'agent', closed_source_ref = 'x' WHERE id = 'r-1'`,
+    ).run('2026-11-21T00:00:00.000Z');
+    expect(() => db.prepare(`UPDATE edges SET closed_by = 'user' WHERE id = 'r-1'`).run()).toThrow(
+      /never rewritten/,
+    );
+    expect(() =>
+      db.prepare(`UPDATE edges SET closed_source_ref = 'y' WHERE id = 'r-1'`).run(),
+    ).toThrow(/never rewritten/);
+    // The retirer is independent of the closer: set with the first retire only.
+    db.prepare(
+      `UPDATE edges SET retired_at = ?, retired_by = 'user', retired_source_ref = 'z' WHERE id = 'r-1'`,
+    ).run('2026-11-22T00:00:00.000Z');
+    expect(() =>
+      db.prepare(`UPDATE edges SET retired_source_ref = 'w' WHERE id = 'r-1'`).run(),
+    ).toThrow(/never rewritten/);
+    expect(() =>
+      db.prepare(`UPDATE edges SET retired_by = 'agent' WHERE id = 'r-1'`).run(),
+    ).toThrow(/never rewritten/);
+
+    // A fact closed without a closer (an import) cannot gain one later.
+    insertEdge(db, 'r-2', 'e-a', 'e-b');
+    db.prepare(`UPDATE edges SET valid_to = ? WHERE id = 'r-2'`).run('2026-11-21T00:00:00.000Z');
+    expect(() =>
+      db
+        .prepare(`UPDATE edges SET closed_by = 'user', closed_source_ref = 'late' WHERE id = 'r-2'`)
+        .run(),
+    ).toThrow(/never rewritten/);
+
+    // Attributes carry the same columns and the same guard.
+    insertEntity(db, 'e-c');
+    db.prepare(
+      `INSERT INTO attributes (id, world, entity_id, key, value_json, recorded_at, source_ref, author, confidence)
+       VALUES ('a-9', ?, 'e-c', 'location', '"Pune"', ?, 'test', 'user', 1)`,
+    ).run(W, T);
+    expect(() =>
+      db
+        .prepare(
+          `UPDATE attributes SET closed_by = 'agent', closed_source_ref = 'x' WHERE id = 'a-9'`,
+        )
+        .run(),
+    ).toThrow(/never rewritten/);
+    db.prepare(
+      `UPDATE attributes SET valid_to = ?, closed_by = 'agent', closed_source_ref = 'x' WHERE id = 'a-9'`,
+    ).run(T);
+    expect(() =>
+      db.prepare(`UPDATE attributes SET closed_by = 'user' WHERE id = 'a-9'`).run(),
+    ).toThrow(/never rewritten/);
+  });
+
   it('R3 attributes get the same triggers, entities allow only alias appends, merge and retire', () => {
     const db = rawDb(store);
     insertEntity(db, 'e-a');

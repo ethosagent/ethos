@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS attributes (
   valid_from TEXT, valid_to TEXT, recorded_at TEXT NOT NULL, retired_at TEXT,
   source_ref TEXT NOT NULL,
   author TEXT NOT NULL CHECK (author IN ${AUTHORS}),
-  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1)
+  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  closed_by TEXT CHECK (closed_by IS NULL OR closed_by IN ${AUTHORS}), closed_source_ref TEXT,
+  retired_by TEXT CHECK (retired_by IS NULL OR retired_by IN ${AUTHORS}), retired_source_ref TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_attrs_entity ON attributes(world, entity_id, key);
 
@@ -37,7 +39,9 @@ CREATE TABLE IF NOT EXISTS edges (
   recorded_at TEXT NOT NULL, retired_at TEXT, -- Ethos clock
   source_ref TEXT NOT NULL,
   author TEXT NOT NULL CHECK (author IN ${AUTHORS}),
-  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1)
+  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  closed_by TEXT CHECK (closed_by IS NULL OR closed_by IN ${AUTHORS}), closed_source_ref TEXT,
+  retired_by TEXT CHECK (retired_by IS NULL OR retired_by IN ${AUTHORS}), retired_source_ref TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(world, from_id, type);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(world, to_id, type);
@@ -51,7 +55,9 @@ CREATE TABLE IF NOT EXISTS purge_tokens (       -- the only way past the delete 
   world TEXT NOT NULL, entity_id TEXT, reason TEXT NOT NULL, at TEXT NOT NULL
 ) STRICT;
 
--- R3: facts are immutable except for closing and retiring once.
+-- R3: facts are immutable except for closing and retiring once. The closer and
+-- retirer columns are set only in the UPDATE that first sets valid_to / retired_at
+-- (NULL to value, once); a fact closed without them (an import) never gains them.
 -- (id and world are pinned too; the plan's DDL left them rewritable.)
 CREATE TRIGGER IF NOT EXISTS edges_no_rewrite BEFORE UPDATE ON edges
 WHEN NEW.id IS NOT OLD.id OR NEW.world IS NOT OLD.world
@@ -61,6 +67,10 @@ WHEN NEW.id IS NOT OLD.id OR NEW.world IS NOT OLD.world
   OR NEW.author IS NOT OLD.author OR NEW.confidence IS NOT OLD.confidence
   OR (OLD.valid_to IS NOT NULL AND NEW.valid_to IS NOT OLD.valid_to)
   OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+  OR ((NEW.closed_by IS NOT OLD.closed_by OR NEW.closed_source_ref IS NOT OLD.closed_source_ref)
+      AND NOT (OLD.valid_to IS NULL AND NEW.valid_to IS NOT NULL))
+  OR ((NEW.retired_by IS NOT OLD.retired_by OR NEW.retired_source_ref IS NOT OLD.retired_source_ref)
+      AND NOT (OLD.retired_at IS NULL AND NEW.retired_at IS NOT NULL))
 BEGIN SELECT RAISE(ABORT, 'facts are closed, never rewritten'); END;
 CREATE TRIGGER IF NOT EXISTS edges_no_delete BEFORE DELETE ON edges
 WHEN NOT EXISTS (SELECT 1 FROM purge_tokens p WHERE p.world = OLD.world
@@ -75,6 +85,10 @@ WHEN NEW.id IS NOT OLD.id OR NEW.world IS NOT OLD.world
   OR NEW.author IS NOT OLD.author OR NEW.confidence IS NOT OLD.confidence
   OR (OLD.valid_to IS NOT NULL AND NEW.valid_to IS NOT OLD.valid_to)
   OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+  OR ((NEW.closed_by IS NOT OLD.closed_by OR NEW.closed_source_ref IS NOT OLD.closed_source_ref)
+      AND NOT (OLD.valid_to IS NULL AND NEW.valid_to IS NOT NULL))
+  OR ((NEW.retired_by IS NOT OLD.retired_by OR NEW.retired_source_ref IS NOT OLD.retired_source_ref)
+      AND NOT (OLD.retired_at IS NULL AND NEW.retired_at IS NOT NULL))
 BEGIN SELECT RAISE(ABORT, 'facts are closed, never rewritten'); END;
 CREATE TRIGGER IF NOT EXISTS attributes_no_delete BEFORE DELETE ON attributes
 WHEN NOT EXISTS (SELECT 1 FROM purge_tokens p WHERE p.world = OLD.world

@@ -432,6 +432,48 @@ describe('worlds RPC', () => {
     expect(promoted.factId).not.toBe(id);
   });
 
+  it('changes names the closer of a retired fact, not its original author', async () => {
+    await runtime.schema.apply(
+      'personality:engineer',
+      { op: 'add_entity_type', type: 'Person', attrs: { title: { type: 'string' } } },
+      { kind: 'user', id: 'test' },
+      'seed',
+    );
+    const provider = new SQLiteWorldGraphProvider(worldGraphDbPath(dataDir));
+    const person = await provider.assert('personality:engineer', [
+      { kind: 'entity', type: 'Person', name: 'Priya', sourceRef: 'chat:1', author: 'agent' },
+    ]);
+    const fact = await provider.assert('personality:engineer', [
+      {
+        kind: 'attribute',
+        entityId: person.ok ? (person.ids[0] ?? '') : '',
+        key: 'title',
+        value: 'PM',
+        sourceRef: 'chat:1',
+        author: 'agent',
+        confidence: 0.9,
+      },
+    ]);
+    provider.dispose();
+    const id = fact.ok ? (fact.ids[0] ?? '') : '';
+    must(await call('promote', { world: 'personality:engineer', factId: id }));
+
+    const body = must(
+      await call<{
+        groups: Array<{
+          author: string;
+          sourceRef: string;
+          changes: Array<{ kind: string; factId: string }>;
+        }>;
+      }>('changes', { world: 'personality:engineer', since: '2000-01-01' }),
+    );
+    const groupOf = (kind: string) =>
+      body.groups.find((g) => g.changes.some((c) => c.factId === id && c.kind === kind));
+    expect(groupOf('opened')).toMatchObject({ author: 'agent', sourceRef: 'chat:1' });
+    expect(groupOf('retired')).toMatchObject({ author: 'user' });
+    expect(groupOf('retired')?.sourceRef).toMatch(/^promoted by /);
+  });
+
   // ---- proposals ----------------------------------------------------------
 
   it('proposals list conflicts first; decide records decided_by', async () => {

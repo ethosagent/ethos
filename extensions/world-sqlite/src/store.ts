@@ -439,16 +439,17 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
   }
 
   /**
-   * Sets valid_to once. `sourceRef` and `author` identify the closer; graph.db
-   * has no column for them (the plan's DDL is exact), so `changes` reports the
-   * fact's own provenance.
+   * Sets valid_to once and stores the closer's `author` and `sourceRef` in the
+   * same UPDATE (closed_by, closed_source_ref), so `changes` names the closer.
+   * Set-once is enforced by the `*_no_rewrite` triggers in schema.ts, pinned by
+   * 'R3 closer and retirer columns are set once' in graph-store.test.ts.
    */
   async close(
     world: WorldId,
     factId: string,
     validTo: string,
-    _sourceRef: string,
-    _author: FactAuthor,
+    sourceRef: string,
+    author: FactAuthor,
   ): Promise<WriteResult> {
     if (!isIso(validTo))
       return { ok: false, code: 'invalid', reason: `'${validTo}' is not a date` };
@@ -464,17 +465,23 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
       return { ok: false, code: 'invalid', reason: 'validTo is before validFrom' };
     }
     this.db
-      .prepare(`UPDATE ${found.table} SET valid_to = ? WHERE id = ? AND valid_to IS NULL`)
-      .run(validTo, factId);
+      .prepare(
+        `UPDATE ${found.table} SET valid_to = ?, closed_by = ?, closed_source_ref = ?
+         WHERE id = ? AND valid_to IS NULL`,
+      )
+      .run(validTo, author, sourceRef, factId);
     return { ok: true, ids: [factId] };
   }
 
-  /** Sets retired_at once (the Ethos-clock "this was wrong"). See `close` for sourceRef/author. */
+  /**
+   * Sets retired_at once (the Ethos-clock "this was wrong") and stores the
+   * retirer in retired_by / retired_source_ref. See `close` for the guard.
+   */
   async retire(
     world: WorldId,
     factId: string,
-    _sourceRef: string,
-    _author: FactAuthor,
+    sourceRef: string,
+    author: FactAuthor,
   ): Promise<WriteResult> {
     const found = this.findFact(world, factId);
     if (!found) return { ok: false, code: 'not_found', reason: `fact ${factId} not found` };
@@ -482,8 +489,11 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
       return { ok: false, code: 'closed', reason: `fact ${factId} is already retired` };
     }
     this.db
-      .prepare(`UPDATE ${found.table} SET retired_at = ? WHERE id = ? AND retired_at IS NULL`)
-      .run(this.nowIso(), factId);
+      .prepare(
+        `UPDATE ${found.table} SET retired_at = ?, retired_by = ?, retired_source_ref = ?
+         WHERE id = ? AND retired_at IS NULL`,
+      )
+      .run(this.nowIso(), author, sourceRef, factId);
     return { ok: true, ids: [factId] };
   }
 
@@ -868,9 +878,16 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     for (const t of ['attributes', 'edges']) {
       add(`SELECT recorded_at AS at, 'opened' AS kind, id AS fact_id, source_ref, author, 1 AS rank, rowid AS rid
            FROM ${t} WHERE world = ? AND recorded_at >= ?`);
-      add(`SELECT valid_to AS at, 'closed' AS kind, id AS fact_id, source_ref, author, 2 AS rank, rowid AS rid
+      // 'closed' and 'retired' name the closer / retirer. A row with NULL closer
+      // columns (closed through `import` with valid_to already set) falls back
+      // to the fact's own source_ref and author.
+      add(`SELECT valid_to AS at, 'closed' AS kind, id AS fact_id,
+             COALESCE(closed_source_ref, source_ref) AS source_ref, COALESCE(closed_by, author) AS author,
+             2 AS rank, rowid AS rid
            FROM ${t} WHERE world = ? AND valid_to IS NOT NULL AND valid_to >= ?`);
-      add(`SELECT retired_at AS at, 'retired' AS kind, id AS fact_id, source_ref, author, 3 AS rank, rowid AS rid
+      add(`SELECT retired_at AS at, 'retired' AS kind, id AS fact_id,
+             COALESCE(retired_source_ref, source_ref) AS source_ref, COALESCE(retired_by, author) AS author,
+             3 AS rank, rowid AS rid
            FROM ${t} WHERE world = ? AND retired_at IS NOT NULL AND retired_at >= ?`);
     }
     const rows = this.db

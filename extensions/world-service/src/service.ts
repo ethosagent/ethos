@@ -594,13 +594,14 @@ export class WorldService {
     if (!found) return refuse(`not_found: fact ${factId} not found`);
     if (!live(found)) return refuse(`closed: fact ${factId} is already closed or retired`);
 
+    const closer = c.surface === 'feed' ? 'connector' : 'agent';
     const authoritative = AUTHORITATIVE_AUTHORS.includes(found.author); // R2
     if (w.shared || authoritative) {
       const ctx = await this.agentCtx(c, w, '', undefined);
       const r = this.propose(
         w.id,
         'close',
-        { factId, validTo, sourceRef },
+        { factId, validTo, sourceRef, author: closer },
         authoritative ? factId : null,
         ctx,
         `close ${factId} on ${validTo}`,
@@ -614,13 +615,7 @@ export class WorldService {
           }
         : refuse(r.kind === 'refused' ? r.reason : 'refused');
     }
-    const r = await provider.close(
-      w.id,
-      factId,
-      validTo,
-      sourceRef,
-      c.surface === 'feed' ? 'connector' : 'agent',
-    );
+    const r = await provider.close(w.id, factId, validTo, sourceRef, closer);
     return r.ok ? { applied: r.ids, proposed: [], refused: [] } : refuse(`${r.code}: ${r.reason}`);
   }
 
@@ -861,8 +856,12 @@ export class WorldService {
   /**
    * Replays a pending proposal with its ORIGINAL author and records `by` as
    * `decided_by`. A conflict proposal also closes the facts it replaces, on the
-   * fact's `validFrom` or else the proposal's date. A failed replay leaves the
-   * proposal pending.
+   * fact's `validFrom` or else the proposal's date. Every graph write here (the
+   * assert, the closes it triggers, a close-kind proposal's close) carries the
+   * proposal's author and sourceRef; the accepting owner appears only as
+   * `decided_by`. Pinned by write-routing.test.ts 'accepting a conflict proposal
+   * records the proposal author and source as the closer…'. A failed replay
+   * leaves the proposal pending.
    */
   async acceptProposal(id: string, by: string): Promise<WriteOutcome> {
     const refuse = (reason: string): WriteOutcome => allRefused([id], reason);
@@ -900,7 +899,7 @@ export class WorldService {
         payload.factId,
         payload.validTo,
         payload.sourceRef,
-        'agent',
+        payload.author,
       );
       if (!r.ok) return refuse(`${r.code}: ${r.reason}`);
       out.applied.push(...r.ids);

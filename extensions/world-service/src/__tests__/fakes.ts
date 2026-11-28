@@ -5,6 +5,7 @@
 
 import type {
   AttributeFact,
+  ChangeRow,
   Edge,
   Entity,
   FactAuthor,
@@ -109,6 +110,15 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
   clock = '2026-11-28T00:00:00.000Z';
   /** Every assert call, in order. */
   readonly asserts: Array<{ world: WorldId; facts: FactInput[] }> = [];
+  /** Who closed or retired each fact (the real store's closed_by / retired_by columns), in call order. */
+  readonly closures: Array<{
+    world: WorldId;
+    kind: 'closed' | 'retired';
+    factId: string;
+    at: string;
+    sourceRef: string;
+    author: FactAuthor;
+  }> = [];
   /** Every applySchema call, in order. */
   readonly appliedSchemas: Array<{ world: WorldId; schema: WorldSchema }> = [];
 
@@ -301,21 +311,34 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
     return { ok: true, ids };
   }
 
-  async retire(world: WorldId, factId: string): Promise<WriteResult> {
+  async retire(
+    world: WorldId,
+    factId: string,
+    sourceRef = 'fake',
+    author: FactAuthor = 'user',
+  ): Promise<WriteResult> {
     const h = this.held(world);
     const fact = [...h.attributes, ...h.edges].find((f) => f.id === factId);
     if (!fact) return { ok: false, code: 'not_found', reason: factId };
     if (fact.retiredAt !== null) return { ok: false, code: 'closed', reason: 'already retired' };
     fact.retiredAt = this.clock;
+    this.closures.push({ world, kind: 'retired', factId, at: this.clock, sourceRef, author });
     return { ok: true, ids: [factId] };
   }
 
-  async close(world: WorldId, factId: string, validTo: string): Promise<WriteResult> {
+  async close(
+    world: WorldId,
+    factId: string,
+    validTo: string,
+    sourceRef = 'fake',
+    author: FactAuthor = 'user',
+  ): Promise<WriteResult> {
     const h = this.held(world);
     const fact = [...h.attributes, ...h.edges].find((f) => f.id === factId);
     if (!fact) return { ok: false, code: 'not_found', reason: factId };
     if (fact.validTo !== null) return { ok: false, code: 'closed', reason: 'already closed' };
     fact.validTo = validTo;
+    this.closures.push({ world, kind: 'closed', factId, at: validTo, sourceRef, author });
     return { ok: true, ids: [factId] };
   }
 
@@ -370,8 +393,33 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
     };
   }
 
-  async changes() {
-    return [];
+  /** Opened facts name their own author; closed and retired name the closer, as the real store does. */
+  async changes(world: WorldId, since: string, limit: number): Promise<ChangeRow[]> {
+    const h = this.held(world);
+    const rows: ChangeRow[] = [];
+    for (const f of [...h.attributes, ...h.edges]) {
+      if (f.recordedAt >= since) {
+        rows.push({
+          at: f.recordedAt,
+          kind: 'opened',
+          factId: f.id,
+          sourceRef: f.sourceRef,
+          author: f.author,
+        });
+      }
+    }
+    for (const c of this.closures) {
+      if (c.world === world && c.at >= since) {
+        rows.push({
+          at: c.at,
+          kind: c.kind,
+          factId: c.factId,
+          sourceRef: c.sourceRef,
+          author: c.author,
+        });
+      }
+    }
+    return rows.sort((a, b) => a.at.localeCompare(b.at)).slice(0, limit);
   }
 
   async import(): Promise<ImportReport> {

@@ -34,13 +34,13 @@ Guarantees and what pins them, all in `src/__tests__/graph-store.test.ts`:
 
 - `rowid` is not in `SELECT *`; every ordered read selects it by name.
 - The recursive hop query uses `CROSS JOIN … INDEXED BY` on purpose; without it the planner rescans the walk per edge (seconds on 20k edges). See `src/hops.ts`.
-- `close` and `retire` take `sourceRef` and `author`, but graph.db has no column for the closer, so `changes` reports the fact's own provenance.
+- `close` and `retire` store the closer's and retirer's `author` and `sourceRef` (`closed_by`, `closed_source_ref`, `retired_by`, `retired_source_ref`), set once by the R3 triggers. `changes` names them for `closed` and `retired` events (`src/__tests__/facts.test.ts`, `close stores the closer…`).
 - The FTS5 index is keyed by `entities.rowid`; never VACUUM `graph.db` (same caveat as `messages_fts` in session-sqlite).
 - `graph.db` is in the backup `state` scope (`packages/wiring/src/backup/scopes.ts`, `WAL_STORES`).
 
 ## Known limits
 
 - The contract has no retype or entity-retire call, so the backend cannot remove an entity row whose type the schema dropped (renamed or merged types leave orphan rows; handled in `world-service`).
-- `close` and `retire` do not store the closer's `sourceRef` or author (no column), so `changes()` reports the fact's own provenance.
+- A fact that arrived through `import` already closed or retired has no closer columns, so `changes()` falls back to the fact's own `sourceRef` and author for it (`facts.test.ts`, `a fact imported already closed…`). `export`/`import` bundles do not carry the closer, so a round trip drops it.
 - Neighbour queries are capped at 200 entities (the result sets `truncated`) and hops at depth 3.
 - Nothing here checks who may read or write: access, authority and proposals are `world-service` rules, so a caller that skips `WorldService` skips them. Only `packages/wiring` composes this package, enforced by the dependency law (`pnpm arch`, `architecture.config.ts`).

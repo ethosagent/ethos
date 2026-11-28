@@ -135,6 +135,110 @@ describe('SQLiteWorldGraphProvider — facts', () => {
     expect(kinds).toContain('opened');
   });
 
+  it('close stores the closer, and changes names it for closed while opened keeps the original author', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const billing = await addEntity('Service', 'Billing');
+    const edge = await addEdge('owns', priya, billing);
+    if (!edge.ok) throw new Error(edge.reason);
+    const id = edge.ids[0] as string;
+    now = new Date(d(20));
+    expect(await store.close(W, id, d(20), 'web:priya', 'agent')).toMatchObject({ ok: true });
+
+    const row = (store as unknown as { db: import('@ethosagent/sqlite').default.Database }).db
+      .prepare('SELECT closed_by, closed_source_ref, retired_by FROM edges WHERE id = ?')
+      .get(id);
+    expect(row).toMatchObject({
+      closed_by: 'agent',
+      closed_source_ref: 'web:priya',
+      retired_by: null,
+    });
+
+    const changes = (await store.changes(W, d(1), 50)).filter((c) => c.factId === id);
+    expect(changes.find((c) => c.kind === 'opened')).toMatchObject({
+      author: 'user',
+      sourceRef: 'test',
+    });
+    expect(changes.find((c) => c.kind === 'closed')).toMatchObject({
+      author: 'agent',
+      sourceRef: 'web:priya',
+    });
+  });
+
+  it('retire stores the retirer, and changes names it for retired', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const billing = await addEntity('Service', 'Billing');
+    const edge = await addEdge('owns', priya, billing);
+    if (!edge.ok) throw new Error(edge.reason);
+    const id = edge.ids[0] as string;
+    now = new Date(d(10));
+    expect(await store.retire(W, id, 'schema:v2', 'connector')).toMatchObject({ ok: true });
+
+    const changes = (await store.changes(W, d(1), 50)).filter((c) => c.factId === id);
+    expect(changes.find((c) => c.kind === 'opened')).toMatchObject({ author: 'user' });
+    expect(changes.find((c) => c.kind === 'retired')).toMatchObject({
+      author: 'connector',
+      sourceRef: 'schema:v2',
+    });
+  });
+
+  it('an attribute closed by another author is reported the same way', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const a = await store.assert(W, [
+      {
+        kind: 'attribute',
+        entityId: priya,
+        key: 'location',
+        value: 'Pune',
+        sourceRef: 'test',
+        author: 'user',
+        confidence: 1,
+      },
+    ]);
+    if (!a.ok) throw new Error(a.reason);
+    await store.close(W, a.ids[0] as string, d(5), 'feed:hr', 'connector');
+    const closed = (await store.changes(W, d(1), 50)).find(
+      (c) => c.factId === a.ids[0] && c.kind === 'closed',
+    );
+    expect(closed).toMatchObject({ author: 'connector', sourceRef: 'feed:hr' });
+  });
+
+  it('a fact imported already closed has no closer, so changes falls back to its own provenance', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const billing = await addEntity('Service', 'Billing');
+    const bundle = await store.export(W);
+    const target = new SQLiteWorldGraphProvider(worldGraphDbPath(join(dir, 'imp')), {
+      now: () => now,
+    });
+    try {
+      await target.import(W, {
+        ...bundle,
+        edges: [
+          {
+            id: 'r-0000000000000001',
+            world: W,
+            type: 'owns',
+            fromId: priya,
+            toId: billing,
+            attrs: {},
+            validFrom: null,
+            validTo: d(9),
+            recordedAt: d(2),
+            retiredAt: null,
+            sourceRef: 'csv:old',
+            author: 'import',
+            confidence: 1,
+          },
+        ],
+      });
+      const closed = (await target.changes(W, d(1), 50)).find(
+        (c) => c.factId === 'r-0000000000000001' && c.kind === 'closed',
+      );
+      expect(closed).toMatchObject({ author: 'import', sourceRef: 'csv:old' });
+    } finally {
+      target.dispose();
+    }
+  });
+
   it('assert refuses an edge between types the schema does not allow', async () => {
     const tool = await addEntity('Tool', 'Wrench');
     const priya = await addEntity('Person', 'Priya');
