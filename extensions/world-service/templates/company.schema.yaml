@@ -1,0 +1,15 @@
+version: 1
+entities:
+  Company: { attrs: { domain: { type: string } } }
+  Team:    { attrs: { mission: { type: string }, size: { type: int, min: 1 } } }
+  Person:  { attrs: { email: { type: string }, location: { type: string } } }
+  Skill:   { attrs: {} }
+  Service: { attrs: { repo: { type: url }, tier: { type: string } } }
+edges:
+  part_of:    "Team -> Company"
+  member_of:  { from: [Person], to: [Team], attrs: { role: { type: string }, since: { type: date } } }
+  reports_to: { from: [Person], to: [Person], unique: from }
+  expert_in:  { from: [Person], to: [Skill], attrs: { level: { type: int, min: 1, max: 5 } } }
+  owns:       { from: [Team, Person], to: [Service], unique: to }
+  depends_on: "Team -> Team"
+  mentors:    "Person -> Person"

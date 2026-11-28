@@ -102,6 +102,11 @@ export const COMMAND_TABLE: readonly CommandTableEntry[] = [
   { name: 'evolve', group: 'Agents', description: 'Run a personality evolution cycle' },
   { name: 'learn', group: 'Agents', description: 'Record a learning for future turns' },
   { name: 'learning', group: 'Agents', description: 'Review and replay the learning inbox' },
+  {
+    name: 'world',
+    group: 'Agents',
+    description: 'Create, inspect, export and govern shared world models (the org graph)',
+  },
   { name: 'eval', group: 'Agents', description: 'Run evaluation suites against the agent' },
   { name: 'claw', group: 'Agents', description: 'Clawrium playbook integration' },
   { name: 'acp', group: 'Agents', description: 'Serve the agent over the Agent Client Protocol' },

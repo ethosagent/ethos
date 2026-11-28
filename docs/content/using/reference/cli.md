@@ -87,6 +87,9 @@ Errors land on stderr formatted by `formatError(toEthosError(err))` and are appe
 | <a id="ethos-learning-subcommands"></a>[Subcommands](cli/evolve-and-learn.md#ethos-learning-subcommands) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-learning-examples"></a>[Examples](cli/evolve-and-learn.md#ethos-learning-examples) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-learning-exit-codes"></a>[Exit codes](cli/evolve-and-learn.md#ethos-learning-exit-codes) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
+| <a id="ethos-world"></a>[ethos world](cli/evolve-and-learn.md#ethos-world) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
+| <a id="ethos-world-subcommands"></a>[Subcommands](cli/evolve-and-learn.md#ethos-world-subcommands) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
+| <a id="ethos-world-exit-codes"></a>[Exit codes](cli/evolve-and-learn.md#ethos-world-exit-codes) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-plugin"></a>[ethos plugin](cli/evolve-and-learn.md#ethos-plugin) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-skills"></a>[ethos skills](cli/evolve-and-learn.md#ethos-skills) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |
 | <a id="ethos-keys"></a>[ethos keys](cli/evolve-and-learn.md#ethos-keys) | [CLI: batch, eval, evolve, learning and plugin commands](cli/evolve-and-learn.md) |

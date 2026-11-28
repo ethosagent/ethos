@@ -139,6 +139,7 @@
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "@ethosagent/wiring": "workspace:*",
+    "@ethosagent/world-sqlite": "workspace:*",
     "@types/nodemailer": "^6.4.17"
   },
   "optionalDependencies": {

@@ -100,6 +100,10 @@ export type EthosErrorCode =
   | 'WORKDIR_NOT_CONFIGURED'
   | 'DOCUMENT_EXISTS'
   | 'PAYLOAD_TOO_LARGE'
+  // World model (ethos world)
+  | 'WORLD_NOT_FOUND'
+  | 'WORLD_SCHEMA_INVALID'
+  | 'WORLD_CONFLICT'
   // Storage (SQLite stores)
   | 'DB_BUSY'
   | 'DB_CORRUPT'

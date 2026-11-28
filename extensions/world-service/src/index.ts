@@ -92,6 +92,13 @@ export {
   type WorldContextInjectorOptions,
 } from './context-injector';
 export { isSafeSlug, parseWorldId, privateWorldId, sharedWorldId, worldSlug } from './ids';
+export {
+  bundleFromText,
+  type ImportFormat,
+  type ImportTextContext,
+  type ImportTextResult,
+  importFormatOf,
+} from './import-text';
 export { createWorldToolPort, type WorldToolPort } from './port';
 export {
   type AssertPayload,
@@ -102,6 +109,7 @@ export {
   parseSchemaPayload,
   schemaChangeZ,
 } from './proposal-payload';
+export { findTreeEntity, type RenderTreeOptions, renderTree } from './render-tree';
 export {
   formatRipple,
   RIPPLE_DISCLAIMER,
@@ -126,16 +134,6 @@ export {
   sensitiveKey,
   serializeSchemaYaml,
 } from './schema-model';
-export {
-  buildWorldSnapshot,
-  type WorldSnapshot,
-  type WorldSnapshotAttr,
-  type WorldSnapshotEdge,
-  type WorldSnapshotEntity,
-  type WorldSnapshotLink,
-  type WorldSnapshotOptions,
-  type WorldSnapshotResult,
-} from './share-snapshot';
 export {
   type ChangeBy,
   type LoadedSchema,
@@ -173,4 +171,21 @@ export {
   SQLiteWorldServiceStore,
   serviceDbPath,
 } from './service-store';
+export {
+  buildWorldSnapshot,
+  type WorldSnapshot,
+  type WorldSnapshotAttr,
+  type WorldSnapshotEdge,
+  type WorldSnapshotEntity,
+  type WorldSnapshotLink,
+  type WorldSnapshotOptions,
+  type WorldSnapshotResult,
+} from './share-snapshot';
+export {
+  isTemplateName,
+  loadTemplate,
+  TEMPLATE_AUDIENCE,
+  TEMPLATE_NAMES,
+  type TemplateName,
+} from './templates';
 export { type VetContext, type VetResult, vetFact } from './vetting';
