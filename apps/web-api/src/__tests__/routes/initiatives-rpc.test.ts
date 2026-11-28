@@ -242,6 +242,20 @@ describe('initiatives RPC', () => {
     expect(existsSync(join(dataDir, 'personalities', 'ghost'))).toBe(false);
   });
 
+  it.each(['initiatives/settings', 'initiatives/settingsSave'])(
+    '%s with an unsafe personality id is 400 INVALID_INPUT and creates nothing',
+    async (path) => {
+      for (const personalityId of ['../etc', 'a/b', 'Bad Id', '.hidden']) {
+        const res = await call(path, { personalityId, settings: SETTINGS }, as());
+        expect(res.status).toBe(400);
+        const err = (await body(res)) as { code: string; status: number };
+        expect(err.status).toBe(400);
+        expect(err.code).toBe('INVALID_INPUT');
+      }
+      expect(existsSync(join(dataDir, 'personalities'))).toBe(false);
+    },
+  );
+
   it('constitution save with a partial body is 400 and writes nothing', async () => {
     const res = await call(
       'constitution/initiativesSave',

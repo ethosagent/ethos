@@ -33,14 +33,14 @@ Errors reach the wire as `{ "json": { "defined": false, "code": "NOT_FOUND", "st
 | Status | Code | Raised by |
 |---|---|---|
 | 400 | `BAD_REQUEST` | Schema validation, and `decide` when the verdict does not fit the gate or the initiative has no valid file |
-| 400 | `INVALID_INPUT` | `settingsSave`, `constitutionSave` (a validator or ceiling refusal) |
+| 400 | `INVALID_INPUT` | `settings` and `settingsSave` with an unsafe personality id (path traversal, uppercase, spaces); `settingsSave`, `constitutionSave` (a validator or ceiling refusal) |
 | 400 | `CONFIG_INVALID` | `get` when the initiative file no longer parses |
 | 401, 403 | `UNAUTHORIZED`, `FORBIDDEN` | Origin check, bearer key (above) |
 | 404 | `NOT_FOUND` | `decide` on an unknown id, or with no ledger |
 | 404 | `FILE_NOT_FOUND` | `get` on an unknown initiative, `settingsSave` for an unknown personality |
 | 409 | `CONFLICT` | `decide` on the wrong state, such as `EXP-0003 is proposed, not briefed` |
 
-`settings` with an id that fails `assertSafeId` throws a plain `IdValidationError`, not an `EthosError`, so oRPC answers `500`. No test pins this.
+`settings` and `settingsSave` check the id with `assertSafeId` and turn its `IdValidationError` into `INVALID_INPUT`, so a bad id answers `400` and nothing is read or written (`initiatives-rpc.test.ts`, "unsafe personality id").
 
 ## initiatives.list {#list}
 

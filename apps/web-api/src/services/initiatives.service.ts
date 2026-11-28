@@ -3,6 +3,7 @@ import {
   assertSafeId,
   EthosError,
   type ExplorationRow,
+  IdValidationError,
   type InitiativeRow,
   type PersonalityRegistry,
   type Storage,
@@ -330,7 +331,7 @@ export class InitiativesService {
   // -- settings.yaml -----------------------------------------------------------
 
   async settings(personalityId: string): Promise<Out<typeof InitiativesSettingsOutputSchema>> {
-    assertSafeId(personalityId, 'personality');
+    assertSafePersonalityId(personalityId);
     const { storage, dataDir } = this.opts;
     const load = await loadInitiativeSettings(storage, dataDir, personalityId);
     const c = (await readInitiativeConstitution(storage, dataDir)).initiatives;
@@ -353,7 +354,7 @@ export class InitiativesService {
 
   settingsSave(input: { personalityId: string; settings: InitiativeSettingsWire }) {
     return this.serial(async () => {
-      assertSafeId(input.personalityId, 'personality');
+      assertSafePersonalityId(input.personalityId);
       // No directory is created for a personality that does not exist.
       if (this.opts.personalities.get(input.personalityId) === undefined) {
         throw new EthosError({
@@ -416,6 +417,20 @@ export class InitiativesService {
     } catch (err) {
       this.opts.onError?.(err);
     }
+  }
+}
+
+/** `assertSafeId` throws a plain `IdValidationError`, which oRPC answers as 500. A bad id is the caller's input: 400. */
+function assertSafePersonalityId(id: string): void {
+  try {
+    assertSafeId(id, 'personality');
+  } catch (err) {
+    if (!(err instanceof IdValidationError)) throw err;
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: err.message,
+      action: 'Use a personality id of lowercase letters, digits, "-" and "_".',
+    });
   }
 }
 
