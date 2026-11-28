@@ -91,7 +91,7 @@ export interface WorldServiceDeps {
   store: SQLiteWorldServiceStore;
   config: WorldConfigService;
   now?: () => number;
-  /** Most rows one write-deciding lookup may read before the write is refused (default LOOKUP_CEILING). */
+  /** Most rows one write-deciding lookup may read before the write is refused (default LOOKUP_CEILING in lookup.ts). */
   lookupCeiling?: number;
   onError?: (e: unknown) => void;
 }
@@ -587,7 +587,7 @@ export class WorldService {
       return refuse('vetting: looks like a secret; not stored');
 
     const provider = await this.deps.providers(w.id);
-    const found = await this.findFact(provider, w.id, factId);
+    const found = await provider.getFact(w.id, factId);
     if (!found) return refuse(`not_found: fact ${factId} not found`);
     if (!live(found)) return refuse(`closed: fact ${factId} is already closed or retired`);
 
@@ -614,14 +614,6 @@ export class WorldService {
     }
     const r = await provider.close(w.id, factId, validTo, sourceRef, closer);
     return r.ok ? { applied: r.ids, proposed: [], refused: [] } : refuse(`${r.code}: ${r.reason}`);
-  }
-
-  private async findFact(
-    provider: WorldGraphProvider,
-    world: WorldId,
-    factId: string,
-  ): Promise<(AttributeFact | Edge) | null> {
-    return provider.getFact(world, factId);
   }
 
   async requestSchemaChange(
@@ -969,7 +961,7 @@ export class WorldService {
   async promoteToUser(world: WorldId, factId: string, by: string): Promise<WriteOutcome> {
     const refuse = (reason: string): WriteOutcome => allRefused([factId], reason);
     const provider = await this.deps.providers(world);
-    const found = await this.findFact(provider, world, factId);
+    const found = await provider.getFact(world, factId);
     if (!found) return refuse(`not_found: fact ${factId} not found`);
     if (!live(found)) return refuse(`closed: fact ${factId} is already closed or retired`);
     if (AUTHORITATIVE_AUTHORS.includes(found.author)) return refuse('already_authoritative');
@@ -1050,7 +1042,7 @@ export class WorldService {
   ): Promise<WriteOutcome> {
     const refuse = (reason: string): WriteOutcome => allRefused([factId], reason);
     const provider = await this.deps.providers(world);
-    const found = await this.findFact(provider, world, factId);
+    const found = await provider.getFact(world, factId);
     if (!found) return refuse(`not_found: fact ${factId} not found`);
     if (!live(found)) return refuse(`closed: fact ${factId} is already closed or retired`);
     const r = await provider.close(world, factId, validTo, `web:${by}`, 'user');

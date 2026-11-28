@@ -6,9 +6,9 @@
 // Pinned by lookup-paging.test.ts.
 
 /** The first page; doubled on each re-query. */
-export const LOOKUP_START = 200;
+const LOOKUP_START = 200;
 /** The most rows one decision may read: LOOKUP_START doubled four times. */
-export const LOOKUP_CEILING = 3200;
+const LOOKUP_CEILING = 3200;
 
 export interface PagedLookup<T> {
   result: T;
