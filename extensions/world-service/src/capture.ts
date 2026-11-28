@@ -49,6 +49,18 @@ const LOOKUP_START = 50;
 const LOOKUP_CEILING = 800;
 const SOURCE_PROMPT_CHARS = 160;
 
+/**
+ * A session id, written so `redactPii` (which `vetFact` runs on every agent-written sourceRef,
+ * vetting.ts) cannot read it as personal data. A random UUID carries a digit run of 8+ across its
+ * hyphens in about one in ten ids, which the phone and card patterns match; the proposal was then
+ * refused and the fact silently stayed in memory. Dots are not a separator those patterns accept,
+ * so hyphens become dots and long digit runs are cut into groups of four. Dropping the dots
+ * restores the id (minus hyphens). Pinned by 'a session id that looks like a phone number' in
+ * __tests__/world-capture.test.ts.
+ */
+const piiSafeId = (id: string): string =>
+  id.replace(/[\s()-]/g, '.').replace(/\d{4}(?=\d)/g, '$&.');
+
 const norm = (s: string): string =>
   s
     .trim()
@@ -111,7 +123,7 @@ export class WorldCaptureRouter {
     const to = await this.endpoint(caller, w, schema, triple.object, spec.to);
     if (!from || !to) return null;
 
-    const sourceRef = `session:${job.sessionId} ${job.initialPrompt.slice(0, SOURCE_PROMPT_CHARS)}`;
+    const sourceRef = `session:${piiSafeId(job.sessionId)} ${job.initialPrompt.slice(0, SOURCE_PROMPT_CHARS)}`;
     const at = new Date(0).toISOString();
     const entity = (id: string, type: string, name: string): Entity => ({
       id,

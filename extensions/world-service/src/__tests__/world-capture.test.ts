@@ -43,6 +43,26 @@ describe('WorldCaptureRouter', () => {
     expect(h.errors).toEqual([]);
   });
 
+  // Root cause of the intermittent world-extraction-wiring failure: the session id is a random
+  // UUID and ~10% of them contain a digit run `redactPii` reads as a phone number, so vetting
+  // refused the provenance string and the fact silently stayed in memory.
+  it.each([
+    '1035ce69-97f8-4cd9-83be-123456789012',
+    'cd00ce6c-57c9-49c4-9039-ddc0ffee0000',
+    '12345678-1234-1234-1234-123456789012',
+  ])('a session id that looks like a phone number still yields a proposal (%s)', async (id) => {
+    expect(await router(h).route(OWNS, { ...JOB, sessionId: id })).toBe('graph');
+    const inbox = h.store.inbox(PRIVATE);
+    expect(inbox).toHaveLength(3);
+    // Provenance stays: the id is recoverable once the separators are dropped.
+    for (const r of inbox) {
+      expect(r.sourceRef.replaceAll('.', '').startsWith(`session:${id.replaceAll('-', '')} `)).toBe(
+        true,
+      );
+    }
+    expect(h.errors).toEqual([]);
+  });
+
   it('reuses entities that already exist and proposes only the edge', async () => {
     h.provider.seedEntity(PRIVATE, 'Person', 'Ravi');
     h.provider.seedEntity(PRIVATE, 'Service', 'billing-svc');
