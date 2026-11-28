@@ -2521,6 +2521,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-world:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@ethosagent/world-service':
+        specifier: workspace:*
+        version: link:../world-service
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+
   extensions/tools-x-search:
     dependencies:
       '@ethosagent/core':

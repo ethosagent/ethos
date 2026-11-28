@@ -47,6 +47,7 @@ export interface ServiceHarness {
   store: SQLiteWorldServiceStore;
   service: WorldService;
   schema: WorldSchemaService;
+  config: WorldConfigService;
   errors: unknown[];
   dispose(): void;
 }
@@ -99,6 +100,7 @@ export async function serviceHarness(
     store,
     service,
     schema,
+    config,
     errors,
     dispose() {
       store.dispose();

@@ -105,6 +105,8 @@ export interface WriteOutcome {
   applied: string[];
   proposed: string[];
   refused: Array<{ index: number; reason: string }>;
+  /** One line per proposal that conflicts with a user or import fact (R2), for the tool reply. */
+  conflicts?: string[];
 }
 
 export interface ImportOutcome {
@@ -147,7 +149,7 @@ interface Analysis {
 
 type Placement =
   | { kind: 'applied'; ids: string[] }
-  | { kind: 'proposed'; id: string }
+  | { kind: 'proposed'; id: string; conflict?: string }
   | { kind: 'refused'; reason: string; existingId?: string };
 
 interface PlaceCtx {
@@ -364,8 +366,10 @@ export class WorldService {
     for (const [index, fact] of facts.entries()) {
       const r = await this.place(provider, w, fact, ctx);
       if (r.kind === 'applied') out.applied.push(...r.ids);
-      else if (r.kind === 'proposed') out.proposed.push(r.id);
-      else out.refused.push({ index, reason: r.reason });
+      else if (r.kind === 'proposed') {
+        out.proposed.push(r.id);
+        if (r.conflict) out.conflicts = [...(out.conflicts ?? []), r.conflict];
+      } else out.refused.push({ index, reason: r.reason });
     }
     return out;
   }
@@ -480,7 +484,11 @@ export class WorldService {
     if ('refused' in queued) {
       return { kind: 'refused', reason: 'rejected: the owner already rejected this fact' };
     }
-    return { kind: 'proposed', id: queued.id };
+    return {
+      kind: 'proposed',
+      id: queued.id,
+      ...(conflictWith !== null ? { conflict: base } : {}),
+    };
   }
 
   /** Is the fact already stored, and which live facts does it replace (unique edges, same-key attributes)? */
@@ -574,7 +582,12 @@ export class WorldService {
         `close ${factId} on ${validTo}`,
       );
       return r.kind === 'proposed'
-        ? { applied: [], proposed: [r.id], refused: [] }
+        ? {
+            applied: [],
+            proposed: [r.id],
+            refused: [],
+            ...(r.conflict ? { conflicts: [r.conflict] } : {}),
+          }
         : refuse(r.kind === 'refused' ? r.reason : 'refused');
     }
     const r = await provider.close(

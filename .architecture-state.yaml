@@ -181,15 +181,15 @@ register_anchors:
   # shared-world rule are decided). The worlds/ and worlds.yaml floors live in
   # files G-FS already cites (a kernel path is cited by exactly one row).
   G-WORLD-WRITE:
-    - { path: extensions/world-service/src/service.ts, line: 328, contains: "async writeFacts(" }
-    - { path: extensions/world-service/src/service.ts, line: 403, contains: "private async place(" }
+    - { path: extensions/world-service/src/service.ts, line: 330, contains: "async writeFacts(" }
+    - { path: extensions/world-service/src/service.ts, line: 407, contains: "private async place(" }
 
   G-WORLD-AUD:
     - { path: extensions/world-service/src/access.ts, line: 38, contains: "export function resolveAccess" }
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 155 packages: 11 at Tier 0, 31 at Tier 1, 113 at Tier 2.
+# apps/ carries a tier. 156 packages: 11 at Tier 0, 31 at Tier 1, 114 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -1043,6 +1043,11 @@ tiers:
     package: "@ethosagent/tools-web"
     tier: 2
     assigned: 2026-08-12
+
+  extensions/tools-world:
+    package: "@ethosagent/tools-world"
+    tier: 2
+    assigned: 2026-11-28
 
   extensions/tools-x-search:
     package: "@ethosagent/tools-x-search"
