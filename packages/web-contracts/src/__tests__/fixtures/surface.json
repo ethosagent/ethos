@@ -1286,7 +1286,5 @@
     "WorldsTreeOutputSchema": "465edf85323513db2a336032b771041339069ad5844884dc71ca6ee3d3f97ace"
   },
   "skippedSchemas": [],
-  "skippedProcedures": [
-    "apiKeys.create#input"
-  ]
+  "skippedProcedures": ["apiKeys.create#input"]
 }

@@ -1,18 +1,14 @@
-import { randomBytes } from 'node:crypto';
-import { EthosError, type FactInput, type GraphBundle, type WorldId } from '@ethosagent/types';
+import { EthosError, type FactInput, type WorldId } from '@ethosagent/types';
 import { MAX_SNAPSHOT_BYTES, worldOwner } from '@ethosagent/wiring';
-import { z } from 'zod';
 import type { ActorReader } from '../features/share/actor';
 
 const {
   buildWorldSnapshot,
+  bundleFromText,
   describeBuildItem,
   exportCsv,
   exportFactsYaml,
   exportMcpJsonl,
-  importCsv,
-  importFactsYaml,
-  importMcpJsonl,
   parseWorldId,
   resolveAccess,
   sliceBundle,
@@ -103,58 +99,6 @@ interface Effective {
   effective: Mode;
   note?: string;
 }
-
-const AuthorZ = z.enum(['user', 'import', 'connector', 'agent']);
-const BundleZ = z.object({
-  schema: z.unknown().nullable(),
-  entities: z.array(
-    z.object({
-      id: z.string(),
-      world: z.string(),
-      type: z.string(),
-      name: z.string(),
-      aliases: z.array(z.string()),
-      recordedAt: z.string(),
-      retiredAt: z.string().nullable(),
-      sourceRef: z.string(),
-      author: AuthorZ,
-      mergedInto: z.string().nullable(),
-    }),
-  ),
-  attributes: z.array(
-    z.object({
-      id: z.string(),
-      world: z.string(),
-      entityId: z.string(),
-      key: z.string(),
-      value: z.unknown(),
-      validFrom: z.string().nullable(),
-      validTo: z.string().nullable(),
-      recordedAt: z.string(),
-      retiredAt: z.string().nullable(),
-      sourceRef: z.string(),
-      author: AuthorZ,
-      confidence: z.number(),
-    }),
-  ),
-  edges: z.array(
-    z.object({
-      id: z.string(),
-      world: z.string(),
-      type: z.string(),
-      fromId: z.string(),
-      toId: z.string(),
-      attrs: z.record(z.string(), z.unknown()),
-      validFrom: z.string().nullable(),
-      validTo: z.string().nullable(),
-      recordedAt: z.string(),
-      retiredAt: z.string().nullable(),
-      sourceRef: z.string(),
-      author: AuthorZ,
-      confidence: z.number(),
-    }),
-  ),
-});
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const isLiveFact = (
@@ -868,31 +812,10 @@ export class WorldsService {
     const rt = this.rt();
     const by = await this.deps.actor();
     const now = this.nowIso();
-    let bundle: GraphBundle;
-    const skipped: Array<{ line: number; reason: string }> = [];
-    if (input.format === 'facts-yaml') {
-      const r = importFactsYaml(input.text, world, { now });
-      if (!r.ok)
-        throw new WorldsApiError(
-          'invalid',
-          r.errors.map((e) => `line ${e.line}: ${e.message}`).join('; '),
-        );
-      bundle = r.bundle;
-    } else if (input.format === 'mcp-jsonl') {
-      bundle = importMcpJsonl(input.text, { world, sourceRef: by, now }).bundle;
-    } else if (input.format === 'json') {
-      bundle = parseBundleJson(input.text, world);
-    } else {
-      const schema = (await rt.schema.load(world)).schema;
-      const r = importCsv(input.text, schema, { sourceName: by });
-      if (!r.ok)
-        throw new WorldsApiError(
-          'invalid',
-          r.issues.map((i) => `${i.column}: ${i.reason}`).join('; '),
-        );
-      skipped.push(...r.skipped);
-      bundle = csvBundle(world, now, r);
-    }
+    const schema = (await rt.schema.load(world)).schema;
+    const parsed = bundleFromText(input.format, input.text, { world, schema, by, now });
+    if (!parsed.ok) throw new WorldsApiError('invalid', parsed.error);
+    const { bundle, skipped } = parsed;
     const out = await rt.service.ownerImport(world, bundle, by);
     return {
       entities: out.report.entities,
@@ -1073,90 +996,4 @@ function refusal(reason: string): WorldsApiError {
     return new WorldsApiError('conflict', reason);
   }
   return new WorldsApiError('invalid', reason);
-}
-
-function parseBundleJson(text: string, world: WorldId): GraphBundle {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch (e) {
-    throw new WorldsApiError(
-      'invalid',
-      `not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  const parsed = BundleZ.safeParse(raw);
-  if (!parsed.success) {
-    throw new WorldsApiError(
-      'invalid',
-      parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-    );
-  }
-  const b = parsed.data;
-  // Every row is re-homed to the target world, whatever world the file was exported from.
-  return {
-    schema: null,
-    entities: b.entities.map((e) => ({ ...e, world })),
-    attributes: b.attributes.map((a) => ({ ...a, world })),
-    edges: b.edges.map((e) => ({ ...e, world })),
-  };
-}
-
-type CsvOk = Extract<ReturnType<typeof importCsv>, { ok: true }>;
-
-/** CSV drafts are name-referenced; give each entity an id so `ownerImport` can resolve the links. */
-function csvBundle(world: WorldId, now: string, r: CsvOk): GraphBundle {
-  const idOf = new Map<string, string>();
-  const key = (t: { type: string; name: string }): string => `${t.type}\u0000${t.name}`;
-  const bundle: GraphBundle = { schema: null, entities: [], attributes: [], edges: [] };
-  const base = { world, recordedAt: now, retiredAt: null };
-  for (const e of r.entities) {
-    const id = `e-${randomBytes(8).toString('hex')}`;
-    idOf.set(key(e), id);
-    bundle.entities.push({
-      id,
-      type: e.type,
-      name: e.name,
-      aliases: [],
-      sourceRef: e.sourceRef,
-      author: e.author,
-      mergedInto: null,
-      ...base,
-    });
-  }
-  for (const a of r.attributes) {
-    const entityId = idOf.get(key(a.entity));
-    if (!entityId) continue;
-    bundle.attributes.push({
-      id: `a-${randomBytes(8).toString('hex')}`,
-      entityId,
-      key: a.key,
-      value: a.value,
-      validFrom: null,
-      validTo: null,
-      sourceRef: a.sourceRef,
-      author: a.author,
-      confidence: a.confidence,
-      ...base,
-    });
-  }
-  for (const e of r.edges) {
-    const fromId = idOf.get(key(e.from));
-    const toId = idOf.get(key(e.to));
-    if (!fromId || !toId) continue;
-    bundle.edges.push({
-      id: `r-${randomBytes(8).toString('hex')}`,
-      type: e.type,
-      fromId,
-      toId,
-      attrs: e.attrs,
-      validFrom: null,
-      validTo: null,
-      sourceRef: e.sourceRef,
-      author: e.author,
-      confidence: e.confidence,
-      ...base,
-    });
-  }
-  return bundle;
 }
