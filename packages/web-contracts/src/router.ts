@@ -23,6 +23,7 @@ import { mcp, platforms, plugins } from './routes/platforms-plugins-mcp';
 import { activity, sessions } from './routes/sessions-activity';
 import { shares } from './routes/shares';
 import { voice } from './routes/voice';
+import { worlds } from './routes/worlds';
 
 export { type ModelRegistryAdoptedModel, ModelRegistryAdoptedModelSchema } from './routes/_shared';
 export type {
@@ -177,6 +178,7 @@ export const contract = {
   backup,
   execution,
   shares,
+  worlds,
 };
 
 export type Contract = typeof contract;
