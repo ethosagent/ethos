@@ -30,6 +30,14 @@ export interface PromptContext {
    */
   initiator?: import('./audience').TurnInitiator;
   roomAudience?: import('./audience').TurnAudience;
+  /**
+   * Where this turn came from, `platform:chatId` for a channel turn (`RunOptions.origin`, stamped
+   * by `Gateway.runTurn`), copied verbatim by `assembleContext`; absent for web, CLI and other
+   * non-channel runs. `platform` above is the LOOP's wiring profile — the same for every turn a
+   * gateway process serves — so an injector that depends on the channel reads this instead
+   * (`createUiGuidanceInjector`). Fixed per lane, so safe in the static prefix.
+   */
+  origin?: string;
   jobId?: string;
   reviewOfJobId?: string;
   agentId?: string;

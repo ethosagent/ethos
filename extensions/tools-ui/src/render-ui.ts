@@ -5,7 +5,7 @@ import {
   CARD_SPEC_VERSION,
   CanvasCardPayloadSchema,
 } from '@ethosagent/web-contracts';
-import { isCanvasPlatform, offSurfaceRefusal } from './ui-platform';
+import { isCanvasPlatform, offSurfaceRefusal, surfaceOf } from './ui-platform';
 import { issueField, issueLines } from './zod-issues';
 
 /**
@@ -82,7 +82,7 @@ export const createRenderUiTool = (personalityDir: PersonalityDirResolver): Tool
     required: [],
   },
   async execute(args, ctx: ToolContext): Promise<ToolResult> {
-    if (!isCanvasPlatform(ctx.platform)) return offSurfaceRefusal();
+    if (!isCanvasPlatform(surfaceOf(ctx))) return offSurfaceRefusal();
 
     const { title, html: inlineHtml, template, data, libraries } = args ?? {};
     const hasHtml = present(inlineHtml);

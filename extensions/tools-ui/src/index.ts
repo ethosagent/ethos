@@ -349,6 +349,7 @@ export {
   CARD_PLATFORMS,
   isCanvasPlatform,
   isCardPlatform,
+  surfaceOf,
 } from './ui-platform';
 export type { PersonalityDirResolver };
 export { createRenderUiTool, emitCardTool };

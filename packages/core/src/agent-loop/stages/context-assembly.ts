@@ -416,6 +416,7 @@ export async function* assembleContext(
     // (`toolCtxBase`, ./tool-processing.ts): verbatim, no fallback.
     roomAudience,
     ...(opts.initiator !== undefined ? { initiator: opts.initiator } : {}),
+    ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
     ...(opts.jobId !== undefined ? { jobId: opts.jobId } : {}),
     ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
     ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),

@@ -132,12 +132,22 @@ describe('emit_card off-surface backstop', () => {
     expect(result.error).toMatch(/prose/i);
   });
 
-  // plan telegram-live-cards D7: Telegram's adapter implements `CardCapableAdapter`.
-  it('renders on telegram', async () => {
+  // plan telegram-live-cards D7: Telegram's adapter implements `CardCapableAdapter`. A gateway
+  // turn's `ctx.platform` is the loop's wiring profile ('cli'), so the surface is its `origin`.
+  it('renders on a telegram turn, whatever profile the gateway loop was built with', async () => {
     const result = await emitCardTool.execute({ kind: 'text', payload: PAYLOADS.text }, {
-      platform: 'telegram',
+      platform: 'cli',
+      origin: 'telegram:77',
     } as unknown as ToolContext);
     expect(result.ok).toBe(true);
+  });
+
+  it('refuses a slack turn even when the loop profile is web (origin wins)', async () => {
+    const result = await emitCardTool.execute({ kind: 'text', payload: PAYLOADS.text }, {
+      platform: 'web',
+      origin: 'slack:C1',
+    } as unknown as ToolContext);
+    expect(result).toMatchObject({ ok: false, code: 'not_available' });
   });
 
   it('renders on desktop', async () => {

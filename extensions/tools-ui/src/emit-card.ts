@@ -5,7 +5,7 @@ import {
   EMIT_CARD_PAYLOAD_SCHEMAS,
   type EmitCardKind,
 } from '@ethosagent/web-contracts';
-import { isCardPlatform, offSurfaceRefusal } from './ui-platform';
+import { isCardPlatform, offSurfaceRefusal, surfaceOf } from './ui-platform';
 import { issueField, issueLines } from './zod-issues';
 
 export interface EmitCardArgs {
@@ -65,7 +65,7 @@ export const emitCardTool: Tool<EmitCardArgs> = {
     required: ['kind', 'payload'],
   },
   async execute(args, ctx: ToolContext): Promise<ToolResult> {
-    if (!isCardPlatform(ctx.platform)) return offSurfaceRefusal();
+    if (!isCardPlatform(surfaceOf(ctx))) return offSurfaceRefusal();
 
     const kind = args?.kind;
     if (typeof kind !== 'string' || !(EMIT_CARD_KINDS as readonly string[]).includes(kind)) {

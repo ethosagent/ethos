@@ -25,6 +25,7 @@ Exported from `src/index.ts` (single entry, no subpaths). Main entry points.
 | `AssetDirResolver` | type | Maps a personality id to its asset folder. |
 | `PersonalityDirResolver` | type | Maps a personality id to its directory. |
 | `createUiGuidanceInjector` | function | Builds the card-composition prompt injector. |
+| `surfaceOf` | function | The surface of a turn: its `origin` channel, else the loop's `platform`. |
 | `isCardPlatform` | function | True for platforms that can draw `emit_card` cards. |
 | `CARD_PLATFORMS` | const | The set of such platforms (web, desktop, telegram). |
 | `isCanvasPlatform` | function | True for platforms that can draw a `render_ui` canvas. |

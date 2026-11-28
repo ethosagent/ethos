@@ -1,5 +1,5 @@
 import type { ContextInjector, InjectionResult, PromptContext } from '@ethosagent/types';
-import { isCanvasPlatform, isCardPlatform } from './ui-platform';
+import { isCanvasPlatform, isCardPlatform, surfaceOf } from './ui-platform';
 
 export interface UiTemplateEntry {
   name: string;
@@ -60,12 +60,12 @@ export function createUiGuidanceInjector(opts: UiGuidanceInjectorOptions): Conte
       // Personality AND platform: `emit_card` refuses off a card surface, so on a CLI or
       // other channel turn these rules are ~700 chars teaching an unusable move.
       // Platform is fixed per surface, so gating on it keeps the prefix stable.
-      return ctx.personalityId === personalityId && isCardPlatform(ctx.platform);
+      return ctx.personalityId === personalityId && isCardPlatform(surfaceOf(ctx));
     },
     async inject(ctx: PromptContext): Promise<InjectionResult | null> {
       // Both strings are built once above; the platform is fixed per surface, so each
       // surface's text is byte-stable across turns.
-      return { content: isCanvasPlatform(ctx.platform) ? content : telegramContent };
+      return { content: isCanvasPlatform(surfaceOf(ctx)) ? content : telegramContent };
     },
   };
 }

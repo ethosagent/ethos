@@ -22,12 +22,24 @@ export const CARD_PLATFORMS = new Set(['web', 'desktop', 'telegram']);
  */
 export const CANVAS_PLATFORMS = new Set(['web', 'desktop']);
 
-export function isCardPlatform(platform: string | undefined): boolean {
-  return platform !== undefined && CARD_PLATFORMS.has(platform);
+/**
+ * The surface a turn draws on. `platform` on a `ToolContext` or `PromptContext` is the LOOP's
+ * wiring profile ('cli' for a gateway process, 'web' for a merged boot), the same for every turn
+ * the loop serves, so it cannot name a channel. A channel turn carries `origin`
+ * (`<platform>:<chatId>`, stamped by `Gateway.runTurn`); a web or CLI run carries none and falls
+ * back to the profile. Pinned by `__tests__/emit-card.test.ts` and `__tests__/ui-guidance-injector.test.ts`.
+ */
+export function surfaceOf(ctx: { platform?: string; origin?: string }): string | undefined {
+  const channel = ctx.origin?.split(':', 1)[0];
+  return channel ? channel : ctx.platform;
 }
 
-export function isCanvasPlatform(platform: string | undefined): boolean {
-  return platform !== undefined && CANVAS_PLATFORMS.has(platform);
+export function isCardPlatform(surface: string | undefined): boolean {
+  return surface !== undefined && CARD_PLATFORMS.has(surface);
+}
+
+export function isCanvasPlatform(surface: string | undefined): boolean {
+  return surface !== undefined && CANVAS_PLATFORMS.has(surface);
 }
 
 /** The one off-surface refusal, shared by `emit_card` and `render_ui`. */

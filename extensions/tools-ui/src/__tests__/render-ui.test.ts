@@ -200,7 +200,8 @@ describe('render_ui off-surface backstop', () => {
     const { ctx, reads } = makeCtx();
     const result = await tool.execute({ template: 'brief' }, {
       ...ctx,
-      platform: 'telegram',
+      platform: 'cli',
+      origin: 'telegram:77',
     } as unknown as ToolContext);
     expect(result).toMatchObject({ ok: false, code: 'not_available' });
     expect(reads).toEqual([]);

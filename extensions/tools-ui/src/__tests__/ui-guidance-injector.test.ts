@@ -40,12 +40,15 @@ describe('ui-guidance injector', () => {
     const injector = createUiGuidanceInjector({ personalityId: 'trader', templates: [] });
     expect(injector.shouldInject?.({ ...ctx, platform: 'desktop' } as PromptContext)).toBe(true);
     expect(injector.shouldInject?.({ ...ctx, platform: 'cli' } as PromptContext)).toBe(false);
-    expect(injector.shouldInject?.({ ...ctx, platform: 'slack' } as PromptContext)).toBe(false);
+    expect(
+      injector.shouldInject?.({ ...ctx, platform: 'cli', origin: 'slack:C1' } as PromptContext),
+    ).toBe(false);
   });
 
   // plan telegram-live-cards D8
   describe('on telegram', () => {
-    const tgCtx = { ...ctx, platform: 'telegram' } as unknown as PromptContext;
+    // A gateway loop's `platform` is its wiring profile; the turn's surface is its `origin`.
+    const tgCtx = { ...ctx, platform: 'cli', origin: 'telegram:77' } as unknown as PromptContext;
     const make = () =>
       createUiGuidanceInjector({
         personalityId: 'trader',
