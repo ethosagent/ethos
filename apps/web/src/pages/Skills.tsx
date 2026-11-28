@@ -8,7 +8,6 @@ import {
   Form,
   Input,
   InputNumber,
-  Modal,
   Popconfirm,
   Spin,
   Switch,
@@ -22,6 +21,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CatalogBrowser } from '../components/catalog/CatalogBrowser';
 import { LockedChip, SkillHistoryButton, SkillLockSwitch } from '../components/skills/SkillHistory';
+import { CreateSkillModal, EditSkillModal } from '../components/skills/SkillModals';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { learningKeys } from '../features/learning/api/keys';
 import { personalityKeys } from '../features/personalities/api/keys';
