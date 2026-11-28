@@ -9,7 +9,6 @@
 // does not block.
 
 import { join } from 'node:path';
-import { diffSkillVersions, SkillHistory, type SkillVersion } from '@ethosagent/skills';
 import {
   assertSafeId,
   BoundaryError,
@@ -17,6 +16,11 @@ import {
   IdValidationError,
   type Storage,
 } from '@ethosagent/types';
+import {
+  diffSkillVersions,
+  SkillHistory,
+  type SkillVersion,
+} from '@ethosagent/wiring/skill-history';
 import { splitJson, writeJson, writeJsonError } from '../json-output';
 
 const c = {

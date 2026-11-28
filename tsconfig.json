@@ -168,6 +168,7 @@
       "@ethosagent/wiring/model-catalog": ["./packages/wiring/src/model-catalog"],
       "@ethosagent/wiring/local-models": ["./packages/wiring/src/local-models"],
       "@ethosagent/wiring/nodes": ["./packages/wiring/src/nodes"],
+      "@ethosagent/wiring/skill-history": ["./packages/wiring/src/skill-history"],
       "@ethosagent/wiring/types": ["./packages/wiring/src/types"],
       "@ethosagent/session-sqlite/compose": ["./extensions/session-sqlite/src/compose"],
       "@ethosagent/memory-markdown/compose": ["./extensions/memory-markdown/src/compose"],
