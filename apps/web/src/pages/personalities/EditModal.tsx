@@ -8,6 +8,7 @@ import { useUnsavedGuard } from '../../hooks/useUnsavedGuard';
 import { rpc } from '../../rpc';
 import { ConfigEditor } from './ConfigEditor';
 import { IdentityEditor } from './IdentityEditor';
+import { InitiativesTab } from './InitiativesTab';
 import { PluginsAttachPanel } from './PluginsPanels';
 import { PersonalitySkillsPanel } from './SkillsPanels';
 import { ToolsetEditor } from './ToolsetPickers';
@@ -29,6 +30,7 @@ export type EditModalTabKey =
   | 'identity'
   | 'toolset'
   | 'execution'
+  | 'initiatives'
   | 'config'
   | 'soul'
   | 'skills'
@@ -62,6 +64,7 @@ export function EditModal({
     return {
       identity: forTab('identity'),
       toolset: forTab('toolset'),
+      initiatives: forTab('initiatives'),
       config: forTab('config'),
       plugins: forTab('plugins'),
       worlds: forTab('worlds'),
@@ -138,6 +141,11 @@ export function EditModal({
               key: 'execution',
               label: 'Execution',
               children: <ExecutionTab id={id} />,
+            },
+            {
+              key: 'initiatives',
+              label: 'Initiatives',
+              children: <InitiativesTab id={id} onDirtyChange={reportDirty.initiatives} />,
             },
             {
               key: 'config',

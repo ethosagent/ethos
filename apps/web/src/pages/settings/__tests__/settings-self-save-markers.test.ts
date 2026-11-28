@@ -14,6 +14,7 @@ import { decisionKeys } from '../lib/decision-models';
 import { modelRegistryKeys } from '../lib/model-registry';
 import { SETTINGS_INDEX } from '../lib/settings-index';
 import type { SettingsPaneContext } from '../pane-context';
+import { InitiativesSection } from '../panes/automation-initiatives';
 import { BackupPane } from '../panes/backup';
 import { ChatPane } from '../panes/chat';
 import { GeneralPane } from '../panes/general';
@@ -307,6 +308,7 @@ const SELF_SAVE_PAIRS = Array.from(
 describe('SETTINGS_INDEX self-saving sections match what this test covers', () => {
   it('is exactly the known (category, section) pairs', () => {
     expect(SELF_SAVE_PAIRS).toEqual([
+      'automation/initiatives',
       'backup/archives',
       'backup/status',
       'chat/display',
@@ -341,6 +343,21 @@ describe('every self-saving section renders SelfSaveMarker', () => {
 
   it('chat/display — the browser notifications switch', () => {
     expect(sectionBlock(markup(ChatPane), 'display')).toContain(MARKER_TEXT);
+  });
+
+  // Owner only: the section renders nothing until `constitution.initiatives`
+  // resolves, so the answer is seeded.
+  it('automation/initiatives — the constitution block', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['constitution', 'initiatives'], { initiatives: {} });
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(AntApp, null, createElement(InitiativesSection)),
+      ),
+    );
+    expect(sectionBlock(html, 'initiatives')).toContain(MARKER_TEXT);
   });
 
   it('memory/world — the world.* controls', () => {

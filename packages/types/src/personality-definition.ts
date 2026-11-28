@@ -41,6 +41,11 @@ import { foldForDeny } from './deny-fold';
  * writers — the registry's `evolveExpression`/`revertExpression` and the
  * operator — hold compose-time Storage.
  *
+ * `initiatives/` holds the personality's initiative definitions (goal, budget,
+ * sources, autonomy; plan initiative-engine). A turn that could write one could
+ * grant itself a budget or a source; the legitimate writer is
+ * `InitiativeConfigService`, which holds compose-time Storage.
+ *
  * Deliberately absent: `MEMORY.md` / `USER.md` (content the agent is meant to
  * maintain; their writer is the memory provider, not the turn's scoped storage)
  * and `files/` (`personalityAssetDir`, the documented asset drop).
@@ -67,6 +72,7 @@ export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
   'commands/',
   '.expression-history/',
   'worlds.yaml',
+  'initiatives/',
 ];
 
 /**

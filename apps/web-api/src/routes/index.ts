@@ -159,6 +159,8 @@ export interface ServiceContainer {
   learning: import('../services/learning.service').LearningService;
   /** Personality self-amendments, read-only (D30) — `amendments.list | get`. */
   amendments: import('../services/amendments.service').AmendmentsService;
+  /** Initiative engine: settings, constitution block, ledger reads, decisions. */
+  initiatives: import('../services/initiatives.service').InitiativesService;
   /** Connected wake satellites + the pushed routing table. Absent when this
    *  deployment mounts no satellite lane. */
   satellites?: import('../voice/satellite-registry').SatelliteRegistry;

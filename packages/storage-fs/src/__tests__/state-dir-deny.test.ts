@@ -38,6 +38,10 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'share-links.db',
     'share-links.db-wal',
     'share-links.db-shm',
+    // plan initiative-engine Task 3.4: the ledger is the engine's, not a turn's.
+    'initiatives.db',
+    'initiatives.db-wal',
+    'initiatives.db-shm',
     // plan personality-memory-boundary G2-pre B — read AND write.
     'learning',
     // plan channel-prompts D15 — operator-written room prompts, write-denied.
@@ -91,6 +95,21 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     await expect(scoped.write(join(home, 'mcp.json'), '[{}]')).rejects.toBeInstanceOf(
       BoundaryError,
     );
+  });
+
+  it('initiatives.db and its WAL side files are denied to turns', async () => {
+    const inner = new InMemoryStorage();
+    await inner.mkdir(home);
+    const scoped = new ScopedStorage(inner, {
+      read: [`${homedir()}/`],
+      write: [`${homedir()}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    for (const name of ['initiatives.db', 'initiatives.db-wal', 'initiatives.db-shm']) {
+      await inner.write(join(home, name), 'ledger');
+      await expect(scoped.read(join(home, name))).rejects.toBeInstanceOf(BoundaryError);
+      await expect(scoped.write(join(home, name), 'x')).rejects.toBeInstanceOf(BoundaryError);
+    }
   });
 
   it("leaves the personality's own directory reachable (MEMORY.md, files/)", async () => {

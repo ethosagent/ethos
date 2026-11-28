@@ -136,6 +136,7 @@ import {
   createReadinessCheck,
   type MetricsAuthCheck,
 } from '../health-server';
+import { cachedHealth } from '../lib/adapter-health';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { exitIfConfigInvalid } from '../lib/config-exit';
 import { createCronDeliver } from '../lib/cron-deliver';
@@ -147,6 +148,7 @@ import {
   takeGatewayLockOrExit,
 } from '../lib/gateway-inbound-durability';
 import { scrubExpiredIncognito } from '../lib/incognito-retention';
+import { bindInitiativeHostFor } from '../lib/initiative-wiring';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -294,7 +296,6 @@ export {
 // Gateway heartbeat
 // ---------------------------------------------------------------------------
 
-const HEALTH_TIMEOUT_MS = 5_000;
 /** How long a CONFIRMED delivery obligation is kept before it is pruned. The
  *  rows hold message bodies, so an unbounded ledger is a privacy and disk
  *  problem. Hard-coded on purpose — no config knob until someone needs one. */
@@ -303,43 +304,6 @@ const DELIVERY_LEDGER_RETENTION_MS = 7 * 86_400_000;
  *  because a call row is history an operator reads (who rang, what was said),
  *  not an in-flight obligation — but still bounded: the rows hold transcripts. */
 const CALL_LOG_RETENTION_MS = 30 * 86_400_000;
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('health check timeout')), ms).unref(),
-    ),
-  ]);
-}
-
-/** How long one adapter `health()` result is reused (R9). The heartbeat writer
- *  ticks every HEARTBEAT_INTERVAL_MS and `/healthz`, `/readyz` and `/metrics`
- *  each build a heartbeat per request; without this, an adapter whose probe is
- *  a network round trip — the email adapter's is a full IMAP connect + logout
- *  (`EmailAdapter.health`) — logged in every 10 seconds and on every scrape. */
-const HEALTH_CACHE_TTL_MS = 60_000;
-const healthCache = new WeakMap<PlatformAdapter, { at: number; ok: Promise<boolean> }>();
-
-/**
- * One adapter's health, probed at most once per HEALTH_CACHE_TTL_MS. The
- * in-flight probe is cached too, so concurrent callers share it; a rejection
- * or a HEALTH_TIMEOUT_MS timeout is cached as `false` for the same window.
- * Keyed by adapter object, so a bot a live reload adds starts uncached.
- * Pinned by the 'health cache' cases in
- * `apps/ethos/src/commands/__tests__/gateway-health.test.ts`.
- */
-function cachedHealth(adapter: PlatformAdapter): Promise<boolean> {
-  const now = Date.now();
-  const hit = healthCache.get(adapter);
-  if (hit && now - hit.at < HEALTH_CACHE_TTL_MS) return hit.ok;
-  const ok = withTimeout(adapter.health(), HEALTH_TIMEOUT_MS).then(
-    (r) => r.ok,
-    () => false,
-  );
-  healthCache.set(adapter, { at: now, ok });
-  return ok;
-}
 
 export async function buildGatewayHeartbeat(
   adapters: PlatformAdapter[],
@@ -1402,7 +1366,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // module, shared with `ethos boot` (B-T5).
   const speaksFor = buildChannelSpeakers(config);
   cronDeliverFn = createCronDeliver({ gateway, speaksFor });
-
+  bindInitiativeHostFor(gateway, config, adapters); // Task 6.5: digest sender + owner-only buttons
   // Watcher deliver → the gateway's sendTo path. sendTo already routes
   // through the outbound dedup cache — the watcher layer adds NO dedup of
   // its own (CLAUDE.md adapter contract). Targets are explicit

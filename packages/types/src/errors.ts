@@ -107,6 +107,9 @@ export type EthosErrorCode =
   // Storage (SQLite stores)
   | 'DB_BUSY'
   | 'DB_CORRUPT'
+  // Initiative ledger
+  | 'INITIATIVE_ILLEGAL_TRANSITION'
+  | 'INITIATIVE_TOOL_NOT_READ_ONLY'
   // Catch-all
   | 'INTERNAL';
 

@@ -107,6 +107,10 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   DB_BUSY: 503,
   // The database file failed to open or its integrity check: server-side, not the caller's input.
   DB_CORRUPT: 500,
+  // The initiative or exploration is not in a state that allows the move: a conflict with current state, nothing written.
+  INITIATIVE_ILLEGAL_TRANSITION: 409,
+  // An initiative run was composed with a tool that is not read-only: a server-side composition bug, not the caller's input. The run does not start.
+  INITIATIVE_TOOL_NOT_READ_ONLY: 500,
 };
 
 export function toEnvelope(err: EthosError): ErrorEnvelope {

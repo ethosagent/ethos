@@ -258,9 +258,10 @@ describe('deriveFsReachPaths — writeDeny', () => {
     `${OWN_DIR}commands/`,
     `${OWN_DIR}.expression-history/`,
     `${OWN_DIR}worlds.yaml`,
+    `${OWN_DIR}initiatives/`,
   ];
 
-  it('lists the ten definition entries under ownDir on the default branch', () => {
+  it('lists the eleven definition entries under ownDir on the default branch', () => {
     expect(deriveFsReachPaths(personality(), VARS).writeDeny).toEqual(DEFINITION);
   });
 

@@ -15,7 +15,7 @@
 //     turn-setup's `fsReach`, and on `ScopedFsImpl` via `resolveCapabilities`);
 //   - an incognito turn (plan incognito-sessions) resolves to `'shared'` and
 //     differs in one place: `withSharedAudienceExclusions(…, readmit)` skips
-//     `INCOGNITO_READMITTED_TOOLS` (the process tools) for the owner.
+//     `INCOGNITO_READMITTED_TOOLS` (process tools), plus the reads in `INCOGNITO_READ_READMITTABLE_TOOLS` on `readmitReadTools`.
 //
 // Pinned by `packages/core/src/__tests__/shared-audience.test.ts`.
 
@@ -167,17 +167,17 @@ export function withPersonalityMemoryWithheld(
  * reference, possibly `undefined`), so its tool definitions stay byte-identical.
  * With `readmit` (an incognito turn), the union skips
  * {@link INCOGNITO_READMITTED_TOOLS}; a caller-supplied `excludeTools` naming
- * one of them keeps it.
+ * one of them keeps it. `readmit` AND `readmitReads` (an incognito turn that opted in)
+ * also skip {@link INCOGNITO_READ_READMITTABLE_TOOLS}.
  */
 export function withSharedAudienceExclusions(
   audience: TurnAudience,
   excludeTools: string[] | undefined,
   readmit = false,
+  readmitReads = false,
 ): string[] | undefined {
   if (audience !== 'shared') return excludeTools;
-  const shared = readmit
-    ? SHARED_AUDIENCE_EXCLUDED_TOOLS.filter((t) => !INCOGNITO_READMITTED_TOOLS.includes(t))
-    : SHARED_AUDIENCE_EXCLUDED_TOOLS;
+  const shared = excludedFor(readmit, readmitReads);
   return [...new Set([...(excludeTools ?? []), ...shared])];
 }
 
@@ -239,4 +239,30 @@ export function sharedTurnDenyFor(
   const stateDirs = withRealPaths([...(roots?.stateDirs ?? []), ...defaultEthosStateDirs()]);
   const extraRoots = withRealPaths(roots?.extraRoots ?? []);
   return sharedTurnPathDeny({ stateDirs, extraRoots }, self ?? '');
+}
+
+/**
+ * The READ tools an incognito owner turn can opt back into
+ * (`RunOptions.readmitReadTools`): the owner is the one reader, so the room
+ * reason for excluding a read does not apply, and a run that must read
+ * memory or past sessions (an initiative run) cannot be a private turn.
+ * Every entry is also in {@link SHARED_AUDIENCE_EXCLUDED_TOOLS} and none writes
+ * (no `memory_write`, no `team_memory_*`); both pinned by
+ * `packages/core/src/__tests__/incognito-read-readmit.test.ts`. Only
+ * `withSharedAudienceExclusions(…, readmit, readmitReads)` skips them, and
+ * turn-setup passes `readmitReads` only when the turn is incognito (a caller-shared
+ * or inherited-incognito turn never is).
+ */
+export const INCOGNITO_READ_READMITTABLE_TOOLS: readonly string[] = [
+  'memory_read',
+  'session_list_by_date',
+];
+
+/** The exclusion list a shared turn unions in, minus whatever the incognito owner is re-admitted. */
+function excludedFor(readmit: boolean, readmitReads: boolean): readonly string[] {
+  return SHARED_AUDIENCE_EXCLUDED_TOOLS.filter(
+    (t) =>
+      !(readmit && INCOGNITO_READMITTED_TOOLS.includes(t)) &&
+      !(readmit && readmitReads && INCOGNITO_READ_READMITTABLE_TOOLS.includes(t)),
+  );
 }

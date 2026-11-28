@@ -59,6 +59,7 @@ const WORKSPACE_PANE_LABELS: Record<string, string> = {
   documents: 'Documents',
   schedule: 'Schedule',
   outbox: 'Outbox',
+  initiatives: 'Initiatives',
   skills: 'Skills',
   mcp: 'MCP Servers',
   plugins: 'Plugins',

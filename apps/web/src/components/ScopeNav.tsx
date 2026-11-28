@@ -385,6 +385,12 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
             badge={outboxPending}
           />
           <NavRow
+            path={`${wsPrefix}/initiatives`}
+            glyph="initiatives"
+            label="Initiatives"
+            pathname={pathname}
+          />
+          <NavRow
             path={`${wsPrefix}/skills`}
             glyph="skills"
             label="Skills"

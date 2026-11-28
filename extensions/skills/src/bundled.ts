@@ -37,6 +37,7 @@ export const BUNDLED_SKILL_IDS = [
   'social-media/reddit-research',
   'personal/get-to-know-you',
   'personal/birth-ritual',
+  'personal/initiative-setup',
   'knowledge/world-graph',
 ] as const;
 

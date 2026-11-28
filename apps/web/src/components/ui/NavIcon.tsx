@@ -33,9 +33,12 @@ export type NavIconKey =
   | 'cron'
   | 'sessions'
   | 'goals'
-  | 'identity';
+  | 'identity'
+  | 'initiatives';
 
 const PATHS: Record<NavIconKey, string> = {
+  // A compass: a ring with a needle, exploring on its own time.
+  initiatives: 'M14.5 8a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0zM10.5 5.5L9 9 5.5 10.5 7 7z',
   chat: 'M2 3h12v8H6l-3 3v-3H2z',
   overview: 'M2 8l6-5 6 5v6H2z',
   board: 'M2 2h3v12H2zM6.5 2h3v8h-3zM11 2h3v10h-3z',

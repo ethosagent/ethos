@@ -3,6 +3,7 @@ paths:
   - "extensions/session-sqlite/**"
   - "extensions/memory-vector/**"
   - "extensions/job-store/**"
+  - "extensions/initiative-store/**"
   - "extensions/delivery-ledger/**"
   - "extensions/session-cards/**"
   - "extensions/call-log/**"
@@ -39,6 +40,7 @@ What the trade is, per [sqlite.org](https://www.sqlite.org/pragma.html#pragma_sy
 | Store | Why FULL stays | Hot? |
 |---|---|---|
 | `extensions/delivery-ledger/` | Its whole purpose. An obligation is written `pending` BEFORE the platform call so the sweep can redeliver; losing that row loses the reply for good. | No — ~2 commits per reply. |
+| `extensions/initiative-store/` | A decision row (adopt, park, stop) is a promise to the user, and window spend rows enforce the daily cap the operator was promised; a rolled-back tail re-asks an answered gate and under-counts spend. Pinned by the `durability posture is FULL` case in `__tests__/store.test.ts`. | No — a handful of commits per window, beside LLM calls that take seconds. |
 | `extensions/job-store/` | A `queued` row is often the only record that work is owed, and the user was told the job started. | No — a few commits per job; heartbeat is 30s. |
 | `extensions/notify-queue/` | A queued wake notice is work owed to a person; a lost enqueue is never retried. | No — one commit per notification. |
 | `extensions/outbox/` | A pending publication is work owed to a person; a lost approve silently drops it. | No — a handful of commits per publication. |

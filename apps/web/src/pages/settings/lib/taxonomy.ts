@@ -143,6 +143,10 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // nothing is per-channel, so it earns a heading rather than being
       // averaged into `scheduled-passes`.
       section('team-supervisor', 'team supervisor'),
+      // The constitution `initiatives` block: owner-only operator ceilings and
+      // the kill switch. Per-personality settings live on the personality's
+      // Initiatives tab.
+      section('initiatives', 'initiatives'),
     ],
   },
   {

@@ -37,7 +37,7 @@ I do careful work and say what I did.
 Publishing: approval required on telegram, slack · reviewer: brand-editor · not covered: MCP tools, a2a_send
 
 ## Boundary
-Register status for this personality (the fifteen published guarantees).
+Register status for this personality (the seventeen published guarantees).
 enforced = kernel-enforced, unchanged here · narrowed = this personality tightens it ·
 relaxed = widens or disables something above the non-overridable floor · n/a = nothing here reaches it.
 
@@ -58,3 +58,5 @@ relaxed = widens or disables something above the non-overridable floor · n/a = 
 | G-MEM         | enforced | a shared-audience turn neither reads nor writes private memory; no personality field narrows it |
 | G-WORLD-WRITE | enforced | an agent write to a shared world is a proposal and never overwrites a user fact; no personality field narrows it |
 | G-WORLD-AUD   | enforced | an owner_only world is never visible in a shared turn, and a world needs both a grant and a mount; no personality field narrows it |
+| G-INIT-RO     | enforced | initiative runs get a fresh read-only registry (buildReadOnlyRegistry); no personality field widens it |
+| G-INIT-CFG    | enforced | initiatives/*.yaml is written only by InitiativeConfigService; the folder is a definition floor turns cannot write |

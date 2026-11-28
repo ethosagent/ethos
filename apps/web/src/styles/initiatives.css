@@ -1,0 +1,200 @@
+/* Initiatives page and the exploring-now strip. Tokens only (DESIGN.md); no Card primitive,
+   no coloured left border. The agent badge hue arrives as --initiative-agent, stamped inline
+   from the design-tokens accent table (components/initiatives/model.ts). */
+.initiatives-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  height: 100%;
+  overflow-y: auto;
+}
+.initiatives-filters {
+  display: flex;
+  gap: 8px;
+}
+.initiatives-filter {
+  padding: 4px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.initiatives-filter-on {
+  border-color: var(--border-strong);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.initiatives-body {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.initiatives-list {
+  display: flex;
+  flex-direction: column;
+}
+.initiatives-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.initiatives-item-on {
+  background: var(--bg-overlay);
+}
+.initiatives-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.initiative-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.initiative-badge-agent {
+  border-color: var(--initiative-agent);
+  color: var(--initiative-agent);
+}
+.initiative-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 880px;
+}
+.initiative-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.initiative-section-label {
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.initiative-muted {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.initiative-mono {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.initiative-error {
+  color: var(--error);
+  font-size: 13px;
+}
+.initiative-rows {
+  margin: 0 0 16px;
+}
+.initiative-file-row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.initiative-file-row dt {
+  color: var(--text-tertiary);
+}
+.initiative-file-row dd {
+  margin: 0;
+}
+.initiative-guidance {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.initiative-guidance li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+}
+.initiative-guidance-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.initiative-guidance-unreachable,
+.initiative-guidance-refused {
+  color: var(--warning);
+}
+.initiative-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.initiative-exploration {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.initiative-brief,
+.initiative-yaml {
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.initiative-versions {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.initiative-activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.initiative-window {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.exploring-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.exploring-now-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--initiative-agent, var(--info));
+}
+.exploring-now-readonly {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-secondary);
+}

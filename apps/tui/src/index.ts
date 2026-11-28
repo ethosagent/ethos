@@ -1,11 +1,14 @@
 import { basename } from 'node:path';
 import { AgentBridge, type BridgeApprovalSource } from '@ethosagent/agent-bridge';
+import { ethosDir } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { BackgroundJob } from '@ethosagent/types';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { App, type AppProps, type ExternalSlashCommands } from './components/App';
 import type { SplashInventory } from './components/Splash';
+import { startExploringNowFeed } from './exploring-now-host';
 import type { RebuiltLoop } from './loop-switch';
 
 export type { BridgeOpts } from '@ethosagent/agent-bridge';
@@ -94,6 +97,12 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
     ? `cli:${basename(process.cwd())}:${Date.now()}`
     : `cli:${basename(process.cwd())}`;
 
+  const stopExploringNow = startExploringNowFeed({
+    storage: new FsStorage(),
+    dataDir: ethosDir(),
+    personalityId: opts.personality,
+  });
+
   const { waitUntilExit } = render(
     createElement(App, {
       bridge,
@@ -123,5 +132,9 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
     }),
   );
 
-  await waitUntilExit();
+  try {
+    await waitUntilExit();
+  } finally {
+    stopExploringNow();
+  }
 }

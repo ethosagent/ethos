@@ -15,6 +15,13 @@ describe('@ethosagent/skills bundle', () => {
     expect(SOURCE.label).toBe('ethos-bundled');
   });
 
+  it('initiative-setup is bundled', () => {
+    expect(BUNDLED_SKILL_IDS).toContain('personal/initiative-setup');
+    expect(statSync(join(SOURCE.dir, 'personal', 'initiative-setup', 'SKILL.md')).isFile()).toBe(
+      true,
+    );
+  });
+
   it('exposes a SKILL.md for every advertised skill id', () => {
     for (const id of BUNDLED_SKILL_IDS) {
       const skillMd = join(SOURCE.dir, id, 'SKILL.md');

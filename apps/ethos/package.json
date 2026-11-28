@@ -106,6 +106,7 @@
     "@ethosagent/idle-watcher": "workspace:*",
     "@ethosagent/inbound-dedup": "workspace:*",
     "@ethosagent/inbound-spool": "workspace:*",
+    "@ethosagent/initiative-runner": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/learning-inbox": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",

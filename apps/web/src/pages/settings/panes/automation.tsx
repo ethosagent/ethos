@@ -34,6 +34,7 @@ import { SettingRow } from '../components/setting-row';
 import { nextRowId } from '../lib/row-id';
 import type { ChannelToolsetRow, QuickCommandRow } from '../lib/rows';
 import { useSettingsPane } from '../pane-context';
+import { InitiativesSection } from './automation-initiatives';
 
 export function AutomationPane() {
   const { quickCommandRows, setQuickCommandRows, channelToolsetRows, setChannelToolsetRows } =
@@ -53,6 +54,8 @@ export function AutomationPane() {
 
       <SectionHeading id="team-supervisor">team supervisor</SectionHeading>
       <TeamSupervisorFields />
+
+      <InitiativesSection />
     </>
   );
 }

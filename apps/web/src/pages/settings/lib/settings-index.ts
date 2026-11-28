@@ -2,30 +2,29 @@
 // the `N advanced` figure, the per-control key line and the callouts
 // (plan/phases/settings-navigation.md D8).
 //
-// Pure data, so the whole rail is testable without a DOM. Its one failure mode
-// is DRIFT — a control that moves, appears or disappears without the table
-// following — and `__tests__/settings-index-coverage.test.ts` (T6) checks both
-// directions against the pane sources.
+// Pure data, so the whole rail is testable without a DOM. Its one failure mode is DRIFT — a control
+// that moves, appears or disappears without the table following — and
+// `__tests__/settings-index-coverage.test.ts` (T6) checks both directions against the pane sources.
 //
 // Two conventions worth knowing before you edit a row:
 //
 //   `stateBacked: true` — the control is NOT a named `Form.Item`. Rosters, row
 //   editors, tables and action buttons live in React state or save themselves.
-//   They are in the table anyway, because five real sections would otherwise
-//   render a count of 0 for controls that visibly exist; T6 exempts them from
-//   the "has a form name" direction, since by definition they have none.
+//   They are in the table anyway, because five real sections would otherwise render a count of 0
+//   for controls that visibly exist; T6 exempts them from the "has a form name" direction, since
+//   by definition they have none.
 //
-//   `key: null` — the control writes no `~/.ethos/config.yaml` key at all
-//   (electron-store, the keychain, a secret store, or a navigation button).
-//   `keyUnresolved` says which. The row renders no key line; it is not a TODO.
+//   `key: null` — the control writes no `~/.ethos/config.yaml` key at all (electron-store, the
+//   keychain, a secret store, or a navigation button). `keyUnresolved` says which. The row renders
+//   no key line; it is not a TODO.
 //
-// Five source `Form.Item`s each render N controls with N distinct keys (the aux
-// slots, the background numbers, the browser tuning sliders, the channel
-// switches, the barge-in surfaces). They are expanded one entry per key so each
-// is individually searchable — and so `voice.bargeIn.satellite.silenceMs` can
-// carry `status: 'unread'` while its `call` sibling does not.
+// Five source `Form.Item`s each render N controls with N distinct keys (the aux slots, the
+// background numbers, the browser tuning sliders, the channel switches, the barge-in surfaces).
+// They are expanded one entry per key so each is individually searchable — and so
+// `voice.bargeIn.satellite.silenceMs` can carry `status: 'unread'` while its `call` sibling does not.
 
 import { KEY_CATEGORIES } from './keys-categories';
+import { INITIATIVES_SETTINGS_ENTRIES } from './settings-index-initiatives';
 
 /** Which Save writes this control: the page's Save bar, or the control itself. */
 export type SettingSaves = 'page' | 'self';
@@ -860,6 +859,7 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       advanced: true,
     },
   ]),
+  ...INITIATIVES_SETTINGS_ENTRIES,
   ...group('jobs', 'limits', [
     {
       key: 'background.enabled',

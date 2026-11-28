@@ -83,6 +83,7 @@ import type {
   WiringConfig,
   WiringProfile,
 } from './index';
+import { buildInitiativeRuntime } from './initiative-runtime';
 import { resolveJobAffinity } from './job-affinity';
 import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
@@ -93,6 +94,7 @@ import {
   createUndecoratedBackend,
   privateMemoryExtraRoots,
 } from './memory-backend';
+import { closeMemoryProvider, readOnlyMemory } from './memory-provider-helpers';
 import {
   lookupContextWindow,
   lookupLegacyCatalogModelId,
@@ -240,38 +242,6 @@ export function resolveJobClarifyOrigin(
       // 'originator' clarify from this job binds to whoever started it.
       ...(job?.originUserId ? { originatorUserId: job.originUserId } : {}),
     },
-  };
-}
-
-/**
- * `MemoryProvider` (five methods, drift-gated) has no close; a backend that
- * holds a connection of its own — memory-vector's memory.db — exposes one.
- */
-async function closeMemoryProvider(provider: MemoryProvider): Promise<void> {
-  const close = (provider as Partial<{ close: () => unknown }>).close;
-  if (typeof close === 'function') await close.call(provider);
-}
-
-/**
- * L-T3 — the replay arm's memory: reads pass through, `sync` does nothing.
- *
- * A replay is a measurement: it must not record what it said. The backends
- * write through `WiringContext.storage`, which under replay IS the overlay, so
- * the alternative to a no-op is a `BoundaryError` — a `memory_write` coming
- * back as a tool failure the model then reasons about, which changes the very
- * behaviour the arm is measuring. A no-op `sync` is the honest shape: memory is
- * READ exactly as the live agent reads it, and nothing is written.
- *
- * Local to this module rather than exported: it is not a reusable policy, it is
- * one arm of `CreateAgentLoopOptions.replay`.
- */
-function readOnlyMemory(base: MemoryProvider): MemoryProvider {
-  return {
-    prefetch: (ctx) => base.prefetch(ctx),
-    read: (key, ctx) => base.read(key, ctx),
-    search: (query, ctx, opts) => base.search(query, ctx, opts),
-    list: (ctx, opts) => base.list(ctx, opts),
-    sync: async () => {},
   };
 }
 
@@ -775,6 +745,7 @@ export async function buildAgentLoop(
     : undefined;
   const personalityToolExclude = buildPersonalityToolExclude(decisions, {
     ...(config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : {}),
+    initiatives: toolsResult.initiativeEnablement,
     ...(config.world?.enabled === true ? { worldTools: true } : {}),
   });
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
@@ -1998,10 +1969,13 @@ export async function buildAgentLoop(
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
   });
   if (voiceStack) disposers.push('voice stack', () => voiceStack.close());
+  const initiatives = buildInitiativeRuntime(wiringCtx, config, deps, { safety, memory, session });
 
   return {
     loop,
     usageMeter,
+    initiativeRunner: initiatives.runner,
+    initiativeRuntime: initiatives,
     dispose: () => disposers.dispose(),
     drain: async () => {
       // Jobs first: a running job can start a goal run, never the reverse

@@ -21,6 +21,7 @@ import type {
   AttachmentCache,
   DeliveryResult,
   InboundMessage,
+  InitiativeDigest,
   Logger,
   OutboundMessage,
   PlatformAdapter,
@@ -44,6 +45,7 @@ import {
   CLARIFY_CHOICE_ACTION_ID,
   CLARIFY_MODAL_CALLBACK_ID,
 } from './blocks/clarify';
+import { digestBlocks } from './blocks/initiative';
 import { plaintextFallback } from './blocks/shared';
 import { chunkText, reflowChunks } from './chunking';
 import {
@@ -66,19 +68,15 @@ import { type EnvelopeMeta, registerMessageEvents } from './events/messages';
 import { toNativeMarkdown } from './format';
 import { type ClarifyHomeReader, registerHomeEvents, type SessionReader } from './home/handlers';
 import { extractSlackFiles } from './inbound-files';
-import {
-  type ApprovalActionPayload,
-  handleApprovalAction,
-  handleApprovalNoteSubmission,
-} from './interactions/actions';
+import { handleApprovalNoteSubmission } from './interactions/actions';
+import { registerButtonActions } from './interactions/buttons';
 import {
   type ClarifyActionEvent,
-  type ClarifyActionPayload,
   type ClarifyModalSubmissionEvent,
   type ClarifyModalSubmissionPayload,
-  handleClarifyAction,
   handleClarifyModalSubmission,
 } from './interactions/clarify';
+import type { InitiativeActionEvent } from './interactions/initiative';
 import { createKeyedChain, createSlackRoomMetadata } from './room-metadata';
 import { deliverStamped, roomModeFields, stampRoomMetadata } from './room-mode';
 import { isSlackDm, type RawSlackFile, resolveChannelMode } from './routing/triage';
@@ -313,6 +311,9 @@ const LONG_REPLY_SUFFIX = '\n\n*full answer attached*';
 const LONG_REPLY_FILENAME = 'answer.md';
 /** Default long-reply threshold, as a multiple of `maxMessageLength`. */
 const LONG_REPLY_CHUNK_MULTIPLE = 3;
+/** Slack's cap on blocks per message, and the alt `text` kept beside them. */
+const SLACK_MAX_BLOCKS = 50;
+const SLACK_ALT_TEXT_MAX = 3000;
 
 /**
  * The lead message for a long answer: the text up to the first chunk boundary
@@ -342,10 +343,24 @@ const PERMANENT_SLACK_ERRORS = new Set([
  * every transport failure are left to the gateway's backoff.
  */
 function isPermanentSlackError(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null || !('data' in err)) return false;
+  const code = slackErrorCode(err);
+  return code !== undefined && PERMANENT_SLACK_ERRORS.has(code);
+}
+
+/** The Web API error code (`data.error`) a failed call carries, if any. */
+function slackErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null || !('data' in err)) return undefined;
   const data = err.data;
-  if (typeof data !== 'object' || data === null || !('error' in data)) return false;
-  return typeof data.error === 'string' && PERMANENT_SLACK_ERRORS.has(data.error);
+  if (typeof data !== 'object' || data === null || !('error' in data)) return undefined;
+  return typeof data.error === 'string' ? data.error : undefined;
+}
+
+/** Web API codes meaning Slack rejected the request body itself, so a retry of it cannot succeed. */
+const REFUSED_SLACK_SHAPES = new Set(['invalid_blocks', 'msg_too_long', 'invalid_arguments']);
+
+function isRefusedSlackShape(err: unknown): boolean {
+  const code = slackErrorCode(err);
+  return code !== undefined && REFUSED_SLACK_SHAPES.has(code);
 }
 
 /**
@@ -531,6 +546,8 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   /** Clarify-card button-click handler, wired by the Slack clarify surface. */
   private clarifyActionHandler?: (event: ClarifyActionEvent) => void;
+  /** Initiative digest / brief button handler, wired by the app's initiative wiring. */
+  private initiativeActionHandler?: (event: InitiativeActionEvent) => void | Promise<void>;
   /** Clarify-modal submission handler, wired by the Slack clarify surface. */
   private clarifyModalSubmitHandler?: (event: ClarifyModalSubmissionEvent) => void;
   /** Source of pending clarifies for the App Home "Waiting on you" section.
@@ -883,53 +900,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       }
     });
 
-    // Approval-card button clicks. Bolt delivers `block_actions` events here;
-    // we parse the raw payload down to the fields `handleApprovalAction`
-    // needs and let it route to the coordinator's decision handler. Registered
-    // unconditionally — a click with no handler wired is a harmless no-op.
-    //
-    // Slack is the one thing we don't control: a malformed payload or Bolt
-    // API drift must not throw inside the event loop. We defensively probe
-    // the shape before dereferencing, ack when we can, and bail otherwise.
-    const onApprovalButton = async (raw: unknown): Promise<void> => {
-      const evt = (raw ?? {}) as {
-        ack?: unknown;
-        body?: { user?: { id?: string }; channel?: { id?: string }; message?: { ts?: string } };
-        action?: { action_id?: string; value?: string };
-      };
-      if (typeof evt.ack === 'function') {
-        // `ack()` is the one call we can't reason about — a Bolt/Slack API
-        // change could make it throw synchronously, not just reject. Wrap the
-        // invocation itself, not only the returned promise, so a bad ack can
-        // never escape this handler and poison Bolt's event loop.
-        try {
-          await (evt.ack as () => Promise<void>)();
-        } catch {
-          // best-effort ack — proceed with the decision regardless
-        }
-      }
-      const handler = this.approvalDecisionHandler;
-      if (!handler) return;
-      const body = evt.body;
-      const action = evt.action;
-      if (
-        typeof body !== 'object' ||
-        body === null ||
-        typeof action !== 'object' ||
-        action === null
-      )
-        return;
-      const payload: ApprovalActionPayload = {
-        actionId: action.action_id ?? '',
-        approvalId: action.value ?? '',
-        userId: body.user?.id ?? '',
-        channelId: body.channel?.id ?? '',
-        messageTs: body.message?.ts ?? '',
-      };
-      await handleApprovalAction(payload, { onDecision: async (event) => handler(event) });
-    };
-    this.app.action(APPROVE_ACTION_ID, onApprovalButton);
-    this.app.action(DENY_ACTION_ID, onApprovalButton);
+    registerButtonActions(this.app, this.client, {
+      approval: () => this.approvalDecisionHandler,
+      clarify: () => this.clarifyActionHandler,
+      initiative: () => this.initiativeActionHandler,
+    });
 
     // "Deny with note…" opens a modal; it never decides. Opening is not
     // authorization: whose submission counts is decided by the coordinator's
@@ -997,64 +972,6 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
         { onDecision: async (event) => handler(event) },
       );
     });
-
-    // Clarify-card button clicks. Bolt delivers `block_actions` events here
-    // for the choice/cancel/answer buttons; we narrow the raw payload to
-    // `ClarifyActionPayload` and let the pure handler route it. Same shape as
-    // the approval handler — defensively probe the payload before dereferencing
-    // and ack as the very first thing.
-    const onClarifyButton = async (raw: unknown): Promise<void> => {
-      const evt = (raw ?? {}) as {
-        ack?: unknown;
-        body?: {
-          user?: { id?: string };
-          channel?: { id?: string };
-          message?: { ts?: string };
-          trigger_id?: string;
-          /** Present for App Home / modal-triggered block_actions; absent for
-           *  channel-message clicks. We use it to detect the Home tab path. */
-          view?: { type?: string };
-        };
-        action?: { action_id?: string; value?: string };
-      };
-      if (typeof evt.ack === 'function') {
-        try {
-          await (evt.ack as () => Promise<void>)();
-        } catch {
-          // best-effort ack — proceed regardless
-        }
-      }
-      const handler = this.clarifyActionHandler;
-      if (!handler) return;
-      const body = evt.body;
-      const action = evt.action;
-      if (
-        typeof body !== 'object' ||
-        body === null ||
-        typeof action !== 'object' ||
-        action === null
-      )
-        return;
-      // App Home payloads omit `body.channel` and `body.message` entirely
-      // (the click happened on a view, not a channel message). Detect this
-      // so the surface can relax its channel/messageTs cross-tenant gate
-      // for Home — a Home view is per-user, so cross-message replay isn't
-      // a risk; the gate's purpose doesn't apply.
-      const fromHome = body.view?.type === 'home' || !body.channel;
-      const payload: ClarifyActionPayload = {
-        actionId: action.action_id ?? '',
-        value: action.value ?? '',
-        userId: body.user?.id ?? '',
-        channelId: body.channel?.id ?? '',
-        messageTs: body.message?.ts ?? '',
-        triggerId: body.trigger_id ?? '',
-        fromHome,
-      };
-      await handleClarifyAction(payload, { onAction: async (e) => handler(e) });
-    };
-    this.app.action(CLARIFY_CHOICE_ACTION_ID, onClarifyButton);
-    this.app.action(CLARIFY_CANCEL_ACTION_ID, onClarifyButton);
-    this.app.action(CLARIFY_ANSWER_ACTION_ID, onClarifyButton);
 
     // Free-form modal submission. Bolt delivers `view_submission` events
     // when the user clicks Submit on the clarify modal. Same defensive shape.
@@ -1261,6 +1178,45 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
           error: `partial: ${posted.length} of ${total} chunks delivered; ${error}`,
         };
       }
+      return slackFailure(err);
+    }
+  }
+
+  /**
+   * The owner digest as Block Kit with `init:` buttons, called by `Gateway.notifyTracked`
+   * (extensions/gateway/src/initiative-card.ts) inside the delivery ledger's send. `fallback.text`
+   * is the message's text (notification and screen-reader alt) and is what goes out through
+   * {@link send} when the blocks cannot be built, exceed Slack's 50-block cap, or Slack refuses
+   * their shape (`invalid_blocks`, `msg_too_long`, `invalid_arguments`).
+   */
+  async sendInitiativeDigest(
+    chatId: string,
+    digest: InitiativeDigest,
+    fallback: { text: string; threadId?: string },
+  ): Promise<DeliveryResult> {
+    let blocks: ReturnType<typeof digestBlocks> | null = null;
+    try {
+      const built = digestBlocks(digest);
+      blocks = built.length <= SLACK_MAX_BLOCKS ? built : null;
+    } catch (err) {
+      this.logger.warn(
+        `[slack] initiative blocks build failed, sending text: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!blocks) return this.send(chatId, fallback);
+    try {
+      const res = await this.client.chat.postMessage({
+        channel: chatId,
+        text: toNativeMarkdown(fallback.text).slice(0, SLACK_ALT_TEXT_MAX),
+        blocks,
+        ...(fallback.threadId ? { thread_ts: fallback.threadId } : {}),
+        link_names: false,
+      });
+      return { ok: true, ...(res.ts ? { messageId: res.ts } : {}) };
+    } catch (err) {
+      // Slack refused the request SHAPE (not a transient failure): the same blocks would be refused
+      // on every redelivery, so send the text once here. Pinned by initiative-digest-send.test.ts.
+      if (isRefusedSlackShape(err)) return this.send(chatId, fallback);
       return slackFailure(err);
     }
   }
@@ -1653,6 +1609,11 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter, Vo
       // final regardless.
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /** Register the initiative digest / brief button handler (`init:<verb>:<target>` taps). */
+  onInitiativeAction(handler: (event: InitiativeActionEvent) => void | Promise<void>): void {
+    this.initiativeActionHandler = handler;
   }
 
   /** Register the approval-card button-click handler. The coordinator wires

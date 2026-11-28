@@ -44,6 +44,14 @@ describe('buildSystemTaskHandlers', () => {
     }
   });
 
+  it('system handler name matches the job', () => {
+    const handlers = buildSystemTaskHandlers(config);
+    const spec = systemJobSpecs(config, 'serve').find((s) => s.id === 'initiative-tick');
+    expect(spec?.systemTask).toBe('initiative-tick');
+    expect(spec?.enabled).toBe(true);
+    expect(handlers[spec?.systemTask ?? '']).toBeTypeOf('function');
+  });
+
   it('registers the scheduled backup handler', () => {
     expect(buildSystemTaskHandlers(config).backup).toBeTypeOf('function');
   });

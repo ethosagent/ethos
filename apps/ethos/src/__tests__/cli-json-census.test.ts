@@ -40,6 +40,7 @@ const JSON_EXEMPT: Record<string, string> = {
   serve: 'long-running HTTP server',
   setup: 'interactive wizard',
   zero: 'has its own `--format json`',
+  'serve-a2a-options': 'internal types of serve, no CLI output',
   'serve-a2a-runner': 'internal helper of serve (long-running)',
   'serve-acp': 'internal helper of serve, no CLI output',
   'serve-helpers': 'internal helper of serve, no CLI output',

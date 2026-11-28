@@ -12,6 +12,7 @@
 
 import { join } from 'node:path';
 import {
+  CONSTITUTION_INITIATIVES_KEYS,
   type Constitution,
   type ConstitutionClamp,
   type ConstitutionEnforcement,
@@ -153,7 +154,103 @@ function validateConstitution(obj: object): Constitution | { error: string } {
     result.execution = execution;
   }
 
+  if (o.initiatives !== undefined) {
+    const initiatives = validateInitiatives(o.initiatives);
+    if ('error' in initiatives) return initiatives;
+    result.initiatives = initiatives;
+  }
+
   return result;
+}
+
+const INITIATIVE_NUMBER_KEYS = [
+  'maxUsdPerDay',
+  'maxUsdPerDayPerPersonality',
+  'selfStartPoolUsdPerDay',
+] as const;
+
+/**
+ * Validate `initiatives`. Unlike the top level (unknown keys ignored), an
+ * unknown key INSIDE the block fails, so a typo like `allowWrites` cannot
+ * silently look like a granted capability. Root path blocking (`~/.ssh` and the
+ * `sensitiveDenyPaths()` entries) is NOT done here: this extension may not
+ * import `@ethosagent/storage-fs` (a devDependency only), so the later
+ * `checkSources` and web-api validators own it.
+ */
+export function validateInitiatives(
+  raw: unknown,
+): NonNullable<Constitution['initiatives']> | { error: string } {
+  if (!isPlainObject(raw)) return { error: 'initiatives must be a mapping' };
+  const known: readonly string[] = CONSTITUTION_INITIATIVES_KEYS;
+  for (const key of Object.keys(raw)) {
+    if (!known.includes(key)) return { error: `initiatives.${key} is not a known key` };
+  }
+  const out: NonNullable<Constitution['initiatives']> = {};
+  if (raw.enabled !== undefined) {
+    if (typeof raw.enabled !== 'boolean') return { error: 'initiatives.enabled must be a boolean' };
+    out.enabled = raw.enabled;
+  }
+  for (const key of INITIATIVE_NUMBER_KEYS) {
+    const v = raw[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+      return { error: `initiatives.${key} must be a finite non-negative number` };
+    }
+    out[key] = v;
+  }
+  if (raw.maxSelfStarted !== undefined) {
+    const v = raw.maxSelfStarted;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+      return { error: 'initiatives.maxSelfStarted must be a non-negative integer' };
+    }
+    out.maxSelfStarted = v;
+  }
+  if (raw.readableRoots !== undefined) {
+    if (!isStringArray(raw.readableRoots)) {
+      return { error: 'initiatives.readableRoots must be an array of strings' };
+    }
+    out.readableRoots = raw.readableRoots;
+  }
+  return out;
+}
+
+/**
+ * Clamp an initiative's budgets to the operator ceilings, mirroring the
+ * `budget.maxUsdPerSession` clamp in `enforceConstitution`. `usd_per_day` is
+ * lowered to the smallest of the asked value, `maxUsdPerDayPerPersonality`,
+ * `maxUsdPerDay` and, when > 0 (0 means "not set"), the personality's own
+ * `dailyBudgetUsd`. `usd_per_exploration` may span days, so it is only floored
+ * at 0. Each change adds a human-readable line to `clamps`.
+ */
+export function clampInitiativeBudgets(
+  input: {
+    settings: { dailyBudgetUsd: number };
+    initiative: { usdPerDay: number; usdPerExploration: number };
+  },
+  c: Constitution['initiatives'],
+): { usdPerDay: number; usdPerExploration: number; clamps: string[] } {
+  const clamps: string[] = [];
+  let usdPerDay = input.initiative.usdPerDay;
+  const ceilings: [number | undefined, string][] = [
+    [c?.maxUsdPerDayPerPersonality, 'operator ceiling maxUsdPerDayPerPersonality'],
+    [c?.maxUsdPerDay, 'operator ceiling maxUsdPerDay'],
+    [
+      input.settings.dailyBudgetUsd > 0 ? input.settings.dailyBudgetUsd : undefined,
+      'personality dailyBudgetUsd',
+    ],
+  ];
+  for (const [cap, label] of ceilings) {
+    if (cap !== undefined && usdPerDay > cap) {
+      clamps.push(`usd_per_day ${usdPerDay} → ${cap} (${label})`);
+      usdPerDay = cap;
+    }
+  }
+  let usdPerExploration = input.initiative.usdPerExploration;
+  if (usdPerExploration < 0) {
+    clamps.push(`usd_per_exploration ${usdPerExploration} → 0 (must not be negative)`);
+    usdPerExploration = 0;
+  }
+  return { usdPerDay, usdPerExploration, clamps };
 }
 
 export async function loadConstitution(

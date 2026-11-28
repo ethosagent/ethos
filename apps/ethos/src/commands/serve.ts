@@ -136,6 +136,7 @@ import {
 } from './_shared';
 import { cronContextAudience, cronFiringAudience, runCronTurn } from './cron-turn';
 import { buildBotSpeakers } from './gateway';
+import type { BuildServeA2aCoreOptions } from './serve-a2a-options';
 import { createA2aRunner } from './serve-a2a-runner';
 import { buildServeAcpServer } from './serve-acp';
 import {
@@ -159,12 +160,12 @@ import {
   SERVE_LOOP_PROFILE,
   type ServeLoopFieldsInput,
   type ServeLoopOptions,
-  type ServePersonalityRegistry,
   serveLoopFields,
 } from './serve-loop';
 import { listRegisteredTeams, locateWebDist } from './serve-util';
 import type { BuildServeWebApiOptions, ServeVoiceConfig } from './serve-web-api';
 
+export type { BuildServeA2aCoreOptions } from './serve-a2a-options';
 export { type BuildServeAcpServerOptions, buildServeAcpServer } from './serve-acp';
 export { buildServeDangerPredicate } from './serve-loop';
 export { locateWebDist } from './serve-util';
@@ -523,6 +524,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'] | undefined;
   // No `| undefined`: definite assignment makes a branch that forgets it a compile error.
   let memoryBundle: import('@ethosagent/wiring').MemoryBundle;
+  let initiativeEnablement: BuildServeWebApiOptions['initiativeEnablement'];
   // The loop's world runtime services (plan world-model 7.2). Set on the main-loop branch only: a
   // coordinator-mode team loop does not expose them, so `worlds.*` answers NOT_CONFIGURED there.
   let worlds: import('@ethosagent/wiring').CreateAgentLoopResult['worlds'];
@@ -834,6 +836,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     onMemoryCaptured = result.onMemoryCaptured;
     runCallCaptureFromLoop = result.runCallCapture;
     goals = result.goals;
+    initiativeEnablement = result.initiativeRuntime.enablement;
     memoryBundle = result.memoryBundle;
     amendments = result.amendments;
     jobStore = result.jobStore;
@@ -912,6 +915,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     onMemoryCaptured = result.onMemoryCaptured;
     runCallCaptureFromLoop = result.runCallCapture;
     goals = result.goals;
+    initiativeEnablement = result.initiativeRuntime.enablement;
     memoryBundle = result.memoryBundle;
     worlds = result.worlds;
     amendments = result.amendments;
@@ -1427,6 +1431,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     cronTriggers,
     goals,
     memoryBundle,
+    ...(initiativeEnablement ? { initiativeEnablement } : {}),
     ...(worlds ? { worlds } : {}),
     amendments,
     jobStore,
@@ -1719,15 +1724,6 @@ export function serveLoopOptions(
   opts: ServeLoopFieldsInput & { meshName: string },
 ): ServeLoopOptions {
   return serveLoopFields({ ...opts, meshRegistryPath: meshRegistryPath(opts.meshName) });
-}
-
-export interface BuildServeA2aCoreOptions {
-  config: EthosConfig;
-  /** `~/.ethos` (or the `--data-dir` override) — the a2a state dir's parent. */
-  dir: string;
-  loop: AgentLoop;
-  personalities: ServePersonalityRegistry;
-  activePersonality: string;
 }
 
 /**
@@ -2104,6 +2100,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     cronTriggers,
     goals,
     memoryBundle,
+    initiativeEnablement,
     worlds,
     amendments,
     jobStore,
@@ -2153,6 +2150,8 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // The loop's memory surfaces (F04): editor, Timeline, restore and approve
     // all on the backend the agent reads — the vault under `memory: vault`.
     memoryBundle,
+    // A settings save reloads the loop's initiative enablement, so a toggle applies at once.
+    ...(initiativeEnablement ? { initiativeEnablement } : {}),
     // The loop's ONE world runtime, borrowed (never a second); absent unless `world.enabled`.
     ...(worlds ? { worlds } : {}),
     // Self-amendments, read-only (D30): `amendments.list | get` only.

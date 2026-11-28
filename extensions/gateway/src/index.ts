@@ -50,6 +50,7 @@ import type {
   ClarifyResponse,
   DeliveryResult,
   InboundMessage,
+  InitiativeDigest,
   OutboundMessage,
   PersonalityVoiceConfig,
   PlatformAdapter,
@@ -149,6 +150,7 @@ import {
   transcriptTimestamp,
   type WakeReview,
 } from './gateway-pure';
+import { type NotifyOutcome, outcomeOf, sendCardOrText } from './initiative-card';
 import { activeLaneJobSummary, parseJobCommand, runJobCommand, stopJobByRef } from './job-commands';
 import { LaneManager } from './lane-manager';
 import { LaneSessionFiles } from './lane-sessions';
@@ -4794,8 +4796,9 @@ export class Gateway {
       inboundRef?: string;
     },
     message: OutboundMessage,
+    card?: InitiativeDigest,
   ): Promise<boolean> {
-    return (await this.sendTrackedDetailed(target, message)).confirmed;
+    return (await this.sendTrackedDetailed(target, message, card)).confirmed;
   }
 
   /**
@@ -4820,6 +4823,7 @@ export class Gateway {
       inboundRef?: string;
     },
     message: OutboundMessage,
+    card?: InitiativeDigest,
   ): Promise<{ confirmed: boolean; obligationId: string | null }> {
     const binding = this.deliveryBinding(target.botKey, target.platform, target.inboundRef);
     const obligationId = await beginDelivery(binding, {
@@ -4835,7 +4839,7 @@ export class Gateway {
     // sweep does not redeliver a send that outlasts its age grace.
     let result: DeliveryResult;
     try {
-      result = await target.adapter.send(target.chatId, message).catch(
+      result = await sendCardOrText(target.adapter, target.chatId, message, card).catch(
         (err: unknown): DeliveryResult => ({
           ok: false,
           error: err instanceof Error ? err.message : String(err),
@@ -4894,7 +4898,7 @@ export class Gateway {
    * wrong bot (F08). In multi-bot deployments `botKey` is therefore required —
    * `voice.inbound.owner` carries one for exactly this reason.
    */
-  async notifyTracked(
+  async notifyTrackedOutcome(
     target: {
       platform: string;
       chatId: string;
@@ -4910,8 +4914,10 @@ export class Gateway {
       answersInbound?: boolean;
     },
     text: string,
-  ): Promise<boolean | 'held'> {
-    const refuse = (cause: string): false => {
+    /** The owner digest behind `text` (buttons on a card adapter; held and redelivered notices carry only `text`). */
+    extra?: { initiativeDigest?: InitiativeDigest },
+  ): Promise<NotifyOutcome> {
+    const refuse = (cause: string): 'failed' => {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_unconfirmed',
         cause,
@@ -4922,7 +4928,7 @@ export class Gateway {
           durable: false,
         },
       });
-      return false;
+      return 'failed';
     };
 
     const botKey = target.botKey ?? this.defaultBotKey;
@@ -4952,7 +4958,7 @@ export class Gateway {
       if (held) return 'held';
     }
 
-    return this.sendTracked(
+    const sent = await this.sendTrackedDetailed(
       {
         adapter,
         botKey,
@@ -4961,7 +4967,19 @@ export class Gateway {
         sessionKey,
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
+      extra?.initiativeDigest,
     );
+    return outcomeOf(sent);
+  }
+
+  /** {@link notifyTrackedOutcome} as the boolean the other callers read: `owed` and `failed` are `false`. */
+  async notifyTracked(
+    target: Parameters<Gateway['notifyTrackedOutcome']>[0],
+    text: string,
+    extra?: { initiativeDigest?: InitiativeDigest },
+  ): Promise<boolean | 'held'> {
+    const outcome = await this.notifyTrackedOutcome(target, text, extra);
+    return outcome === 'held' ? 'held' : outcome === 'confirmed';
   }
 
   /**

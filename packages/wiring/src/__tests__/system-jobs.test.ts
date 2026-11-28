@@ -57,7 +57,7 @@ describe('systemJobSpecs', () => {
         .filter((s) => s.enabled)
         .map((s) => s.systemTask)
         .sort(),
-    ).toEqual(['backup', 'observability-prune']);
+    ).toEqual(['backup', 'initiative-tick', 'observability-prune']);
   });
 
   // MIGRATION (FIX A): every id must equal the slug the old name-derived
@@ -95,7 +95,7 @@ describe('seedAllSystemJobs', () => {
     const s = makeScheduler();
     const outcomes = await seedAllSystemJobs(s, makeConfig(), 'serve');
     expect(outcomes.every((o) => o.action !== 'failed')).toBe(true);
-    expect(await jobIds(s)).toEqual(['backup', 'observability-prune']);
+    expect(await jobIds(s)).toEqual(['backup', 'initiative-tick', 'observability-prune']);
   });
 
   it('is idempotent — the second run reports every job unchanged and writes nothing', async () => {
@@ -106,6 +106,7 @@ describe('seedAllSystemJobs', () => {
 
     const outcomes = await seedAllSystemJobs(s, config, 'serve');
     expect(outcomes.map((o) => o.action)).toEqual([
+      'unchanged',
       'unchanged',
       'unchanged',
       'unchanged',
@@ -187,10 +188,11 @@ describe('seedAllSystemJobs', () => {
       });
     }
     const before = await jobIds(s);
-    expect(before.length).toBe(5);
+    expect(before.length).toBe(6);
 
     const outcomes = await seedAllSystemJobs(s, config, 'serve');
     expect(outcomes.map((o) => o.action)).toEqual([
+      'unchanged',
       'unchanged',
       'unchanged',
       'unchanged',
@@ -213,7 +215,7 @@ describe('seedAllSystemJobs', () => {
     const outcomes = await seedAllSystemJobs(s, config, 'serve');
     expect(outcomes.find((o) => o.id === 'backup')?.action).toBe('patched');
     expect((await s.getJob('backup'))?.name).toBe('Backup');
-    expect(await jobIds(s)).toEqual(['backup', 'observability-prune']);
+    expect(await jobIds(s)).toEqual(['backup', 'initiative-tick', 'observability-prune']);
   });
 
   // FIX C — a user job on a system id disables the system job. Reporting
@@ -257,7 +259,7 @@ describe('seedAllSystemJobs', () => {
     expect(failed?.name).toBe('Nightly Pass');
     expect(failed?.error).toMatch(/schedule/i);
     // The four others still reconciled.
-    expect(await jobIds(s)).toEqual(['backup', 'observability-prune']);
+    expect(await jobIds(s)).toEqual(['backup', 'initiative-tick', 'observability-prune']);
   });
 });
 

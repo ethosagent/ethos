@@ -149,7 +149,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 193, contains: "export function isExfilShapedTool" }
     - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 664, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 634, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 136, contains: "export function checkMessage" }
@@ -168,9 +168,9 @@ register_anchors:
   G-MEM:
     - { path: packages/core/src/agent-loop/audience.ts, line: 130, contains: "export function resolveTurnAudience" }
     - { path: packages/core/src/agent-loop/audience.ts, line: 233, contains: "export function sharedTurnDenyFor" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 177, contains: "resolveTurnAudience(requestedAudience" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 298, contains: "sharedTurnDenyFor(" }
-    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 546, contains: "withSharedAudienceExclusions(" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 178, contains: "resolveTurnAudience(requestedAudience" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 299, contains: "sharedTurnDenyFor(" }
+    - { path: packages/core/src/agent-loop/stages/turn-setup.ts, line: 547, contains: "withSharedAudienceExclusions(" }
     - { path: packages/core/src/agent-loop/turn-end.ts, line: 354, contains: "memoryFlushForbidden(ctx.roomAudience" }
     - { path: packages/types/src/memory-paths.ts, line: 150, contains: "export function isPrivateMemoryPath" }
     - { path: packages/types/src/memory-paths.ts, line: 240, contains: "export function sharedTurnPathDeny" }
@@ -187,9 +187,19 @@ register_anchors:
   G-WORLD-AUD:
     - { path: extensions/world-service/src/access.ts, line: 38, contains: "export function resolveAccess" }
 
+  G-INIT-RO:
+    - { path: packages/wiring/src/initiatives.ts, line: 179, contains: "export function buildReadOnlyRegistry" }
+    - { path: extensions/initiative-runner/src/capability-audit.ts, line: 28, contains: "export function assertReadOnlyCapabilities" }
+    - { path: extensions/initiative-runner/src/tool-gate.ts, line: 11, contains: "export function createInitiativeToolGate" }
+
+  G-INIT-CFG:
+    - { path: extensions/initiative-runner/src/config-service.ts, line: 170, contains: "async save(input: SaveInput)" }
+    - { path: extensions/initiative-runner/src/sources.ts, line: 52, contains: "export function checkSources" }
+    - { path: packages/types/src/personality-definition.ts, line: 75, contains: "'initiatives/'" }
+
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 156 packages: 11 at Tier 0, 31 at Tier 1, 114 at Tier 2.
+# apps/ carries a tier. 159 packages: 11 at Tier 0, 32 at Tier 1, 116 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -320,6 +330,7 @@ tiers:
       - packages/wiring/src/decision-injection-classifier.ts
       - packages/wiring/src/resolve-execution-posture.ts
       - packages/wiring/src/skill-passthrough.ts
+      - packages/wiring/src/initiatives.ts
 
   # ---------------------------------------------------------------------------
   # Tier 1 — guarded surfaces. Not the kernel; they sit ON a trust boundary.
@@ -700,6 +711,16 @@ tiers:
     tier: 2
     assigned: 2026-09-24
 
+  extensions/initiative-runner:
+    package: "@ethosagent/initiative-runner"
+    tier: 1
+    assigned: 2026-11-27
+
+  extensions/initiative-store:
+    package: "@ethosagent/initiative-store"
+    tier: 2
+    assigned: 2026-11-27
+
   extensions/job-runner:
     package: "@ethosagent/job-runner"
     tier: 2
@@ -948,6 +969,11 @@ tiers:
     package: "@ethosagent/tools-goals"
     tier: 2
     assigned: 2026-08-12
+
+  extensions/tools-initiatives:
+    package: "@ethosagent/tools-initiatives"
+    tier: 2
+    assigned: 2026-11-28
 
   extensions/tools-image:
     package: "@ethosagent/tools-image"

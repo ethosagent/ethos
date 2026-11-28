@@ -1,7 +1,12 @@
 import { decisionToolEnabled, type ResolvedDecisionsConfig } from '@ethosagent/config';
+import { INITIATIVE_CHAT_TOOLS } from '@ethosagent/initiative-runner';
 import { PROPOSE_SELF_AMENDMENT_TOOL } from '@ethosagent/tools-personality-design';
 import { WORLD_TOOL_NAMES } from '@ethosagent/tools-world';
 import type { PersonalityConfig } from '@ethosagent/types';
+import type { InitiativeEnablement } from './initiatives';
+
+/** Chat-registry recall tools; they also belong to the run class, so they are not in INITIATIVE_CHAT_TOOLS. */
+const INITIATIVE_CHAT_RECALL_TOOLS = ['initiative_list', 'initiative_search', 'initiative_get'];
 
 /**
  * The loop's per-personality tool exclusion (`AgentLoopConfig.personalityToolExclude`).
@@ -26,12 +31,19 @@ import type { PersonalityConfig } from '@ethosagent/types';
  */
 export function buildPersonalityToolExclude(
   decisions: Pick<ResolvedDecisionsConfig, 'provider'> | undefined,
-  opts?: { nodeTools?: readonly string[]; worldTools?: boolean },
+  opts?: {
+    nodeTools?: readonly string[];
+    initiatives?: Pick<InitiativeEnablement, 'isEnabled'>;
+    worldTools?: boolean;
+  },
 ): (person: PersonalityConfig) => string[] {
   return (person) => [
     ...(decisions && !decisionToolEnabled(person.decisions, decisions) ? ['decide'] : []),
     ...(person.toolset?.includes(PROPOSE_SELF_AMENDMENT_TOOL) ? [] : [PROPOSE_SELF_AMENDMENT_TOOL]),
     ...(opts?.nodeTools ?? []).filter((n) => !person.toolset?.includes(n)),
+    ...(opts?.initiatives && !opts.initiatives.isEnabled(person.id)
+      ? [...INITIATIVE_CHAT_TOOLS, ...INITIATIVE_CHAT_RECALL_TOOLS]
+      : []),
     ...(opts?.worldTools ? WORLD_TOOL_NAMES.filter((n) => !person.toolset?.includes(n)) : []),
   ];
 }

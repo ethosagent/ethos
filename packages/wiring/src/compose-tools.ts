@@ -6,7 +6,6 @@ import {
   personalityAssetDir,
   privateChatSetFrom,
   SessionManager,
-  turnWasShared,
 } from '@ethosagent/core';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
@@ -34,7 +33,7 @@ import {
   platformId as whatsappId,
   platformPrompt as whatsappPrompt,
 } from '@ethosagent/platform-whatsapp/format';
-import { sanitize as sanitizeInjection, wrapUntrusted } from '@ethosagent/safety-injection';
+import { sanitize as sanitizeInjection } from '@ethosagent/safety-injection';
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
@@ -116,6 +115,7 @@ import type {
 import { WorldCaptureRouter } from '@ethosagent/world-service';
 import { createAmendmentIntake } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
+import { composeInitiativeChat } from './compose-initiatives';
 import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
@@ -127,6 +127,7 @@ import {
   kanbanChecksEnabled,
 } from './grounding';
 import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './index';
+import type { InitiativeEnablement, LazyInitiativeStore } from './initiatives';
 import { resolveKanbanDbPath } from './kanban-path';
 import {
   freezeLatestUserTurnCase,
@@ -150,7 +151,8 @@ import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 import type { WiringContext } from './types';
 import type { UsageMeter } from './usage-meter';
 import { resolveSipTrunkClient } from './voice-stack';
-import { createWorldRuntime, type WorldBuildBindings, type WorldRuntime } from './worlds';
+import { worldBuildBindings } from './world-build-bindings';
+import { createWorldRuntime, type WorldRuntime } from './worlds';
 
 // ---------------------------------------------------------------------------
 // WEB_PROMPT — kept here since platformPrompts is also assembled here
@@ -675,6 +677,10 @@ export interface ComposeToolsResult {
   goalStore: SQLiteGoalStore;
   /** Late-binding ref for the loop-bearing GoalRunner, assigned in build-agent-loop. */
   goalRunnerRef: GoalRunnerRef;
+  /** Per-personality initiative on/off (cached); `buildPersonalityToolExclude` reads it each turn. */
+  initiativeEnablement: InitiativeEnablement;
+  /** The lazy initiative ledger the chat tools use; the manual runner borrows it (closed by the compose disposer). */
+  initiativeLedger: LazyInitiativeStore;
   /** Skill pool built from composeSkills (needed by loadPlugins). */
   skillPool: Map<string, Skill>;
   /** Context injectors array (passed through to loadPlugins and AgentLoop). */
@@ -1280,80 +1286,6 @@ function buildVerifierProviderGetter(
 }
 
 // ---------------------------------------------------------------------------
-// World first build (plan world-model 5.3): what `world_build` reads and which model it calls.
-//   - memory: the configured backend's provider, scope `personality:<id>` (MEMORY.md, USER.md);
-//   - sessions: the personality's own sessions from the shared SessionStore; whether a session
-//     was the owner's is `turnWasShared` (the one helper memory capture uses);
-//   - llm: the main provider, metered as `tool_llm` (`usageMeter.meter`), resolved on first use.
-// The calling turn's fs reach is NOT here: `readFolder` arrives with each `port.build` call.
-// ---------------------------------------------------------------------------
-
-/** Newest messages read per session, and sessions listed per build. */
-const WORLD_BUILD_MESSAGES = 300;
-const WORLD_BUILD_SESSIONS = 500;
-
-function worldBuildBindings(
-  config: WiringConfig,
-  infra: InfrastructureResult,
-  wiringCtx: WiringContext,
-  usageMeter: UsageMeter,
-  secrets: SecretsResolver,
-): WorldBuildBindings {
-  const { dataDir, log } = wiringCtx;
-  const store = infra.sessionCompose.sessionStore;
-  const privateChats = privateChatSetFrom(config.privateChats);
-  let memory: Promise<MemoryProvider> | undefined;
-  const memoryProvider = (): Promise<MemoryProvider> => {
-    if (!memory) {
-      const name = config.memory ?? 'markdown';
-      const factory = infra.memoryProviders.get(name);
-      if (!factory) throw new Error(`memory backend "${name}" is not registered (world build)`);
-      memory = Promise.resolve(factory({ config: {}, dataDir, secrets, logger: log }));
-    }
-    return memory;
-  };
-  return {
-    sources: {
-      memory: async (pid) => {
-        const provider = await memoryProvider();
-        const ctx: MemoryContext = {
-          scopeId: `personality:${pid}`,
-          sessionId: 'world-build',
-          sessionKey: 'world-build',
-          platform: 'cli',
-          workingDir: dataDir,
-        };
-        const [mem, user] = await Promise.all([
-          provider.read('MEMORY.md', ctx),
-          provider.read('USER.md', ctx),
-        ]);
-        return { memory: mem?.content ?? '', user: user?.content ?? '' };
-      },
-      async *sessions(pid, since) {
-        const list = await store.listSessions({
-          personalityId: pid,
-          limit: WORLD_BUILD_SESSIONS,
-          ...(since !== null ? { since: new Date(since) } : {}),
-        });
-        for (const session of list) {
-          yield {
-            session,
-            messages: await store.getMessages(session.id, { limit: WORLD_BUILD_MESSAGES }),
-          };
-        }
-      },
-      isShared: (session) => turnWasShared(session, privateChats),
-    },
-    llm: buildVerifierProviderGetter(infra.llmProviders, config, log, usageMeter, {
-      kind: 'tool_llm',
-      sourceRef: 'world_build',
-    }),
-    model: config.model,
-    wrapUntrusted,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Lane A Phase 2 (kanban-hooks-notify-parity) — auxiliary model for
 // kanban_decompose. Resolved eagerly (composeAllTools is already async and
 // runs once per AgentLoop construction) rather than lazily like the verifier
@@ -1738,6 +1670,18 @@ export async function composeAllTools(
       tools.register(tool);
   }
 
+  // Initiative engine, chat side (see `composeInitiativeChat`).
+  const { initiativeLedger, initiativeEnablement, initiativeIndexInjector } =
+    await composeInitiativeChat({
+      storage: wiringCtx.storage,
+      dataDir,
+      log,
+      personalities,
+      tools,
+      disposers,
+      kanbanStore,
+    });
+
   for (const tool of composeProcess(wiringCtx, {
     hookRegistry: hooks,
     // D4 — the process router excludes an ssh posture from remote routing and
@@ -1916,6 +1860,7 @@ export async function composeAllTools(
   });
   const { skillPool, injectors, scanner: skillScanner, skillsInjector } = skillsCompose;
   for (const tool of skillsCompose.tools) tools.register(tool);
+  injectors.push(initiativeIndexInjector); // prompt-tail `append`
 
   const bootToolNames = new Set(activePerson.toolset ?? []);
   const attachedServers = new Set(activePerson.mcp_servers ?? []);
@@ -2181,6 +2126,7 @@ export async function composeAllTools(
       teamName: config.teamName,
       storage: wiringCtx.storage,
     });
+    initiativeLedger.readSources.teamMemory = teamMemory; // initiative runs read it too
 
     await seedTeamMemory(teamMemory, config.teamName);
 
@@ -2232,8 +2178,11 @@ export async function composeAllTools(
         config,
         infra,
         wiringCtx,
-        deps.usageMeter,
         config.secretsResolver ?? NOOP_SECRETS,
+        buildVerifierProviderGetter(infra.llmProviders, config, log, deps.usageMeter, {
+          kind: 'tool_llm',
+          sourceRef: 'world_build',
+        }),
       ),
     });
     disposers.push('world runtime', () => worldRuntime.close());
@@ -2362,6 +2311,8 @@ export async function composeAllTools(
     gatewaySendRef,
     goalRunnerRef,
     goalStore,
+    initiativeEnablement,
+    initiativeLedger,
     skillPool,
     injectors,
     skillScanner,

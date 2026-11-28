@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import { useSkin } from '../skin';
+import { ExploringNowLine } from './ExploringNowStrip';
 
 export type AgentStatus = 'idle' | 'thinking' | 'running' | 'interrupted';
 
@@ -107,29 +108,32 @@ export function StatusBar({
 }: StatusBarProps) {
   const tokens = useSkin();
   return (
-    <Box marginBottom={1}>
-      <Text bold color={tokens.surface.textPrimary}>
-        ethos
-      </Text>
-      <Text color={tokens.surface.textSecondary}> {model} ·</Text>
-      <Text color={accentColor}>{emoji ? ` ${emoji} ${personality}` : ` ${personality}`}</Text>
-      {incognito && <Text color={tokens.surface.textTertiary}> [incognito]</Text>}
-      {readonlyMode && <Text color={tokens.semantic.success}> [READ-ONLY]</Text>}
-      <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
-      <Text color={tokens.surface.textSecondary}>
-        {'  '}
-        {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out $
-        {costUsd.toFixed(5)}
-      </Text>
-      {budgetState && <BudgetIndicator budgetState={budgetState} />}
-      {backgroundCount > 0 && (
-        <Text color={tokens.semantic.warning}>{` bg:${backgroundCount}`}</Text>
-      )}
-      {updateStatus && updateStatus.behind > 0 && (
-        <Text color={tokens.semantic.warning}>
-          {` ! ${updateStatus.behind} version${updateStatus.behind === 1 ? '' : 's'} behind — pnpm dlx ethos upgrade`}
+    <>
+      <ExploringNowLine />
+      <Box marginBottom={1}>
+        <Text bold color={tokens.surface.textPrimary}>
+          ethos
         </Text>
-      )}
-    </Box>
+        <Text color={tokens.surface.textSecondary}> {model} ·</Text>
+        <Text color={accentColor}>{emoji ? ` ${emoji} ${personality}` : ` ${personality}`}</Text>
+        {incognito && <Text color={tokens.surface.textTertiary}> [incognito]</Text>}
+        {readonlyMode && <Text color={tokens.semantic.success}> [READ-ONLY]</Text>}
+        <StatusIndicator status={status} currentTool={currentTool} elapsedSecs={elapsedSecs} />
+        <Text color={tokens.surface.textSecondary}>
+          {'  '}
+          {inputTokens.toLocaleString()} in · {outputTokens.toLocaleString()} out $
+          {costUsd.toFixed(5)}
+        </Text>
+        {budgetState && <BudgetIndicator budgetState={budgetState} />}
+        {backgroundCount > 0 && (
+          <Text color={tokens.semantic.warning}>{` bg:${backgroundCount}`}</Text>
+        )}
+        {updateStatus && updateStatus.behind > 0 && (
+          <Text color={tokens.semantic.warning}>
+            {` ! ${updateStatus.behind} version${updateStatus.behind === 1 ? '' : 's'} behind — pnpm dlx ethos upgrade`}
+          </Text>
+        )}
+      </Box>
+    </>
   );
 }

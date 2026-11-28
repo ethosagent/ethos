@@ -1,0 +1,136 @@
+{
+  "constitution.initiatives": {
+    "input": null,
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "initiatives": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "maxSelfStarted": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxUsdPerDay": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "maxUsdPerDayPerPersonality": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "readableRoots": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "selfStartPoolUsdPerDay": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "initiatives"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "constitution.initiativesSave": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "initiatives": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "maxSelfStarted": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxUsdPerDay": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxUsdPerDayPerPersonality": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readableRoots": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "selfStartPoolUsdPerDay": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "enabled",
+            "maxUsdPerDay",
+            "maxUsdPerDayPerPersonality",
+            "selfStartPoolUsdPerDay",
+            "maxSelfStarted"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "initiatives"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "appliesOn": {
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "appliesOn"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

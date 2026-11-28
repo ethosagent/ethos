@@ -13,6 +13,7 @@ import {
 import { AltitudeRail } from './components/AltitudeRail';
 import { AuthGate } from './components/AuthGate';
 import { CommandPalette } from './components/CommandPalette';
+import { ExploringNowStrip } from './components/initiatives/ExploringNowStrip';
 import { MobileTabBar } from './components/MobileTabBar';
 import { NewAgentDialog } from './components/NewAgentDialog';
 import { PersonalityPickerModal } from './components/PersonalityPickerModal';
@@ -74,6 +75,7 @@ import { Documents } from './pages/Documents';
 import { Eval } from './pages/Eval';
 import { GoalDetail } from './pages/GoalDetail';
 import { Goals } from './pages/Goals';
+import { Initiatives } from './pages/Initiatives';
 import { Kanban } from './pages/Kanban';
 import { Learning } from './pages/Learning';
 import { Mcp } from './pages/Mcp';
@@ -128,6 +130,7 @@ const WORKSPACE_ROUTES: ReadonlyArray<{ path: string; element: ReactNode }> = [
   { path: 'documents', element: <Documents /> },
   { path: 'schedule', element: <Cron /> },
   { path: 'outbox', element: <Outbox /> },
+  { path: 'initiatives', element: <Initiatives /> },
   { path: 'goals', element: <Goals /> },
   { path: 'goals/:goalId', element: <GoalDetail /> },
   { path: 'tasks', element: <Tasks /> },
@@ -307,6 +310,8 @@ function AppShell() {
               <NeedsYouPill teamId={teamId} />
               <SupervisorStatus teamId={teamId} />
             </>
+          ) : isChat && workspacePersonalityId ? (
+            <ExploringNowStrip personalityId={workspacePersonalityId} />
           ) : undefined
         }
       />

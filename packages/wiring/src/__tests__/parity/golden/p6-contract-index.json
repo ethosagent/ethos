@@ -67,6 +67,10 @@
     "config.get",
     "config.update"
   ],
+  "constitution": [
+    "constitution.initiatives",
+    "constitution.initiativesSave"
+  ],
   "context": [
     "context.resolve"
   ],
@@ -161,6 +165,16 @@
     "goals.settings",
     "goals.steer",
     "goals.toolResult"
+  ],
+  "initiatives": [
+    "initiatives.activity",
+    "initiatives.decide",
+    "initiatives.exploringNow",
+    "initiatives.get",
+    "initiatives.list",
+    "initiatives.metrics",
+    "initiatives.settings",
+    "initiatives.settingsSave"
   ],
   "kanban": [
     "kanban.addComment",

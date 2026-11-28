@@ -287,6 +287,16 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
       'Public read-only transcript links served by THIS deployment. Restoring them on another ' +
       'host would revive revoked or expired URLs (plan share-links D10, always-excluded).',
   },
+  {
+    source: 'extensions/initiative-store/src/store.ts',
+    sites: 1,
+    database: 'initiatives.db',
+    scope: 'state',
+    reason:
+      'Initiative ledger: the owner decisions (adopt, park, stop), findings and briefs, and the ' +
+      'spend rows a daily cap is enforced against. Nothing rebuilds them, and a restore that ' +
+      'lost them would re-ask answered gates and forget spend already incurred.',
+  },
 ];
 
 /**

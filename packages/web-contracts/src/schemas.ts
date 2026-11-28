@@ -13,6 +13,7 @@ export * from './schema/catalog';
 export * from './schema/communications';
 export * from './schema/cron';
 export * from './schema/goals-jobs';
+export * from './schema/initiatives';
 export * from './schema/kanban-teams';
 export * from './schema/lab';
 export * from './schema/learning';

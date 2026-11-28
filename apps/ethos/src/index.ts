@@ -82,7 +82,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | channels | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | node | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage | world] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | channels | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | node | claw | doctor | upgrade | mcp | catalog | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage | world | initiatives] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -1011,6 +1011,12 @@ try {
       break;
     }
 
+    case 'initiatives': {
+      const { runInitiatives } = await import('./commands/initiatives');
+      await runInitiatives(args.slice(1), await loadRequiredConfig());
+      break;
+    }
+
     case 'usage': {
       const { runUsage } = await import('./commands/usage');
       await runUsage(args.slice(1));
@@ -1018,16 +1024,8 @@ try {
     }
 
     case 'nightly': {
-      const sub = args[1];
-      if (sub === 'run') {
-        const { runNightly } = await import('./commands/nightly');
-        await runNightly(args.slice(2));
-      } else {
-        if (args.includes('--json')) {
-          writeJsonError('INVALID_INPUT', 'Usage: ethos nightly run [<id>] [--json]');
-        }
-        console.log('Usage: ethos nightly run [<id>] [--json]');
-      }
+      const { runNightlyCommand } = await import('./commands/nightly');
+      await runNightlyCommand(args.slice(1));
       break;
     }
 

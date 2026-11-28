@@ -811,7 +811,7 @@ describe('display block', () => {
 
 // §4.7 — the register-status section. The register (published in
 // docs/content/security/security-boundary.md) says what Ethos guarantees in
-// general; this section says which of those fifteen guarantees are enforced,
+// general; this section says which of those seventeen guarantees are enforced,
 // narrowed, relaxed, or inapplicable for THIS personality. The value is in the
 // narrowings and relaxations being visible without cross-referencing the doc,
 // so these tests assert the STATE, never merely that a section exists.
@@ -870,7 +870,7 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     scratchPaths: [],
   };
 
-  it('reports all fifteen register rows, in register order', () => {
+  it('reports all seventeen register rows, in register order', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('## Boundary');
     const ids = sheet

@@ -92,6 +92,17 @@ export function systemJobSpecs(config: EthosConfig, surface: SystemJobSurface): 
       systemTask: 'observability-prune',
       enabled: true,
     },
+    // Carries no prompt and no toolset: cron grants nothing. The handler only calls
+    // `InitiativeRuntime.tick` (packages/wiring/src/initiative-runtime.ts), which reads
+    // each personality's own settings and does nothing until a first initiative is saved,
+    // so the job is always listed and never removed.
+    {
+      id: 'initiative-tick',
+      name: 'Initiative Tick',
+      schedule: '*/5 * * * *',
+      systemTask: 'initiative-tick',
+      enabled: true,
+    },
     {
       id: 'nightly-pass',
       name: 'Nightly Pass',

@@ -304,10 +304,8 @@ describe('SSE event union', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Contract shape — namespaces are present and procedures look like procedures.
 // We don't exercise oRPC's runtime, just confirm the contract was assembled.
-// ---------------------------------------------------------------------------
 
 describe('contract router', () => {
   it('exposes the v0 + v0.5 + v1 namespaces', () => {
@@ -325,6 +323,7 @@ describe('contract router', () => {
       'chat',
       'clarify',
       'config',
+      'constitution',
       'context',
       'credentials',
       'cron',
@@ -339,6 +338,7 @@ describe('contract router', () => {
       'execution',
       'files',
       'goals',
+      'initiatives',
       'kanban',
       'keys',
       'learning',
