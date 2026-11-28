@@ -39,10 +39,10 @@ Layer names are archcheck's.
 ```
 make prepare                          # pnpm install
 pnpm dev                              # chat
-pnpm check                            # typecheck + lint + test
+pnpm check                            # typecheck + lint + test; serialized across worktrees
 pnpm test | typecheck | lint | lint:fix
 pnpm arch                             # archcheck
-bash scripts/run-checks.sh            # quiet, failures only
+bash scripts/run-checks.sh            # quiet, failures only (same lock; ETHOS_GATE_LOCK=0 skips)
 node scripts/check-agent-files.mjs    # agent-file size gate
 ```
 
