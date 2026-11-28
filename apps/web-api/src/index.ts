@@ -35,6 +35,7 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   type CreateAgentLoopResult,
   createLearningInbox,
+  createWorldChangesSource,
   DisposerStack,
   type FunnelTracker,
   hardlineReason,
@@ -1310,11 +1311,25 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     secrets,
     ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
   });
+  const digestLogger = new ConsoleLogger({ component: 'digest' });
+  const digestOnError = (e: unknown) =>
+    digestLogger.warn(`digest: world changes: ${e instanceof Error ? e.message : String(e)}`);
   const digestService = new DigestService({
     storage,
     dataDir: opts.dataDir,
     personalities: opts.personalities,
     learning: learningService,
+    // World changes section (plan world-model 8.4): only with `world.enabled` (`opts.worlds`).
+    ...(opts.worlds
+      ? {
+          worldChanges: createWorldChangesSource({
+            service: opts.worlds.service,
+            configService: opts.worlds.configService,
+            onError: digestOnError,
+          }),
+        }
+      : {}),
+    onError: digestOnError,
   });
   const documentsService = new DocumentsService({
     personalities: opts.personalities,

@@ -24,8 +24,11 @@ import {
   createWorldToolPort,
   isSafeSlug,
   RIPPLE_DISCLAIMER,
+  rippleWalk,
   SQLiteWorldServiceStore,
   serviceDbPath,
+  sharedWorldId,
+  type TaggedFacts,
   WorldBuildService,
   WorldConfigService,
   WorldContextInjector,
@@ -80,6 +83,123 @@ export function expandWorldFeedPrefix(
   if (world !== 'private' && !isSafeSlug(world)) return prefix;
   return worldFeedWakePrompt(world);
 }
+
+/** The window a digest covers; `buildWeeklyDigest` (extensions/digest) passes `{ from, to }`. */
+export interface WorldChangesWindow {
+  from: Date;
+  to: Date;
+}
+
+/**
+ * Structurally the `WorldChangesSource` result of `@ethosagent/digest`; wiring does not depend on
+ * that package, so the shape is restated here and checked where a source is handed to
+ * `buildWeeklyDigest` (apps/web-api/src/index.ts, typechecked).
+ */
+export interface WorldChangesReport {
+  worlds: Array<{
+    world: string;
+    audience: 'owner_only' | 'shareable';
+    linksOpened: number;
+    linksClosed: number;
+    newEvents: string[];
+    pendingProposals: number;
+    ripples: string[];
+  }>;
+  rippleDisclaimer: string;
+}
+
+const OWNER_CALLER = {
+  personalityId: 'owner',
+  audience: 'private',
+  sessionId: null,
+  surface: 'owner',
+} as const;
+
+/**
+ * The digest's world source (plan world-model 8.4): per shared world, the links opened and closed
+ * and the Event entities created in the window (`ownerChanges` over `ownerExport`), the pending
+ * proposal count, and a ripple notice per new Event (`rippleWalk`). Reads as the owner, so it
+ * returns every world with its audience; the digest decides who sees which
+ * (extensions/digest world-section.test.ts 'owner_only world omitted when the digest target is
+ * shared'). A world that fails to read is skipped and reported to `onError`. Pinned by
+ * __tests__/world-changes-source.test.ts.
+ */
+export function createWorldChangesSource(deps: {
+  service: WorldService;
+  configService: WorldConfigService;
+  onError?: (err: unknown) => void;
+}): (window: WorldChangesWindow) => Promise<WorldChangesReport> {
+  const { service } = deps;
+  // rippleWalk reads through `WorldService.query`; the owner reads the same facts unmounted.
+  const ownerReads = {
+    query: async (_c: unknown, world: string | null, q: Parameters<WorldService['query']>[2]) => {
+      if (world === null) throw new Error('world digest: a world is required');
+      const facts = await service.ownerQuery(sharedWorldId(world), q);
+      const tag = world;
+      const tagged: TaggedFacts = {
+        entities: facts.entities.map((e) => ({ ...e, tag, displayTag: `${tag}:${e.name}` })),
+        attributes: facts.attributes.map((a) => ({ ...a, tag })),
+        edges: facts.edges.map((e) => ({ ...e, tag })),
+        truncated: facts.truncated,
+      };
+      return tagged;
+    },
+  };
+  return async ({ from, to }) => {
+    const worlds: WorldChangesReport['worlds'] = [];
+    for (const [slug, file] of await deps.configService.listWorlds()) {
+      try {
+        const id = sharedWorldId(slug);
+        const [rows, bundle] = await Promise.all([
+          // A closed fact's `at` is its `valid_to` date (world clock), so ask by date, then
+          // bound each kind: timestamps for opened/entity, whole days for closed.
+          service.ownerChanges(id, from.toISOString().slice(0, 10), CHANGES_LIMIT),
+          service.ownerExport(id),
+        ]);
+        const day = (d: Date) => d.toISOString().slice(0, 10);
+        const inWindow = rows.filter((r) =>
+          r.kind === 'closed'
+            ? r.at.slice(0, 10) >= day(from) && r.at.slice(0, 10) <= day(to)
+            : Date.parse(r.at) >= from.getTime() && Date.parse(r.at) <= to.getTime(),
+        );
+        const edgeIds = new Set(bundle.edges.map((e) => e.id));
+        const events = new Map(
+          bundle.entities.filter((e) => e.type === 'Event').map((e) => [e.id, e.name]),
+        );
+        const newEvents = inWindow.filter((r) => r.kind === 'entity' && events.has(r.factId));
+        const ripples: string[] = [];
+        for (const r of newEvents) {
+          const results = await rippleWalk(ownerReads, OWNER_CALLER, {
+            world: slug,
+            eventId: r.factId,
+          });
+          for (const hit of results) {
+            ripples.push(
+              `${events.get(r.factId)}: ${hit.path.join(' → ')} (sources: ${hit.sources.join(', ')})`,
+            );
+          }
+        }
+        const links = (kind: 'opened' | 'closed') =>
+          inWindow.filter((r) => r.kind === kind && edgeIds.has(r.factId)).length;
+        worlds.push({
+          world: slug,
+          audience: file.audience,
+          linksOpened: links('opened'),
+          linksClosed: links('closed'),
+          newEvents: newEvents.map((r) => events.get(r.factId) as string),
+          pendingProposals: service.ownerPendingCount(id),
+          ripples,
+        });
+      } catch (e) {
+        deps.onError?.(e);
+      }
+    }
+    return { worlds, rippleDisclaimer: RIPPLE_DISCLAIMER };
+  };
+}
+
+/** Rows read per world per digest; a busier week is counted up to this many. */
+const CHANGES_LIMIT = 1000;
 
 /** The backend every private world uses, and the default for a `world.yaml` without `backend`. */
 const DEFAULT_BACKEND = 'sqlite';

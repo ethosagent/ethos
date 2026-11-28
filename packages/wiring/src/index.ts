@@ -2535,8 +2535,11 @@ export * from './share'; // share-links store + redacted snapshot builder (plan 
 export * from './system-jobs';
 export * as worldOwner from './world-owner'; // owner-surface codecs and access (plan world-model 7.2)
 export {
+  createWorldChangesSource,
   createWorldRuntime,
   expandWorldFeedPrefix,
+  type WorldChangesReport,
+  type WorldChangesWindow,
   type WorldRuntime,
   type WorldRuntimeDeps,
   worldFeedPrefix,

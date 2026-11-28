@@ -8,7 +8,7 @@
 // in `apps/ethos/src/commands/digest.ts`; the web-api `DigestService.generate`
 // drives the same generator. Both import from here.
 import { basename, join } from 'node:path';
-import type { LearningLogEntry, PersonalityConfig, Storage } from '@ethosagent/types';
+import type { LearningLogEntry, PersonalityConfig, Storage, TurnAudience } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // ISO-week helpers
@@ -128,6 +128,31 @@ export function waitingSkillNamesByPersonality(
 // Generator
 // ---------------------------------------------------------------------------
 
+/**
+ * One world's changes over the digest window, produced by an injected `WorldChangesSource`
+ * (bound in packages/wiring/src/worlds.ts `createWorldChangesSource`). This package defines the
+ * shape and never imports world-service.
+ */
+export interface WorldDigestEntry {
+  /** Display tag of the world (its slug). */
+  world: string;
+  audience: 'owner_only' | 'shareable';
+  linksOpened: number;
+  linksClosed: number;
+  newEvents: string[];
+  pendingProposals: number;
+  /** One notice per ripple path, each carrying its sources. */
+  ripples: string[];
+}
+
+export interface WorldChangesReport {
+  worlds: WorldDigestEntry[];
+  /** The one line that goes under any ripple notice ("not advice"); owned by the source. */
+  rippleDisclaimer: string;
+}
+
+export type WorldChangesSource = (window: { from: Date; to: Date }) => Promise<WorldChangesReport>;
+
 export interface WeeklyDigestInput {
   personalities: PersonalityConfig[];
   storage: Storage;
@@ -141,6 +166,56 @@ export interface WeeklyDigestInput {
   // Waiting skill candidates keyed by personality id, from the learning inbox
   // (`waitingSkillNamesByPersonality`). Optional — an absent id has none.
   pendingSkillCandidatesByPersonality?: Record<string, string[]>;
+  // Optional "World changes" section. Absent, or no world with changes, leaves the digest
+  // byte-identical (world-section.test.ts 'no worlds → no section, digest byte-identical').
+  worldChanges?: WorldChangesSource;
+  // Who reads the delivered digest. Only `'private'` includes owner_only worlds; absent counts as
+  // shared, so a caller that forgets it leaks nothing (world-section.test.ts 'owner_only world
+  // omitted when the digest target is shared').
+  deliveryAudience?: TurnAudience;
+  // A failing world source skips the section and is reported here, never thrown.
+  onError?: (err: unknown) => void;
+}
+
+const worldHasChanges = (w: WorldDigestEntry): boolean =>
+  w.linksOpened > 0 ||
+  w.linksClosed > 0 ||
+  w.newEvents.length > 0 ||
+  w.pendingProposals > 0 ||
+  w.ripples.length > 0;
+
+async function worldSection(
+  input: WeeklyDigestInput,
+  window: { from: Date; to: Date },
+): Promise<string | null> {
+  if (!input.worldChanges) return null;
+  let report: WorldChangesReport;
+  try {
+    report = await input.worldChanges(window);
+  } catch (err) {
+    input.onError?.(err);
+    return null;
+  }
+  const isPrivate = input.deliveryAudience === 'private';
+  const worlds = report.worlds.filter(
+    (w) => (isPrivate || w.audience === 'shareable') && worldHasChanges(w),
+  );
+  if (worlds.length === 0) return null;
+  const lines: string[] = ['## World changes', ''];
+  let anyRipple = false;
+  for (const w of worlds) {
+    lines.push(`### ${w.world}`);
+    lines.push(`- Links opened: ${w.linksOpened}, closed: ${w.linksClosed}.`);
+    lines.push(`- New events: ${w.newEvents.length > 0 ? w.newEvents.join(', ') : 'none'}.`);
+    lines.push(`- Pending proposals: ${w.pendingProposals}.`);
+    for (const r of w.ripples) {
+      lines.push(`- Ripple: ${r}`);
+      anyRipple = true;
+    }
+    lines.push('');
+  }
+  if (anyRipple) lines.push(report.rippleDisclaimer, '');
+  return lines.join('\n');
 }
 
 export async function buildWeeklyDigest(input: WeeklyDigestInput): Promise<string> {
@@ -232,6 +307,9 @@ export async function buildWeeklyDigest(input: WeeklyDigestInput): Promise<strin
 
     sections.push(lines.join('\n'));
   }
+
+  const worlds = await worldSection(input, { from: windowStart, to: now });
+  if (worlds !== null) sections.push(worlds);
 
   const header = [
     `# Weekly governed-learning digest — ${label}`,

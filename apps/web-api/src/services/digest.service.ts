@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   buildWeeklyDigest,
   isoWeekLabel,
+  type WorldChangesSource,
   waitingSkillNamesByPersonality,
 } from '@ethosagent/digest';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
@@ -26,6 +27,10 @@ export interface DigestServiceOptions {
   learning?: {
     pendingSkills(): Promise<ReadonlyArray<{ personalityId: string; destination: string }>>;
   };
+  /** The optional "World changes" section's source; absent when `world.enabled` is off. */
+  worldChanges?: WorldChangesSource;
+  /** Reports a failing world source; the digest is written without the section. */
+  onError?: (err: unknown) => void;
 }
 
 export class DigestService {
@@ -92,6 +97,11 @@ export class DigestService {
       now,
       learningLogByPersonality,
       pendingSkillCandidatesByPersonality: waitingSkillNamesByPersonality(waiting),
+      // The web digest is read by the owner in the dashboard, never delivered to a room, so
+      // owner_only worlds are included (digest world-section.test.ts pins the filter).
+      deliveryAudience: 'private',
+      ...(this.opts.worldChanges ? { worldChanges: this.opts.worldChanges } : {}),
+      ...(this.opts.onError ? { onError: this.opts.onError } : {}),
     });
 
     const label = isoWeekLabel(now);
