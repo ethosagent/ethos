@@ -1,4 +1,10 @@
 import type Database from '@ethosagent/sqlite';
+import type {
+  ExplorationState,
+  GateId,
+  InitiativeState,
+  InitiativeVerdict,
+} from '@ethosagent/types';
 
 /**
  * Raise an exploration's budget and move its deadline (a "dig deeper" reopened it). The new
@@ -43,3 +49,36 @@ export function reactionClockRow(
 export function clampExplorationBudget(estimateUsd: number, capUsd: number): number {
   return Math.max(0, Math.min(estimateUsd, capUsd));
 }
+
+/**
+ * What a decision implies. `exploration` targets an exploration id (gate 1 and
+ * 2), `initiative` an initiative id (self-start). A gate or verdict missing here
+ * is refused; `config_change` implies no transition and accepts any verdict.
+ */
+export const IMPLIED: Partial<
+  Record<
+    GateId,
+    Partial<
+      Record<
+        InitiativeVerdict,
+        { exploration: ExplorationState | null } | { initiative: InitiativeState }
+      >
+    >
+  >
+> = {
+  gate1_explore: {
+    approve: { exploration: 'exploring' },
+    reject: { exploration: 'rejected' },
+    snooze: { exploration: null },
+  },
+  gate2_adopt: {
+    adopt: { exploration: 'adopted' },
+    park: { exploration: 'parked' },
+    dig_deeper: { exploration: 'exploring' },
+  },
+  self_start: {
+    keep: { initiative: 'active' },
+    stop: { initiative: 'stopped' },
+    make_mine: { initiative: 'active' },
+  },
+};

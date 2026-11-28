@@ -27,8 +27,14 @@ import {
   type WindowRow,
 } from '@ethosagent/types';
 import { selectDrafts, settleDraftRow } from './drafts';
-import { clampExplorationBudget, extendExplorationRow, reactionClockRow } from './lifecycle';
-import { releaseWindow, reserveWindow, touchWindow } from './reservations';
+import {
+  clampExplorationBudget,
+  extendExplorationRow,
+  IMPLIED,
+  reactionClockRow,
+} from './lifecycle';
+import type { SQLiteInitiativeStoreOptions } from './options';
+import { pidAlive, releaseWindow, reserveWindow, touchWindow } from './reservations';
 import {
   type BriefDbRow,
   clip,
@@ -54,73 +60,16 @@ import {
 } from './rows';
 import { INITIATIVE_STORE_MIGRATIONS, INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
 
+export type { SQLiteInitiativeStoreOptions } from './options';
+
 /** `<dataDir>/initiatives.db`. */
 export function initiativesDbPath(dataDir: string): string {
   return join(dataDir, 'initiatives.db');
 }
 
-export interface SQLiteInitiativeStoreOptions {
-  /** Clock in epoch ms; tests inject it. */
-  now?: () => number;
-  /**
-   * The operator's daily cap for an initiative, in USD. The store does not know
-   * config; wiring binds this to the clamped config value. Defaults to 0.
-   */
-  capFor?: (initiativeId: string) => number;
-  /** `usd_per_exploration` per initiative; a proposal's budget is clamped to it. Unset = no clamp. */
-  explorationCapFor?: (initiativeId: string) => number;
-  /** This process's id, written as the reservation holder (`pid:N`). Defaults to `process.pid`. */
-  processId?: number;
-  /** Whether a process still exists on this host; a reservation held by a dead one is pruned. Tests inject it. */
-  isPidAlive?: (pid: number) => boolean;
-}
-
-/** `kill(pid, 0)` sends nothing: ESRCH means no such process, EPERM means it exists. */
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-}
-
 const DAY_MS = 86_400_000;
 /** States in which an exploration still occupies a slot against the open-exploration cap. */
 const OPEN_EXPLORATION_STATES = ['proposed', 'exploring', 'stalled'] as const;
-
-/**
- * What a decision implies. `exploration` targets an exploration id (gate 1 and
- * 2), `initiative` an initiative id (self-start). A gate or verdict missing here
- * is refused; `config_change` implies no transition and accepts any verdict.
- */
-const IMPLIED: Partial<
-  Record<
-    GateId,
-    Partial<
-      Record<
-        InitiativeVerdict,
-        { exploration: ExplorationState | null } | { initiative: InitiativeState }
-      >
-    >
-  >
-> = {
-  gate1_explore: {
-    approve: { exploration: 'exploring' },
-    reject: { exploration: 'rejected' },
-    snooze: { exploration: null },
-  },
-  gate2_adopt: {
-    adopt: { exploration: 'adopted' },
-    park: { exploration: 'parked' },
-    dig_deeper: { exploration: 'exploring' },
-  },
-  self_start: {
-    keep: { initiative: 'active' },
-    stop: { initiative: 'stopped' },
-    make_mine: { initiative: 'active' },
-  },
-};
 
 const INDEX_EXPLORATION_STATES = [...OPEN_EXPLORATION_STATES, 'briefed'] as const;
 
@@ -574,14 +523,21 @@ export class SQLiteInitiativeStore implements InitiativeStore {
 
   // ---- windows and budget ------------------------------------------------
 
+  private insertWindow(
+    id: string,
+    w: { initiativeId: string; explorationId: string | null; kind: WindowKind },
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO windows (id, initiative_id, exploration_id, kind, started) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(id, w.initiativeId, w.explorationId, w.kind, this.iso());
+  }
+
   openWindow(w: { initiativeId: string; explorationId: string | null; kind: WindowKind }): string {
     return this.write(() => {
       const id = this.nextId('windows', 'W-');
-      this.db
-        .prepare(
-          `INSERT INTO windows (id, initiative_id, exploration_id, kind, started) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(id, w.initiativeId, w.explorationId, w.kind, this.iso());
+      this.insertWindow(id, w);
       return id;
     });
   }
@@ -601,11 +557,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
         isPidAlive: this.isPidAlive,
       });
       if (refused) return refused;
-      this.db
-        .prepare(
-          `INSERT INTO windows (id, initiative_id, exploration_id, kind, started) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(id, w.initiativeId, w.explorationId, w.kind, this.iso());
+      this.insertWindow(id, w);
       return { ok: true as const, windowId: id };
     });
   }

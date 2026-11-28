@@ -1,6 +1,6 @@
+import { EventEmitter } from 'node:events';
 import { createInitiativeRunner, type InitiativeRunner } from '@ethosagent/initiative-runner';
 import { EthosError } from '@ethosagent/types';
-import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { abortOnSignals, parseRunArgs, runInitiativesCommand } from '../initiatives';
 

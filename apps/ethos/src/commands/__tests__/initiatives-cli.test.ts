@@ -318,7 +318,7 @@ describe('ethos initiatives (manage)', () => {
       runScan,
     } as unknown as InitiativeRunner);
     spy.mockRestore();
-    expect(runScan).toHaveBeenCalledWith('grow');
+    expect(runScan).toHaveBeenCalledWith('grow', {});
   });
 
   it('refuses an unknown subcommand and a missing db with EthosError, list is empty without a db', async () => {

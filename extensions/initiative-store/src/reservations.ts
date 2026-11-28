@@ -86,6 +86,16 @@ function scopes(
   ];
 }
 
+/** `kill(pid, 0)` sends nothing: ESRCH means no such process, EPERM means it exists. */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
 const HOLDER_PID = /^pid:(\d+)$/;
 
 /**
