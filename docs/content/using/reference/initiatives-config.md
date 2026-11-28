@@ -86,7 +86,7 @@ An agent-origin draft can never widen its parent: more sources, fewer exclusions
 | `dailyBudgetUsd` | `0` | Per-personality cap. `0` means not set. Lowered on save to the smaller operator ceiling (`clampInitiativeSettings`). |
 | `defaultAutonomy.mode`, `askAboveUsd` | absent | The autonomy the agent suggests during setup. |
 | `delivery.ownerChannel` | absent | `<platform>:<chatId>`, for example `telegram:12345`. A bare platform is invalid. |
-| `delivery.digestTime` | absent | `HH:MM` in UTC. |
+| `delivery.digestTime` | absent | `HH:MM` in your notifications timezone (`notifications.timezone`, otherwise the machine's zone). |
 | `standingGuidance[]` | `[]` | Guidance lines for every initiative of this personality. The editor shows each line's mapping. |
 
 ## Constitution block {#constitution}

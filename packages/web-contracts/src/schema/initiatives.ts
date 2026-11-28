@@ -47,10 +47,10 @@ const OwnerChannelSchema = z.string().refine(
   },
   { message: 'must be <platform>:<chatId>, e.g. telegram:12345' },
 );
-/** `HH:MM` UTC; mirrors config-schema.ts `DigestTime`. */
+/** `HH:MM` in the owner's notifications timezone; mirrors config-schema.ts `DigestTime`. */
 const DigestTimeSchema = z
   .string()
-  .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, { message: 'must be HH:MM (UTC)' });
+  .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, { message: 'must be HH:MM (24-hour)' });
 
 /** The full strict settings object. Save bodies carry all of it, not a subset. */
 export const InitiativeSettingsWireSchema = z

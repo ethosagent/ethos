@@ -5,7 +5,7 @@
 // built once per process and reused; it is not disposed while the host runs (limitation: the host
 // has no hook for it, so it is released at process exit).
 import { join } from 'node:path';
-import { type EthosConfig, ethosDir } from '@ethosagent/config';
+import { type EthosConfig, ethosDir, hostTimeZone } from '@ethosagent/config';
 import type { CreateAgentLoopResult, DigestNotify } from '@ethosagent/wiring';
 import { createAgentLoop, getStorage } from '../wiring';
 
@@ -20,6 +20,15 @@ export function setInitiativeDigestNotify(notify: DigestNotify | undefined): voi
   digestNotify = notify;
 }
 
+/**
+ * The zone `delivery.digestTime` is read in: the one quiet hours use (`notifications.timezone`,
+ * else the host's zone; `resolveGatewayQuietHours` in commands/gateway-wiring.ts). Pinned by
+ * apps/ethos/src/__tests__/initiative-tick-timezone.test.ts.
+ */
+export function digestTimeZone(config: Pick<EthosConfig, 'notifications'>): string {
+  return config.notifications?.timezone ?? hostTimeZone();
+}
+
 export async function runInitiativeTickOnce(config: EthosConfig): Promise<string> {
   if (!runtime) {
     if (!(await getStorage().exists(join(ethosDir(), 'initiatives.db')))) {
@@ -32,7 +41,7 @@ export async function runInitiativeTickOnce(config: EthosConfig): Promise<string
   }
   const { initiativeRuntime } = await runtime;
   initiativeRuntime.setNotify(digestNotify);
-  const report = await initiativeRuntime.tick(new Date());
+  const report = await initiativeRuntime.tick(new Date(), { timeZone: digestTimeZone(config) });
   if (report.skipped) return `Initiative tick skipped (${report.skipped})`;
   return `Initiative tick: ${report.ran.length} run(s), ${report.paused.length} paused, ${report.resumed.length} resumed, ${report.digests.length} digest(s)`;
 }

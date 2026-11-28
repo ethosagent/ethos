@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { hostTimeZone } from '@ethosagent/config';
+import { minuteOfDay } from '@ethosagent/gateway/quiet-hours';
 import {
   BRIEF_RESERVE_SHARE,
   composeDigest,
@@ -68,7 +70,7 @@ function resumeState(row: InitiativeRow, prior: MarkerPrior): 'active' | 'self_s
   return prior ?? 'self_started';
 }
 
-/** `HH:MM` (UTC, like the rest of the tick) to minutes since midnight; null when malformed. */
+/** `HH:MM` (the owner's zone, see `tick`'s `timeZone`) to minutes since local midnight; null when malformed. */
 function digestMinutes(raw: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
   if (!m) return null;
@@ -110,6 +112,24 @@ export interface InitiativeResult {
   initiativeRuntime: InitiativeRuntime;
 }
 
+export interface TickOptions {
+  /**
+   * The owner's IANA zone, which `delivery.digestTime` is read in. The caller resolves it the way
+   * quiet hours do (`notifications.timezone`, else the host's zone); absent here means the host's zone.
+   */
+  timeZone?: string;
+}
+
+/** `YYYY-MM-DD` of `now` on the wall clock of `timeZone`: the once-a-day key of the digest marker. */
+function localDay(now: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
 export interface InitiativeRuntime {
   /** The manual run surface (`ethos initiatives run`) the tick drives. */
   runner: InitiativeRunner;
@@ -118,7 +138,7 @@ export interface InitiativeRuntime {
    * compose-time Storage, so a lowered limit or a switch-off applies now; the rest of the
    * constitution still needs a restart (plan O-3). Never throws: failures go to `log.warn`.
    */
-  tick(now?: Date): Promise<InitiativeTickReport>;
+  tick(now?: Date, opts?: TickOptions): Promise<InitiativeTickReport>;
   /** The loop's enablement view: a settings service calls `reload` so a toggle applies at once. */
   enablement: Pick<InitiativeEnablement, 'reload'> | undefined;
   /** Late-binds the digest sender: the runtime is built before the gateway host has a gateway. */
@@ -254,7 +274,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
   }
 
   /**
-   * The morning digest, once per personality per UTC day at or after `delivery.digestTime`.
+   * The morning digest, once per personality per local day (the owner's zone) at or after `delivery.digestTime`.
    * Idempotent across ticks through `.digest-sent.json` (Storage, written before the hand-off). A
    * `'held'` result (quiet hours, `Gateway.notifyTracked`) counts as handed off: the gateway owes
    * it, and so does `'owed'` (the ledger holds a durable `pending` row its sweep re-sends; the
@@ -266,6 +286,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
     personalityId: string,
     settings: InitiativeSettings,
     now: Date,
+    timeZone: string,
     report: InitiativeTickReport,
   ): Promise<void> {
     const delivery = settings.delivery;
@@ -278,8 +299,8 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       );
       return;
     }
-    if (now.getUTCHours() * 60 + now.getUTCMinutes() < due) return;
-    const day = now.toISOString().slice(0, 10);
+    if (minuteOfDay(now.getTime(), timeZone) < due) return;
+    const day = localDay(now, timeZone);
     const sent = await readDigestSent(personalityId);
     if (sent?.day === day) return;
     const usdPerExploration = new Map<string, number>();
@@ -430,6 +451,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
   async function runTick(
     now: Date,
     since: Date,
+    timeZone: string,
     constitution: Constitution,
     report: InitiativeTickReport,
   ): Promise<void> {
@@ -441,7 +463,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       await applySwitch(id, on, report);
       if (!on) continue;
       try {
-        await maybeDigest(id, settings, now, report);
+        await maybeDigest(id, settings, now, timeZone, report);
       } catch (err) {
         onError(err);
       }
@@ -454,7 +476,7 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
 
   return {
     runner,
-    async tick(now = new Date()) {
+    async tick(now = new Date(), opts = {}) {
       const report: InitiativeTickReport = { ran: [], paused: [], resumed: [], digests: [] };
       if (disposed) return { ...report, skipped: 'disposed' };
       if (busy) return { ...report, skipped: 'busy' };
@@ -469,7 +491,14 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
         }
         // No ledger file means no initiative was ever saved: nothing to read, nothing to spend.
         if (!(await ledger.ready())) return { ...report, skipped: 'no-ledger' };
-        await runTick(now, since, await readInitiativeConstitution(storage, dataDir), report);
+        const timeZone = opts.timeZone ?? hostTimeZone();
+        await runTick(
+          now,
+          since,
+          timeZone,
+          await readInitiativeConstitution(storage, dataDir),
+          report,
+        );
       } catch (err) {
         onError(err);
       } finally {

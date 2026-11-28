@@ -85,6 +85,10 @@ export function guidanceLabel(line: string, mappings: readonly GuidanceMapping[]
   return found.status;
 }
 
+/** The digest is read in the owner's zone, the one quiet hours use (`digestTimeZone`, apps/ethos/src/lib/initiative-tick.ts). */
+export const DIGEST_TIME_HELP =
+  'Time of day in your notifications timezone (notifications.timezone in config.yaml, otherwise the zone of the machine running Ethos). Quiet hours still hold delivery.';
+
 export function InitiativesTab({
   id,
   onDirtyChange,
@@ -254,7 +258,7 @@ export function InitiativesTab({
         </Form.Item>
       </div>
       <div data-initiative-key="delivery.digestTime">
-        <Form.Item label="Digest time" extra="Local time of day. Quiet hours still hold delivery.">
+        <Form.Item label="Digest time" extra={DIGEST_TIME_HELP}>
           <Input
             type="time"
             style={{ width: 160 }}

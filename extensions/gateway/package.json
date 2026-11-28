@@ -8,6 +8,10 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts"
     },
+    "./quiet-hours": {
+      "import": "./src/quiet-hours.ts",
+      "types": "./src/quiet-hours.ts"
+    },
     "./room-policy": {
       "import": "./src/room-policy-entry.ts",
       "types": "./src/room-policy-entry.ts"

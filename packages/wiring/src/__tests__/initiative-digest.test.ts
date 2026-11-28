@@ -21,6 +21,9 @@ const DUE = new Date('2026-11-28T09:30:00Z');
 const LATER = new Date('2026-11-28T15:00:00Z');
 const NEXT_DAY = new Date('2026-11-29T09:30:00Z');
 
+/** The existing cases are written in UTC; the zone cases below pass their own. */
+const UTC = { timeZone: 'UTC' };
+
 const llm: LLMProvider = {
   name: 'scripted',
   model: 'mock-model',
@@ -53,10 +56,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const writeDelivery = (id: string, channel: string) =>
+const writeDelivery = (id: string, channel: string, time = '09:00') =>
   writeFileSync(
     join(dataDir, 'personalities', id, 'initiatives', 'settings.yaml'),
-    `delivery:\n  ownerChannel: "${channel}"\n  digestTime: "09:00"\n`,
+    `delivery:\n  ownerChannel: "${channel}"\n  digestTime: "${time}"\n`,
   );
 
 async function setup(notify: DigestNotify | undefined, storage: Storage = new FsStorage()) {
@@ -150,20 +153,20 @@ describe('initiative digest', () => {
     writeDelivery('product-manager', 'telegram:42');
     // writer has no delivery in settings: it gets no digest, whatever its initiative file says.
 
-    await runtime.tick(EARLY);
+    await runtime.tick(EARLY, UTC);
     expect(sent).toEqual([]);
 
-    const first = await runtime.tick(DUE);
+    const first = await runtime.tick(DUE, UTC);
     expect(first.digests).toEqual(['product-manager']);
     expect(sent).toHaveLength(1);
     expect(sent[0]?.target).toEqual({ platform: 'telegram', chatId: '42' });
     expect(sent[0]?.text).toContain('question for activation');
     expect(sent[0]?.text).not.toContain('launch-posts');
 
-    await runtime.tick(LATER);
+    await runtime.tick(LATER, UTC);
     expect(sent).toHaveLength(1);
 
-    await runtime.tick(NEXT_DAY);
+    await runtime.tick(NEXT_DAY, UTC);
     expect(sent).toHaveLength(2);
   });
 
@@ -177,7 +180,7 @@ describe('initiative digest', () => {
     });
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    await runtime.tick(DUE);
+    await runtime.tick(DUE, UTC);
     expect(seen).toEqual([{ personalityId: 'product-manager', needsYes: 1 }]);
   });
 
@@ -189,9 +192,9 @@ describe('initiative digest', () => {
     });
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    const first = await runtime.tick(DUE);
+    const first = await runtime.tick(DUE, UTC);
     expect(first.digests).toEqual(['product-manager']);
-    await runtime.tick(LATER);
+    await runtime.tick(LATER, UTC);
     expect(calls).toBe(1); // the gateway owns the release; the tick does not resend
   });
 
@@ -200,9 +203,9 @@ describe('initiative digest', () => {
     const { runtime, save, warnings } = await setup(async () => ++calls > 1);
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    expect((await runtime.tick(DUE)).digests).toEqual([]);
+    expect((await runtime.tick(DUE, UTC)).digests).toEqual([]);
     expect(warnings.join('\n')).toContain('not delivered');
-    expect((await runtime.tick(LATER)).digests).toEqual(['product-manager']);
+    expect((await runtime.tick(LATER, UTC)).digests).toEqual(['product-manager']);
   });
 
   it('a notify that throws restores the marker, so the next tick retries', async () => {
@@ -213,9 +216,9 @@ describe('initiative digest', () => {
     });
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    expect((await runtime.tick(DUE)).digests).toEqual([]);
+    expect((await runtime.tick(DUE, UTC)).digests).toEqual([]);
     expect(warnings.join('\n')).toContain('network down');
-    expect((await runtime.tick(LATER)).digests).toEqual(['product-manager']);
+    expect((await runtime.tick(LATER, UTC)).digests).toEqual(['product-manager']);
     expect(calls).toBe(2);
   });
 
@@ -230,10 +233,10 @@ describe('initiative digest', () => {
     });
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    expect((await runtime.tick(DUE)).digests).toEqual([]);
+    expect((await runtime.tick(DUE, UTC)).digests).toEqual([]);
     expect(warnings.join('\n')).toContain('delivery ledger owns the retry');
     delivered.push(...pending.splice(0)); // the gateway sweep between the ticks
-    await runtime.tick(LATER);
+    await runtime.tick(LATER, UTC);
     expect(calls).toBe(1);
     expect(delivered).toHaveLength(1);
   });
@@ -246,7 +249,7 @@ describe('initiative digest', () => {
     });
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram');
-    await runtime.tick(DUE);
+    await runtime.tick(DUE, UTC);
     expect(calls).toBe(0);
   });
 
@@ -264,8 +267,8 @@ describe('initiative digest', () => {
     }, failing);
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    await runtime.tick(DUE);
-    await runtime.tick(LATER);
+    await runtime.tick(DUE, UTC);
+    await runtime.tick(LATER, UTC);
     expect(calls).toBe(0);
   });
 
@@ -274,12 +277,68 @@ describe('initiative digest', () => {
     const { runtime, save } = await setup(undefined);
     await save('product-manager', 'activation');
     writeDelivery('product-manager', 'telegram:42');
-    expect((await runtime.tick(DUE)).digests).toEqual([]); // no sender yet: marker not written either
+    expect((await runtime.tick(DUE, UTC)).digests).toEqual([]); // no sender yet: marker not written either
     runtime.setNotify(async (_t, text) => {
       calls.push(text);
       return true;
     });
-    expect((await runtime.tick(LATER)).digests).toEqual(['product-manager']);
+    expect((await runtime.tick(LATER, UTC)).digests).toEqual(['product-manager']);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('initiative digest time zone', () => {
+  const sendTo = async (): Promise<{
+    sent: string[];
+    tick: (at: string, tz: string) => Promise<string[]>;
+    arm: (time: string) => Promise<void>;
+  }> => {
+    const sent: string[] = [];
+    const { runtime, save } = await setup(async (_t, text) => {
+      sent.push(text);
+      return true;
+    });
+    await save('product-manager', 'activation');
+    return {
+      sent,
+      arm: async (time) => writeDelivery('product-manager', 'telegram:42', time),
+      tick: async (at, tz) => (await runtime.tick(new Date(at), { timeZone: tz })).digests,
+    };
+  };
+
+  it('08:00 in Asia/Kolkata fires at 02:30 UTC, not before, and once per local day', async () => {
+    const { sent, tick, arm } = await sendTo();
+    await arm('08:00');
+    expect(await tick('2026-11-28T02:29:00Z', 'Asia/Kolkata')).toEqual([]);
+    expect(await tick('2026-11-28T02:30:00Z', 'Asia/Kolkata')).toEqual(['product-manager']);
+    expect(await tick('2026-11-28T08:00:00Z', 'Asia/Kolkata')).toEqual([]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('08:00 in America/Los_Angeles does not fire at 08:00 UTC (00:00 local)', async () => {
+    const { sent, tick, arm } = await sendTo();
+    await arm('08:00');
+    expect(await tick('2026-11-28T08:00:00Z', 'America/Los_Angeles')).toEqual([]);
+    expect(await tick('2026-11-28T15:59:00Z', 'America/Los_Angeles')).toEqual([]);
+    expect(await tick('2026-11-28T16:00:00Z', 'America/Los_Angeles')).toEqual(['product-manager']);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('follows DST: 08:00 in America/New_York is 13:00 UTC in winter, 12:00 UTC in summer', async () => {
+    const { tick, arm } = await sendTo();
+    await arm('08:00');
+    expect(await tick('2026-01-15T12:59:00Z', 'America/New_York')).toEqual([]);
+    expect(await tick('2026-01-15T13:00:00Z', 'America/New_York')).toEqual(['product-manager']);
+    expect(await tick('2026-07-15T11:59:00Z', 'America/New_York')).toEqual([]);
+    expect(await tick('2026-07-15T12:00:00Z', 'America/New_York')).toEqual(['product-manager']);
+  });
+
+  it('a local day that spans UTC midnight still gets one digest (Pacific/Auckland)', async () => {
+    const { sent, tick, arm } = await sendTo();
+    await arm('08:00'); // NZDT: 19:00 UTC the day before
+    expect(await tick('2026-11-27T19:00:00Z', 'Pacific/Auckland')).toEqual(['product-manager']);
+    expect(await tick('2026-11-28T01:00:00Z', 'Pacific/Auckland')).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(await tick('2026-11-28T19:00:00Z', 'Pacific/Auckland')).toEqual(['product-manager']);
   });
 });

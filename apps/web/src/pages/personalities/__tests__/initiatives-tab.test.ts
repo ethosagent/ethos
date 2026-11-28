@@ -126,6 +126,12 @@ describe('Personality Initiatives tab', () => {
     }
   });
 
+  it('digest time says it is in the notifications timezone, not "local"', () => {
+    const html = markup(response({ settings: { ...DEFAULTS } }));
+    expect(html).toContain('notifications timezone');
+    expect(html).not.toContain('Local time of day');
+  });
+
   it('hides the ask-above amount unless the mode is free_under', () => {
     const html = markup(response({ settings: { ...DEFAULTS, defaultAutonomy: { mode: 'ask' } } }));
     expect(controlKeys(html)).not.toContain('defaultAutonomy.askAboveUsd');

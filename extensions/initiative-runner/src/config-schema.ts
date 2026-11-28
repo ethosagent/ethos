@@ -49,10 +49,10 @@ const OwnerChannel = z.string().refine(
   { message: 'must be <platform>:<chatId>, e.g. telegram:12345' },
 );
 
-/** `HH:MM` UTC, the shape `digestMinutes` accepts (packages/wiring/src/initiative-runtime.ts). */
+/** `HH:MM` in the owner's zone (`notifications.timezone`), the shape `digestMinutes` accepts (packages/wiring/src/initiative-runtime.ts). */
 const DigestTime = z
   .string()
-  .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, { message: 'must be HH:MM (UTC)' });
+  .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, { message: 'must be HH:MM (24-hour)' });
 
 const GuidanceEntry = z
   .object({
