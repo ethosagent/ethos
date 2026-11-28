@@ -4,7 +4,12 @@
 // packages by relative path the same way.
 
 import type { ToolContext, ToolResult } from '@ethosagent/types';
-import { createWorldToolPort, type WorldToolPort } from '@ethosagent/world-service';
+import {
+  createWorldToolPort,
+  type WorldBuildDeps,
+  WorldBuildService,
+  type WorldToolPort,
+} from '@ethosagent/world-service';
 import {
   type ServiceHarness,
   serviceHarness,
@@ -30,10 +35,17 @@ export interface ToolHarness extends ServiceHarness {
 }
 
 export async function toolHarness(
-  opts: Parameters<typeof serviceHarness>[0] = {},
+  opts: Parameters<typeof serviceHarness>[0] & {
+    /** Build wiring over the harness service; omit for a port with no build runtime. */
+    build?: (h: ServiceHarness) => Omit<WorldBuildDeps, 'service' | 'store' | 'schema'>;
+  } = {},
 ): Promise<ToolHarness> {
-  const h = await serviceHarness(opts);
-  return Object.assign(h, { port: createWorldToolPort(h.service) });
+  const { build, ...rest } = opts;
+  const h = await serviceHarness(rest);
+  const builder = build
+    ? new WorldBuildService({ service: h.service, store: h.store, schema: h.schema, ...build(h) })
+    : undefined;
+  return Object.assign(h, { port: createWorldToolPort(h.service, builder) });
 }
 
 /** The text of a result, whether it succeeded or not. */

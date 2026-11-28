@@ -84,9 +84,12 @@ describe('world tool port', () => {
     expect('proposalId' in shared).toBe(true);
   });
 
-  it('build is a stub until P5', async () => {
+  it('build refuses when no build runtime is composed', async () => {
     const port = createWorldToolPort(h.service);
-    expect(await port.build(caller(), 'private', {})).toEqual({ refused: 'not_implemented' });
+    const io = { readFolder: async function* () {} };
+    expect(await port.build(caller(), 'private', { action: 'estimate', folders: [] }, io)).toEqual({
+      refused: 'not_available',
+    });
   });
 
   it('importBundle as an agent proposes on shared worlds and writes agent facts on the private one', async () => {

@@ -8,7 +8,9 @@
 // (`composeAllTools`), and closed by that stage's DisposerStack.
 
 import { type EthosConfig, resolveWorld } from '@ethosagent/config';
+import { estimateCost } from '@ethosagent/pricing';
 import type {
+  LLMProvider,
   Logger,
   SecretsResolver,
   Storage,
@@ -17,9 +19,12 @@ import type {
   WorldId,
 } from '@ethosagent/types';
 import {
+  type BuildSourceDeps,
+  type CompleteFn,
   createWorldToolPort,
   SQLiteWorldServiceStore,
   serviceDbPath,
+  WorldBuildService,
   WorldConfigService,
   WorldContextInjector,
   WorldSchemaService,
@@ -32,6 +37,24 @@ import { resolveWorldProvider } from './world-providers';
 /** The backend every private world uses, and the default for a `world.yaml` without `backend`. */
 const DEFAULT_BACKEND = 'sqlite';
 
+/**
+ * What the first build (`world_build`) needs from the host. Bound in compose-tools.ts, where the
+ * session store, memory registry and aux provider live. `readFolder` is not here: it is the
+ * calling turn's own fs reach, passed on every `port.build` call (tools-world bulk-tools.ts).
+ */
+export interface WorldBuildBindings {
+  /** Memory (via the configured backend), the personality's own sessions and `turnWasShared`. */
+  sources: Omit<BuildSourceDeps, 'readFolder'>;
+  /** The auxiliary model, metered as `tool_llm` (`usageMeter.meter(llm, 'tool_llm')`); resolved on first use. */
+  llm: () => Promise<LLMProvider>;
+  /** The model name `llm` serves, for pricing the estimate and the budget stop. */
+  model: string;
+  /** `AgentSafety.injection.wrapUntrusted`. */
+  wrapUntrusted: (input: { content: string; toolName: string; source?: string }) => {
+    content: string;
+  };
+}
+
 export interface WorldRuntimeDeps {
   dataDir: string;
   /** Compose-time Storage: the only way schema.yaml / world.yaml / worlds.yaml are written. */
@@ -42,6 +65,8 @@ export interface WorldRuntimeDeps {
   logger: Logger;
   /** `AgentSafety.injection.sanitize` (S6). */
   sanitize: (s: string) => string;
+  /** Absent: `world_build` answers `not available` (nothing else changes). */
+  build?: WorldBuildBindings;
 }
 
 export interface WorldRuntime {
@@ -60,6 +85,28 @@ function disposeOf(p: WorldGraphProvider): (() => void) | undefined {
     return () => dispose.call(p);
   }
   return undefined;
+}
+
+/** One bare, metered `llm.complete` call: no AgentLoop.run, so nothing to drain (plan Global Constraints). */
+function buildComplete(b: WorldBuildBindings): CompleteFn {
+  return async ({ system, user }) => {
+    const llm = await b.llm();
+    let text = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+    for await (const chunk of llm.complete([{ role: 'user', content: user }], [], {
+      system,
+      maxTokens: 2048,
+      temperature: 0,
+    })) {
+      if (chunk.type === 'text_delta') text += chunk.text;
+      else if (chunk.type === 'usage') {
+        inputTokens = chunk.usage.inputTokens;
+        outputTokens = chunk.usage.outputTokens;
+      }
+    }
+    return { text, inputTokens, outputTokens };
+  };
 }
 
 export function createWorldRuntime(deps: WorldRuntimeDeps): WorldRuntime {
@@ -117,7 +164,22 @@ export function createWorldRuntime(deps: WorldRuntimeDeps): WorldRuntime {
     config: configService,
     onError,
   });
-  const toolPort = createWorldToolPort(service);
+  const b = deps.build;
+  const builder = b
+    ? new WorldBuildService({
+        service,
+        store,
+        schema,
+        sources: b.sources,
+        complete: buildComplete(b),
+        wrap: (text, source) =>
+          b.wrapUntrusted({ content: text, toolName: 'world_build', source }).content,
+        price: (inputTokens, outputTokens) =>
+          estimateCost(b.model, { inputTokens, outputTokens }).costUsd,
+        onError,
+      })
+    : undefined;
+  const toolPort = createWorldToolPort(service, builder);
 
   return {
     service,

@@ -7,11 +7,18 @@
 //   - export goes through the port, so a world the turn may not see is refused
 //     by WorldService: 'export respects the audience of the turn'. `save_to`
 //     writes through `ctx.scopedFs` only.
-//   - build is a stub on the port until plan P5 ('world_build says it is not
-//     available yet in a private turn').
+//   - build is three calls on one tool (estimate, run, save) through the port;
+//     its folders are read through `ctx.scopedFs` too ('a folder outside fs
+//     reach is refused' in world-build.test.ts), and the save is a proposal
+//     batch on a shared world ('save on a shared world creates one batch,
+//     writes nothing live'). The tool cannot see the user's yes to a save: a
+//     known limit (plan O-11), the skill asks first.
 
-import type { GraphBundle, ToolContext, ToolResult } from '@ethosagent/types';
+import type { GraphBundle, ScopedFs, ToolContext, ToolResult } from '@ethosagent/types';
 import {
+  type BuildIO,
+  type BuildReply,
+  type BuildRequest,
   exportCsv,
   exportFactsYaml,
   exportMcpJsonl,
@@ -21,6 +28,7 @@ import {
   toBundleJson,
   toGraphML,
   toMermaid,
+  WorldBuildError,
   type WorldToolPort,
 } from '@ethosagent/world-service';
 import {
@@ -86,6 +94,91 @@ function pickFormat<T extends string>(
 ): T | undefined {
   if (v === undefined) return fallback;
   return allowed.find((f) => f === v);
+}
+
+const BUILD_ACTIONS = ['estimate', 'run', 'save'] as const;
+const BUILD_CHOICES = ['all', 'sure_only', 'discard'] as const;
+
+/** Largest folder read: files and characters per file. */
+const FOLDER_MAX_FILES = 200;
+const FOLDER_MAX_DEPTH = 4;
+const FOLDER_FILE_CHARS = 60_000;
+const TEXT_FILE = /\.(md|markdown|txt|csv|json|jsonl|ya?ml)$/i;
+
+/** Text files under a folder, read only through the turn's own fs reach (`ctx.scopedFs`). */
+function folderReader(fs: ScopedFs | undefined): BuildIO['readFolder'] {
+  return async function* (root) {
+    if (!fs) throw new Error(`PATH_NOT_REACHABLE: ${root}`);
+    const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+    let files = 0;
+    for (let next = queue.shift(); next; next = queue.shift()) {
+      const entries = await fs.listEntries(next.dir);
+      for (const e of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+        const path = `${next.dir.replace(/\/$/, '')}/${e.name}`;
+        if (e.isDir) {
+          if (next.depth < FOLDER_MAX_DEPTH) queue.push({ dir: path, depth: next.depth + 1 });
+        } else if (TEXT_FILE.test(e.name)) {
+          if (files++ >= FOLDER_MAX_FILES) return;
+          yield { path, text: (await fs.read(path)).slice(0, FOLDER_FILE_CHARS) };
+        }
+      }
+    }
+  };
+}
+
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** "Person" -> "people", "Service" -> "services", "Category" -> "categories". */
+function pluralType(type: string, n: number): string {
+  const t = type.toLowerCase();
+  if (n === 1) return `1 ${t}`;
+  if (t === 'person') return `${n} people`;
+  if (t.endsWith('y')) return `${n} ${t.slice(0, -1)}ies`;
+  return `${n} ${t.endsWith('s') ? t : `${t}s`}`;
+}
+
+const dollars = (usd: number): string =>
+  usd > 0 && usd < 0.01 ? 'under $0.01' : `$${usd.toFixed(2)}`;
+
+function describeBuild(r: BuildReply): string {
+  switch (r.action) {
+    case 'estimate': {
+      const lines = [
+        `Will read ${plural(r.memoryFiles, 'memory file', 'memory files')}, ${plural(r.sessions, 'private session', 'private sessions')}, ${plural(r.files, 'file', 'files')}. About ${dollars(r.estimateUsd)}.`,
+      ];
+      for (const why of r.refused) lines.push(`Skipped: ${why}.`);
+      lines.push(`buildId: ${r.buildId}. Next: world_build { buildId, action: "run" }.`);
+      return lines.join('\n');
+    }
+    case 'run': {
+      const parts = Object.entries(r.entities).map(([t, n]) => pluralType(t, n));
+      parts.push(plural(r.links, 'link', 'links'));
+      const dup = `${plural(r.duplicates, 'duplicate', 'duplicates')} I'm unsure about`;
+      const lines = [
+        `${parts.join(', ')}. ${dup}, ${plural(r.conflicts, 'conflict', 'conflicts')} with your facts.`,
+        `Preview: /world?build=${r.buildId}`,
+      ];
+      if (r.partial) {
+        lines.push(
+          `Stopped at the spend limit (${dollars(r.spentUsd)} spent); this is a partial result.`,
+        );
+      }
+      lines.push(
+        'Nothing is saved yet. Ask the user, then world_build { buildId, action: "save", choice: "all" | "sure_only" | "discard" }.',
+      );
+      return lines.join('\n');
+    }
+    case 'save': {
+      if (r.choice === 'discard') return `Discarded build ${r.buildId}; nothing was written.`;
+      const skipped =
+        r.skipped > 0
+          ? ` ${plural(r.skipped, 'item', 'items')} skipped (already stored or refused).`
+          : '';
+      return r.shared
+        ? `Proposed ${plural(r.proposed, 'fact', 'facts')} to the owner of ${r.world} as one batch; nothing is live until they accept.${skipped}`
+        : `Saved to ${r.world}: ${plural(r.applied, 'fact', 'facts')} written, ${plural(r.proposed, 'proposal', 'proposals')} waiting for you (conflicts with your own facts).${skipped}`;
+    }
+  }
 }
 
 export function createBulkTools(port: WorldToolPort): ToolDef[] {
@@ -228,30 +321,72 @@ export function createBulkTools(port: WorldToolPort): ToolDef[] {
   const build: ToolDef = {
     name: 'world_build',
     description:
-      'Build a world from your own memory, past private sessions and folders you can read. Refused in a shared turn. Not available yet in this release.',
+      'Build a world from your own memory files, past private sessions and folders you can read, in three calls. 1) action "estimate" (optional "folders") counts what would be read and prices it. 2) action "run" with "buildId" extracts and stages a preview; nothing is written yet. 3) action "save" with "buildId" and choice "all", "sure_only" or "discard": a private world gets your agent facts (conflicts with your own facts become proposals), a shared world gets one proposal batch for the owner. Ask the user before you save. Refused in a shared turn.',
     toolset: 'world',
     maxResultChars: 4000,
     capabilities: { fs_reach: { read: 'from-personality' } },
     schema: {
       type: 'object',
       properties: {
+        action: { type: 'string', enum: [...BUILD_ACTIONS] },
         world: WORLD_PROP,
-        folders: { type: 'array', items: { type: 'string' }, description: 'Folders to read.' },
+        folders: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'estimate only: folders to read, through your file access.',
+        },
+        buildId: { type: 'string', description: 'run and save: the id estimate returned.' },
+        choice: { type: 'string', enum: [...BUILD_CHOICES], description: 'save only.' },
       },
+      required: ['action'],
     },
     async execute(args, ctx: ToolContext) {
       if (isSharedTurn(ctx.roomAudience)) return sharedRefusal('world_build');
       const caller = callerOf(ctx);
       if (!caller) return NO_PERSONALITY;
-      try {
-        const w = await resolveWorld(port, caller, str(args.world));
-        if (!w.ok) return fail('input_invalid', w.error);
+      const action = BUILD_ACTIONS.find((a) => a === args.action);
+      if (!action)
+        return fail('input_invalid', `action must be one of: ${BUILD_ACTIONS.join(', ')}`);
+      const buildId = str(args.buildId);
+      let req: BuildRequest;
+      if (action === 'estimate') {
         const folders = Array.isArray(args.folders)
-          ? args.folders.filter((f): f is string => typeof f === 'string')
+          ? args.folders.filter((f): f is string => typeof f === 'string' && f !== '')
           : [];
-        const r = await port.build(caller, w.label, { folders });
-        return fail('not_available', `world_build is not available yet (${r.refused}).`);
+        if (folders.length > 0 && !ctx.scopedFs) {
+          return fail(
+            'not_available',
+            'Filesystem capability not configured for this personality.',
+          );
+        }
+        req = { action, folders };
+      } else if (buildId === undefined) {
+        return fail('input_invalid', '"buildId" is required: call estimate first.');
+      } else if (action === 'run') {
+        req = { action, buildId };
+      } else {
+        const choice = BUILD_CHOICES.find((c) => c === args.choice);
+        if (!choice) {
+          return fail('input_invalid', `choice must be one of: ${BUILD_CHOICES.join(', ')}`);
+        }
+        req = { action, buildId, choice };
+      }
+      try {
+        const name =
+          action === 'estimate' ? await resolveWorld(port, caller, str(args.world)) : null;
+        if (name && !name.ok) return fail('input_invalid', name.error);
+        const world = name ? name.label : (str(args.world) ?? null);
+        const io: BuildIO = { readFolder: folderReader(ctx.scopedFs) };
+        const r = await port.build(caller, world, req, io);
+        if (!('action' in r)) {
+          return fail(
+            'not_available',
+            'world_build is not available: no first-build runtime is composed.',
+          );
+        }
+        return { ok: true, value: describeBuild(r) };
       } catch (e) {
+        if (e instanceof WorldBuildError) return fail('input_invalid', e.message);
         return serviceError(e);
       }
     },

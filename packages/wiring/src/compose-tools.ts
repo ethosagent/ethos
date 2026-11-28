@@ -5,6 +5,7 @@ import {
   personalityAssetDir,
   privateChatSetFrom,
   SessionManager,
+  turnWasShared,
 } from '@ethosagent/core';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
@@ -31,7 +32,7 @@ import {
   platformId as whatsappId,
   platformPrompt as whatsappPrompt,
 } from '@ethosagent/platform-whatsapp/format';
-import { sanitize as sanitizeInjection } from '@ethosagent/safety-injection';
+import { sanitize as sanitizeInjection, wrapUntrusted } from '@ethosagent/safety-injection';
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
@@ -108,6 +109,7 @@ import type {
   Storage,
   Tool,
   TurnAuditor,
+  UsageSourceKind,
 } from '@ethosagent/types';
 import { createAmendmentIntake } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
@@ -145,7 +147,7 @@ import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 import type { WiringContext } from './types';
 import type { UsageMeter } from './usage-meter';
 import { resolveSipTrunkClient } from './voice-stack';
-import { createWorldRuntime } from './worlds';
+import { createWorldRuntime, type WorldBuildBindings } from './worlds';
 
 // ---------------------------------------------------------------------------
 // WEB_PROMPT — kept here since platformPrompts is also assembled here
@@ -1230,6 +1232,8 @@ function buildVerifierProviderGetter(
   config: WiringConfig,
   log: Logger,
   usageMeter: Pick<UsageMeter, 'meter'>,
+  // The completion verifier by default; the world first build meters its calls as `tool_llm`.
+  meterAs: { kind: UsageSourceKind; sourceRef?: string } = { kind: 'completion_verifier' },
 ): () => Promise<LLMProvider> {
   let cachedProvider: LLMProvider | undefined;
   return async () => {
@@ -1259,8 +1263,86 @@ function buildVerifierProviderGetter(
       logger: log,
     });
     // §5.4 — attributed to the completing turn by the scope around its tool batch.
-    cachedProvider = usageMeter.meter(provider, 'completion_verifier');
+    cachedProvider = usageMeter.meter(
+      provider,
+      meterAs.kind,
+      meterAs.sourceRef ? { sourceRef: meterAs.sourceRef } : undefined,
+    );
     return cachedProvider;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// World first build (plan world-model 5.3): what `world_build` reads and which model it calls.
+//   - memory: the configured backend's provider, scope `personality:<id>` (MEMORY.md, USER.md);
+//   - sessions: the personality's own sessions from the shared SessionStore; whether a session
+//     was the owner's is `turnWasShared` (the one helper memory capture uses);
+//   - llm: the main provider, metered as `tool_llm` (`usageMeter.meter`), resolved on first use.
+// The calling turn's fs reach is NOT here: `readFolder` arrives with each `port.build` call.
+// ---------------------------------------------------------------------------
+
+/** Newest messages read per session, and sessions listed per build. */
+const WORLD_BUILD_MESSAGES = 300;
+const WORLD_BUILD_SESSIONS = 500;
+
+function worldBuildBindings(
+  config: WiringConfig,
+  infra: InfrastructureResult,
+  wiringCtx: WiringContext,
+  usageMeter: UsageMeter,
+  secrets: SecretsResolver,
+): WorldBuildBindings {
+  const { dataDir, log } = wiringCtx;
+  const store = infra.sessionCompose.sessionStore;
+  const privateChats = privateChatSetFrom(config.privateChats);
+  let memory: Promise<MemoryProvider> | undefined;
+  const memoryProvider = (): Promise<MemoryProvider> => {
+    if (!memory) {
+      const name = config.memory ?? 'markdown';
+      const factory = infra.memoryProviders.get(name);
+      if (!factory) throw new Error(`memory backend "${name}" is not registered (world build)`);
+      memory = Promise.resolve(factory({ config: {}, dataDir, secrets, logger: log }));
+    }
+    return memory;
+  };
+  return {
+    sources: {
+      memory: async (pid) => {
+        const provider = await memoryProvider();
+        const ctx: MemoryContext = {
+          scopeId: `personality:${pid}`,
+          sessionId: 'world-build',
+          sessionKey: 'world-build',
+          platform: 'cli',
+          workingDir: dataDir,
+        };
+        const [mem, user] = await Promise.all([
+          provider.read('MEMORY.md', ctx),
+          provider.read('USER.md', ctx),
+        ]);
+        return { memory: mem?.content ?? '', user: user?.content ?? '' };
+      },
+      async *sessions(pid, since) {
+        const list = await store.listSessions({
+          personalityId: pid,
+          limit: WORLD_BUILD_SESSIONS,
+          ...(since !== null ? { since: new Date(since) } : {}),
+        });
+        for (const session of list) {
+          yield {
+            session,
+            messages: await store.getMessages(session.id, { limit: WORLD_BUILD_MESSAGES }),
+          };
+        }
+      },
+      isShared: (session) => turnWasShared(session, privateChats),
+    },
+    llm: buildVerifierProviderGetter(infra.llmProviders, config, log, usageMeter, {
+      kind: 'tool_llm',
+      sourceRef: 'world_build',
+    }),
+    model: config.model,
+    wrapUntrusted,
   };
 }
 
@@ -2137,6 +2219,13 @@ export async function composeAllTools(
       logger: log,
       // The same function AgentSafety.injection.sanitize is built from (build-agent-loop.ts).
       sanitize: sanitizeInjection,
+      build: worldBuildBindings(
+        config,
+        infra,
+        wiringCtx,
+        deps.usageMeter,
+        config.secretsResolver ?? NOOP_SECRETS,
+      ),
     });
     disposers.push('world runtime', () => worldRuntime.close());
     for (const tool of composeWorld(wiringCtx, { port: worldRuntime.toolPort() }).tools) {

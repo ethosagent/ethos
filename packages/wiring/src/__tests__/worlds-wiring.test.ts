@@ -120,6 +120,35 @@ describe('world runtime wiring', () => {
     expect(visibleNames(off, 'lister').filter((n) => n.startsWith('world_'))).toEqual([]);
   });
 
+  it('world_build estimate reads the personality memory through the composed runtime (5.3)', async () => {
+    const dir = join(dataDir, 'personalities', 'lister');
+    writeFileSync(join(dir, 'MEMORY.md'), 'Ravi owns billing.\n');
+    const tool = on.toolRegistry.getAvailable().find((t) => t.name === 'world_build');
+    expect(tool).toBeDefined();
+    const ctx: ToolContext = {
+      sessionId: 's',
+      sessionKey: 'cli:world-build',
+      platform: 'cli',
+      personalityId: 'lister',
+      initiator: 'user',
+      roomAudience: 'private',
+      workingDir: home,
+      currentTurn: 1,
+      messageCount: 1,
+      abortSignal: new AbortController().signal,
+      emit: () => {},
+      resultBudgetChars: 80_000,
+    };
+    const r = await tool?.execute({ action: 'estimate', world: 'private' }, ctx);
+    expect(r?.ok).toBe(true);
+    expect(r?.ok ? r.value : '').toMatch(/^Will read 1 memory file, 0 private sessions, 0 files\./);
+    const shared = await tool?.execute(
+      { action: 'estimate', world: 'private' },
+      { ...ctx, roomAudience: 'shared' },
+    );
+    expect(shared?.ok).toBe(false);
+  });
+
   it('tool registry receives a port, never a provider', async () => {
     const query = vi.fn(async () => ({
       entities: [],

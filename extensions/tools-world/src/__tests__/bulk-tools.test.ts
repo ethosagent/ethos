@@ -132,15 +132,19 @@ describe('world bulk tools', () => {
   });
 
   it('world_build refused in a shared turn', async () => {
-    const r = await run('world_build', { world: 'private' }, ctxFor({ roomAudience: 'shared' }));
+    const r = await run(
+      'world_build',
+      { world: 'private', action: 'estimate' },
+      ctxFor({ roomAudience: 'shared' }),
+    );
     expect(r).toMatchObject({ ok: false, code: 'not_available' });
     expect(textOf(r)).toContain('shared');
   });
 
-  it('world_build says it is not available yet in a private turn', async () => {
-    const r = await run('world_build', { world: 'private' }, ctxFor());
+  it('world_build says it is not available without a build runtime', async () => {
+    const r = await run('world_build', { world: 'private', action: 'estimate' }, ctxFor());
     expect(r).toMatchObject({ ok: false, code: 'not_available' });
-    expect(textOf(r)).toContain('not available yet');
+    expect(textOf(r)).toContain('not available');
   });
 
   it('bulk tools declare fs reach from the personality', () => {
