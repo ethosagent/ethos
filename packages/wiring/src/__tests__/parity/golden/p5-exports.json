@@ -4083,6 +4083,9 @@
       "RebuiltLoop": "type",
       "SplashInventory": "type",
       "TUIOptions": "type",
+      "WorldChoice": "type",
+      "WorldLane": "type",
+      "WorldTreeSource": "type",
       "runTUI": "value"
     }
   },

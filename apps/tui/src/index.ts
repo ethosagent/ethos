@@ -12,6 +12,7 @@ export type { BridgeOpts } from '@ethosagent/agent-bridge';
 export { AgentBridge } from '@ethosagent/agent-bridge';
 export type { ExternalSlashCommands } from './components/App';
 export type { SplashInventory } from './components/Splash';
+export type { WorldChoice, WorldLane, WorldTreeSource } from './components/WorldTreePanel';
 export type { ExternalSlashCommand } from './help';
 export type { RebuiltLoop } from './loop-switch';
 
@@ -60,6 +61,8 @@ export interface TUIOptions {
   branches?: AppProps['branches'];
   /** `/rewind [N]` and Esc Esc backtrack over the host's session store (see `AppProps.rewind`). */
   rewind?: AppProps['rewind'];
+  /** `/world [slug]` over the host's world runtime (see `AppProps.worlds`). */
+  worlds?: AppProps['worlds'];
   /**
    * Stores a plugin credential typed into the masked `credential_required`
    * modal — pass `PluginLoader.setCredential`, the one writer. Without it the
@@ -114,6 +117,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       readMemory: opts.readMemory,
       ...(opts.branches ? { branches: opts.branches } : {}),
       ...(opts.rewind ? { rewind: opts.rewind } : {}),
+      ...(opts.worlds ? { worlds: opts.worlds } : {}),
       setPluginCredential: opts.setPluginCredential,
       ...(opts.initialMessage ? { initialMessage: opts.initialMessage } : {}),
     }),

@@ -912,6 +912,8 @@ export interface ActiveLoop {
   executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
   usageMeter: import('@ethosagent/wiring').CreateAgentLoopResult['usageMeter'];
+  /** The loop's ONE world runtime services (`CreateAgentLoopResult.worlds`): absent unless `world.enabled`, and on a team loop. */
+  worlds?: import('@ethosagent/wiring').CreateAgentLoopResult['worlds'];
 }
 
 export async function resolveActiveLoop(
@@ -973,6 +975,7 @@ export async function resolveActiveLoop(
     personalities: result.personalities,
     executionPostureFor: result.executionPostureFor,
     usageMeter: result.usageMeter,
+    ...(result.worlds ? { worlds: result.worlds } : {}),
     ...(result.approverDecision ? { approverDecision: result.approverDecision } : {}),
   };
 }

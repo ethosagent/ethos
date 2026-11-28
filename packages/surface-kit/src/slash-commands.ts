@@ -192,6 +192,14 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     usage: '/rewind [N]',
     surfaces: ['cli', 'tui', 'web'],
   },
+  // TUI only: the tree is drawn with the terminal's own panel (apps/tui WorldTreePanel); the CLI
+  // has `ethos world show <slug> --tree` and the web app its Worlds page.
+  {
+    name: 'world',
+    description: "Show a world's org tree, or list the worlds",
+    usage: '/world [slug|close]',
+    surfaces: ['tui'],
+  },
   // --- CLI chat commands the table was missing (C5, added by the chat wave) ---
   {
     name: 'title',

@@ -106,6 +106,7 @@ describe('TUI surface tag (C5)', () => {
       'verbose',
       'learn',
       'rewind',
+      'world',
       'exit',
       'sessions',
       'readonly',

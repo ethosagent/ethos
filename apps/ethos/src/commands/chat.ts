@@ -125,6 +125,7 @@ import {
   unstreamedDoneText,
   type Verbosity,
 } from '../lib/verbosity';
+import { createWorldTreeSource } from '../lib/world-tree-source';
 import { createTerminalApprovalSource, wireTerminalApprovalGate } from '../terminal-approval';
 import {
   type ActiveLoop,
@@ -438,6 +439,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // The runtime a `/model` switch makes current (TUI only); what this command
   // releases on the way out. The one before it is retired by the switch itself.
   let liveRuntime: ReleasableRuntime = runtime;
+  // The world runtime of that same loop, for `/world` (a switch replaces it).
+  let liveWorlds = runtime.worlds;
 
   // FW-15 — scan global and per-personality skill directories into the registry.
   const storage: Storage = new FsStorage();
@@ -548,6 +551,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       rebuildLoop: async (modelId: string) => {
         const next = await rebuild(modelId);
         liveRuntime = next.runtime;
+        liveWorlds = next.runtime.worlds;
         // Goals rebind with the loader: the pair captured at construction
         // belongs to the retired runtime, and `/goal` after a switch must
         // drive the live store/executor (the readline branch's
@@ -583,6 +587,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       // fallback uses (lib/session-branches.ts), over this state dir's sessions.db.
       branches: async (command, arg, sessionKey) =>
         withSessionStore((store) => runBranchCommand(store, command, arg, sessionKey)),
+      // `/world [slug]`: the operator's own terminal, so the `owner` lane. Absent unless `world.enabled`.
+      ...(runtime.worlds ? { worlds: createWorldTreeSource(() => liveWorlds) } : {}),
       // `/rewind [N]` and Esc Esc backtrack: read-only points, then the branch on send.
       rewind: {
         points: (key) => withSessionStore((store) => rewindPointsFor(store, key)),
