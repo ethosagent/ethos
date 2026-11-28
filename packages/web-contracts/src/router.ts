@@ -5,6 +5,7 @@ import { config } from './routes/config';
 import { cron, debug, evolver, skills } from './routes/cron-skills';
 import { a2a, amendments, channels, deliveries, learning, outbox, usage } from './routes/delivery';
 import { documents, recipes } from './routes/docs-recipes';
+import { constitution, initiatives } from './routes/initiatives';
 import { apiKeys, credentials, keys, namedSecrets, toolSettings } from './routes/keys';
 import { batch, evalNs, kanban, memory, mesh, teams } from './routes/memory-lab';
 import { decisions, meta, modelRegistry, models } from './routes/models';
@@ -177,6 +178,8 @@ export const contract = {
   backup,
   execution,
   shares,
+  initiatives,
+  constitution,
 };
 
 export type Contract = typeof contract;
