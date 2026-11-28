@@ -8,6 +8,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINT_BLOCKING="${LINT_BLOCKING:-0}"
 
+# Take turns with other worktrees' heavy gates (see with-gate-lock.sh; ETHOS_GATE_LOCK=0 bypasses).
+if [ -z "${ETHOS_GATE_LOCK_HELD:-}" ]; then
+  exec bash "$SCRIPT_DIR/with-gate-lock.sh" bash "${BASH_SOURCE[0]}" "$@"
+fi
+
 failures=()
 warnings=()
 
