@@ -457,6 +457,171 @@ describe('think_deeper escalation', () => {
   });
 });
 
+// Task 1.1 (plan think-deeper-tier-switch) — the whole round trip, scripted
+// call by call. The flag is SET in `tool-processing.ts` and CONSUMED in
+// `stream-step.ts` (`describe('think_deeper escalation')` above pins call 2;
+// this pins calls 3 and 4 too).
+type ScriptStep = { tool: 'think_deeper' | 'noop'; args?: Record<string, unknown> } | 'text';
+
+function noopTool(): Tool {
+  return {
+    name: 'noop',
+    description: 'does nothing',
+    schema: { type: 'object' },
+    capabilities: {},
+    async execute(): Promise<ToolResult> {
+      return { ok: true, value: 'done' };
+    },
+  };
+}
+
+function thinkDeeperTool(): Tool {
+  return {
+    name: 'think_deeper',
+    description: 'escalate',
+    schema: { type: 'object' },
+    capabilities: {},
+    async execute(): Promise<ToolResult> {
+      return { ok: true, value: 'thinking harder' };
+    },
+  };
+}
+
+/** An LLM that plays one `ScriptStep` per call and reports each call's options. */
+function scriptedLLM(
+  script: ScriptStep[],
+  onComplete: (opts: CompletionOptions) => void,
+  usageCost?: (call: number) => number,
+): LLMProvider {
+  let call = 0;
+  return {
+    name: 'mock',
+    model: 'base-model',
+    maxContextTokens: 200_000,
+    supportsCaching: false,
+    supportsThinking: false,
+    async *complete(
+      _messages: Message[],
+      _tools: unknown,
+      opts: CompletionOptions,
+    ): AsyncIterable<CompletionChunk> {
+      onComplete(opts);
+      const step = script[call] ?? 'text';
+      call += 1;
+      if (usageCost) {
+        yield {
+          type: 'usage',
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            estimatedCostUsd: usageCost(call),
+          },
+        };
+      }
+      if (step === 'text') {
+        yield { type: 'text_delta', text: `answer ${call}` };
+        yield { type: 'done', finishReason: 'end_turn' };
+        return;
+      }
+      const id = `tc${call}`;
+      const json = JSON.stringify(step.args ?? {});
+      yield { type: 'tool_use_start', toolCallId: id, toolName: step.tool };
+      yield { type: 'tool_use_delta', toolCallId: id, partialJson: json };
+      yield { type: 'tool_use_end', toolCallId: id, inputJson: json };
+      yield { type: 'done', finishReason: 'tool_use' };
+    },
+    async countTokens() {
+      return 10;
+    },
+  };
+}
+
+function scriptedLoop(
+  llm: LLMProvider,
+  personality: PersonalityConfig,
+  modelResolution: ModelResolutionContext = ctx(),
+): AgentLoop {
+  const tools = new DefaultToolRegistry();
+  tools.register(thinkDeeperTool());
+  tools.register(noopTool());
+  const loop = new AgentLoop({ llm, tools, safety: createTestSafety(), modelResolution });
+  // biome-ignore lint/complexity/useLiteralKeys: `personalities` is private; bracket-string is the TS escape hatch for test access
+  loop['personalities'].define(personality);
+  return loop;
+}
+
+const ESCALATING: PersonalityConfig = {
+  id: 'esc',
+  name: 'Esc',
+  model: 'default',
+  toolset: ['think_deeper', 'noop'],
+};
+
+function servedModels(calls: ReturnType<typeof vi.fn>): (string | undefined)[] {
+  return calls.mock.calls.map((c) => (c[0] as CompletionOptions).modelOverride);
+}
+
+describe('think_deeper round trip', () => {
+  it('one-shot: call 2 runs on deep, call 3 returns to the turn model', async () => {
+    const onComplete = vi.fn();
+    const llm = scriptedLLM(
+      [{ tool: 'think_deeper', args: { reason: 'race condition' } }, { tool: 'noop' }, 'text'],
+      onComplete,
+    );
+    const loop = scriptedLoop(llm, ESCALATING);
+
+    await collect(loop.run('hi', { personalityId: 'esc' }));
+
+    expect(servedModels(onComplete)).toEqual([
+      'claude-sonnet-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+    ]);
+  });
+
+  it('escalates again only when called again', async () => {
+    const onComplete = vi.fn();
+    const llm = scriptedLLM(
+      [
+        { tool: 'think_deeper', args: { reason: 'a' } },
+        { tool: 'think_deeper', args: { reason: 'b' } },
+        { tool: 'noop' },
+        'text',
+      ],
+      onComplete,
+    );
+    const loop = scriptedLoop(llm, ESCALATING);
+
+    await collect(loop.run('hi', { personalityId: 'esc' }));
+
+    expect(servedModels(onComplete)).toEqual([
+      'claude-sonnet-5',
+      'claude-opus-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+    ]);
+  });
+
+  it('an unresolvable deep keeps the turn model', async () => {
+    const onComplete = vi.fn();
+    const llm = scriptedLLM(
+      [{ tool: 'think_deeper', args: { reason: 'hard' } }, { tool: 'noop' }, 'text'],
+      onComplete,
+    );
+    const noDeep: ModelRegistry = { ...registry(), roles: {} };
+    const loop = scriptedLoop(llm, ESCALATING, ctx({ registry: noDeep }));
+
+    const events = await collect(loop.run('hi', { personalityId: 'esc' }));
+
+    const served = servedModels(onComplete);
+    expect(served[1]).toBe(served[0]);
+    expect(served[2]).toBe(served[0]);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+  });
+});
+
 // The rungs, asserted against what the provider was asked to serve.
 describe('model routing precedence', () => {
   /** The model this turn really ran on, from the provider's point of view. */
