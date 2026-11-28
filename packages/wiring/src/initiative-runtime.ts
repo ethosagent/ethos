@@ -54,6 +54,20 @@ function parseOwnerChannel(raw: string): { platform: string; chatId: string } | 
   return { platform: raw.slice(0, at), chatId: raw.slice(at + 1) };
 }
 
+/** What the switch marker remembers: the pre-pause state, or null for the old bare-id format. */
+type MarkerPrior = 'active' | 'self_started' | null;
+
+/**
+ * The state a switch-on resumes `row` to. Auto-pause and the self-start cap look only at
+ * `self_started`, so an agent-origin initiative must come back as one; a human-origin one is
+ * always `active`, whatever a hand-edited marker says (INITIATIVE_TRANSITIONS cannot see origin,
+ * this is the guard). Pinned by initiative-tick.test.ts.
+ */
+function resumeState(row: InitiativeRow, prior: MarkerPrior): 'active' | 'self_started' {
+  if (row.origin !== 'agent') return 'active';
+  return prior ?? 'self_started';
+}
+
 /** `HH:MM` (UTC, like the rest of the tick) to minutes since midnight; null when malformed. */
 function digestMinutes(raw: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
@@ -125,7 +139,8 @@ export interface InitiativeRuntime {
  *
  * Limitations: the "paused by a switch-off" marker lives in
  * `personalities/<id>/initiatives/.switched-off.json`; a self-started initiative resumes as
- * `active` (paused -> self_started is not an allowed move). Day and window times are UTC days.
+ * `self_started` again (`resumeState`; the marker records the state before the pause). Day and
+ * window times are UTC days.
  * The operator ceilings `maxUsdPerDay` and `maxUsdPerDayPerPersonality` clamp each initiative's
  * own cap (`createInitiativeLoader`), and the runner sums the day's spend across initiatives at
  * run start (`totalsRemainingUsd`, pinned by day-caps.test.ts). Runs sharing a cap are serialised
@@ -147,22 +162,42 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
   const markerPath = (personalityId: string): string =>
     join(dataDir, 'personalities', personalityId, 'initiatives', SWITCHED_OFF_FILE);
 
-  async function readMarker(personalityId: string): Promise<Set<string>> {
+  /**
+   * The switch marker: id -> the state the initiative was in before the pause. The old format was a
+   * bare id list; those entries read as `null` (prior unknown) and resume by origin.
+   */
+  async function readMarker(personalityId: string): Promise<Map<string, MarkerPrior>> {
+    const out = new Map<string, MarkerPrior>();
     try {
       const raw = await storage.read(markerPath(personalityId));
       const parsed: unknown = raw === null ? [] : JSON.parse(raw);
-      return new Set(Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : []);
+      if (!Array.isArray(parsed)) return out;
+      for (const entry of parsed) {
+        if (typeof entry === 'string') out.set(entry, null);
+        else if (typeof entry === 'object' && entry !== null && 'id' in entry) {
+          const { id } = entry;
+          const prior = 'prior' in entry ? entry.prior : null;
+          if (typeof id === 'string')
+            out.set(id, prior === 'active' || prior === 'self_started' ? prior : null);
+        }
+      }
     } catch (err) {
       onError(err);
-      return new Set();
     }
+    return out;
   }
 
-  async function writeMarker(personalityId: string, ids: Set<string>): Promise<void> {
+  async function writeMarker(
+    personalityId: string,
+    marker: Map<string, MarkerPrior>,
+  ): Promise<void> {
     const path = markerPath(personalityId);
     try {
       await storage.mkdir(join(path, '..'));
-      await storage.writeAtomic(path, JSON.stringify([...ids].sort()));
+      const entries = [...marker]
+        .map(([id, prior]) => ({ id, prior }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      await storage.writeAtomic(path, JSON.stringify(entries));
     } catch (err) {
       onError(err);
     }
@@ -181,15 +216,15 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
       for (const row of rows) {
         if (row.state !== 'active' && row.state !== 'self_started') continue;
         store.transitionInitiative(row.id, 'paused', 'personality switched off');
-        marker.add(row.id);
+        marker.set(row.id, row.state);
         changed = true;
         report.paused.push(row.id);
       }
     } else {
-      for (const id of [...marker]) {
+      for (const [id, prior] of [...marker]) {
         const row = rows.find((r) => r.id === id);
         if (row?.state === 'paused') {
-          store.transitionInitiative(id, 'active', 'personality switched back on');
+          store.transitionInitiative(id, resumeState(row, prior), 'personality switched back on');
           report.resumed.push(id);
         }
         marker.delete(id);

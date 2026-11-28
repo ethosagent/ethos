@@ -215,6 +215,72 @@ describe('initiative tick', () => {
     expect(ledger.windows('activation').map((w) => w.kind)).toEqual(['survey']);
   });
 
+  /** An agent-origin row straight into the ledger: the self-start path needs a parent and a pool. */
+  const seedAgentRow = (ledger: ReturnType<typeof setup>['ledger'], id: string, parent: string) =>
+    ledger.store.upsertInitiative({
+      id,
+      personalityId: 'product-manager',
+      origin: 'agent',
+      parentId: parent,
+      state: 'self_started',
+      configPath: join(dataDir, 'personalities', 'product-manager', 'initiatives', `${id}.yaml`),
+      configHash: 'h',
+      version: 1,
+    });
+  const markerPath = () =>
+    join(dataDir, 'personalities', 'product-manager', 'initiatives', '.switched-off.json');
+
+  it('an agent-origin initiative resumes as self_started, so auto-pause and the cap still count it', async () => {
+    const { runtime, ledger, save } = setup();
+    await save('product-manager', 'activation');
+    seedAgentRow(ledger, 'idea-1', 'activation');
+    writeSettings('product-manager', false);
+    await runtime.tick(T0);
+    expect(ledger.store.getInitiative('idea-1')?.state).toBe('paused');
+    expect(ledger.store.getInitiative('activation')?.state).toBe('paused');
+
+    writeSettings('product-manager', true);
+    const on = await runtime.tick(T1);
+    expect([...on.resumed].sort()).toEqual(['activation', 'idea-1']);
+    expect(ledger.store.getInitiative('idea-1')?.state).toBe('self_started');
+    expect(ledger.store.getInitiative('activation')?.state).toBe('active');
+    // The self-start cap and the auto-pause scan both read `self_started` rows only.
+    expect(
+      ledger.store.list({ personalityId: 'product-manager', states: ['self_started'] }),
+    ).toHaveLength(1);
+  });
+
+  it('the old marker format (a bare id list) resumes by origin', async () => {
+    const { runtime, ledger, save, storage } = setup();
+    await save('product-manager', 'activation');
+    seedAgentRow(ledger, 'idea-1', 'activation');
+    ledger.store.transitionInitiative('activation', 'paused', 'switched off');
+    ledger.store.transitionInitiative('idea-1', 'paused', 'switched off');
+    await storage.mkdir(join(markerPath(), '..'));
+    await storage.writeAtomic(markerPath(), JSON.stringify(['activation', 'idea-1']));
+    writeSettings('product-manager', true);
+
+    const on = await runtime.tick(T1);
+    expect([...on.resumed].sort()).toEqual(['activation', 'idea-1']);
+    expect(ledger.store.getInitiative('activation')?.state).toBe('active');
+    expect(ledger.store.getInitiative('idea-1')?.state).toBe('self_started');
+  });
+
+  it('a marker never moves a human-origin initiative to self_started', async () => {
+    const { runtime, ledger, save, storage } = setup();
+    await save('product-manager', 'activation');
+    ledger.store.transitionInitiative('activation', 'paused', 'switched off');
+    await storage.mkdir(join(markerPath(), '..'));
+    await storage.writeAtomic(
+      markerPath(),
+      JSON.stringify([{ id: 'activation', prior: 'self_started' }]),
+    );
+    writeSettings('product-manager', true);
+
+    await runtime.tick(T1);
+    expect(ledger.store.getInitiative('activation')?.state).toBe('active');
+  });
+
   it('a tick in progress makes the next one skip', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {

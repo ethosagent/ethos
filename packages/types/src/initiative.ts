@@ -31,14 +31,18 @@ export type InitiativeVerdict =
 export type WindowKind = 'survey' | 'scan' | 'window' | 'brief';
 export type DraftStatus = 'pending' | 'materialised' | 'refused';
 
-/** Allowed moves. Spec "Initiative lifecycle". */
+/**
+ * Allowed moves. Spec "Initiative lifecycle". `paused -> self_started` exists so a switch-off and
+ * switch-on gives an agent-origin initiative back to the pool it left; the table cannot see origin,
+ * so only `resumeState` (packages/wiring/src/initiative-runtime.ts) may ask for it, for agent rows.
+ */
 export const INITIATIVE_TRANSITIONS: Readonly<
   Record<'start' | InitiativeState, readonly InitiativeState[]>
 > = {
   start: ['active', 'self_started'],
   self_started: ['active', 'stopped', 'paused'],
   active: ['paused', 'review'],
-  paused: ['active'],
+  paused: ['active', 'self_started'],
   review: ['active', 'ended'],
   ended: [],
   stopped: [],
@@ -163,6 +167,30 @@ export interface DraftRow {
   createdAt: string;
 }
 
+/** Which per-day dollar ceiling refused a window reservation. */
+export type ReservationScope = 'initiative' | 'personality' | 'global' | 'pool';
+
+/**
+ * Cross-process reservation taken in the transaction that opens a window. `caps` are the
+ * operator's per-day ceilings in absolute dollars (the initiative's own comes from the store's
+ * `capFor`); an absent one is unbounded. `reserveUsd` is the most the window may spend.
+ */
+export interface WindowReservationRequest {
+  initiativeId: string;
+  explorationId: string | null;
+  kind: WindowKind;
+  personalityId: string;
+  origin: InitiativeOrigin;
+  reserveUsd: number;
+  /** A reservation older than this is dead, so a crashed process cannot block the day. */
+  ttlMs: number;
+  caps: { personalityUsd?: number; globalUsd?: number; poolUsd?: number };
+}
+
+export type WindowReservationResult =
+  | { ok: true; windowId: string }
+  | { ok: false; scope: ReservationScope; leftUsd: number };
+
 /** What runs and ledger tools may call. No decision writer, no config writer. */
 export interface InitiativeLedgerPort {
   addIdea(i: Omit<IdeaRow, 'id' | 'createdAt'>): IdeaRow;
@@ -226,6 +254,13 @@ export interface InitiativeStore extends InitiativeLedgerPort {
     stopReason: string | null;
   } | null;
   openWindow(w: { initiativeId: string; explorationId: string | null; kind: WindowKind }): string;
+  /**
+   * Runner only. Opens a window and reserves its spend ceiling in one `BEGIN IMMEDIATE`
+   * transaction, so a second process on the same db sees it. Refuses (nothing written) when
+   * any scope's cap minus spend minus live reservations is below `reserveUsd`. `closeWindow`
+   * releases the reservation in the transaction that records the spend.
+   */
+  reserveAndOpenWindow(w: WindowReservationRequest): WindowReservationResult;
   closeWindow(
     id: string,
     r: {

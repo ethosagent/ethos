@@ -16,6 +16,7 @@ const initiativeEdges: Array<['start' | InitiativeState, InitiativeState]> = [
   ['active', 'paused'],
   ['active', 'review'],
   ['paused', 'active'],
+  ['paused', 'self_started'],
   ['review', 'active'],
   ['review', 'ended'],
 ];
@@ -42,6 +43,9 @@ describe('initiative state machines', () => {
     expect(total).toBe(initiativeEdges.length);
     expect(canTransition(INITIATIVE_TRANSITIONS, 'ended', 'active')).toBe(false);
     expect(canTransition(INITIATIVE_TRANSITIONS, 'stopped', 'active')).toBe(false);
+    // Origin is not in the table: only an agent-origin row may take paused -> self_started, and the
+    // runtime guard (initiative-tick.test.ts) enforces that.
+    expect(canTransition(INITIATIVE_TRANSITIONS, 'paused', 'review')).toBe(false);
   });
 
   it('exploration transitions match the spec diagram', () => {
