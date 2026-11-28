@@ -2566,6 +2566,9 @@ importers:
 
   extensions/world-service:
     dependencies:
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
