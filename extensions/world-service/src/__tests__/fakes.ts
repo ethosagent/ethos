@@ -340,7 +340,10 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
     if (q.kind === 'edges') {
       const all = h.edges.filter(
         (e) =>
-          (q.includeClosed ? e.retiredAt === null : isLive(e)) &&
+          (q.includeClosed
+            ? e.retiredAt === null
+            : e.retiredAt === null &&
+              (e.validTo === null || e.validTo > this.clock.slice(0, 10))) &&
           (!q.types || q.types.includes(e.type)) &&
           (q.fromId === undefined || e.fromId === q.fromId) &&
           (q.toId === undefined || e.toId === q.toId),

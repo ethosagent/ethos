@@ -21,6 +21,7 @@
 
 import type { Edge, Entity, GraphBundle, WorldSchema } from '@ethosagent/types';
 import type { ResolvedWorld } from './access';
+import { pagedLookup } from './lookup';
 import type { WorldSchemaService } from './schema-service';
 import type { Caller, WorldService } from './service';
 
@@ -44,7 +45,8 @@ export interface WorldCaptureRouterDeps {
   onError?: (e: unknown) => void;
 }
 
-const LOOKUP_LIMIT = 50;
+const LOOKUP_START = 50;
+const LOOKUP_CEILING = 800;
 const SOURCE_PROMPT_CHARS = 160;
 
 const norm = (s: string): string =>
@@ -162,12 +164,18 @@ export class WorldCaptureRouter {
   ): Promise<{ type: string; name: string } | null> {
     const wanted = name.trim();
     const lower = wanted.toLowerCase();
-    const found = await this.deps.service.query(caller, w.alias ?? w.tag, {
-      kind: 'entities',
-      text: wanted,
-      limit: LOOKUP_LIMIT,
-    });
-    const same = found.entities.filter(
+    const page = await pagedLookup(
+      (limit) =>
+        this.deps.service.query(caller, w.alias ?? w.tag, {
+          kind: 'entities',
+          text: wanted,
+          limit,
+        }),
+      { start: LOOKUP_START, ceiling: LOOKUP_CEILING },
+    );
+    // Some entity may be unseen: creating one here could duplicate it, so name neither (null).
+    if (!page.complete) return null;
+    const same = page.result.entities.filter(
       (e) => e.name.toLowerCase() === lower || e.aliases.some((a) => a.toLowerCase() === lower),
     );
     if (same.length > 0) {

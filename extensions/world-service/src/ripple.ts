@@ -9,7 +9,8 @@
 // not walked: GraphQuery 'edges' without includeClosed returns live edges only
 // (pinned by ripple.test.ts 'closed supplies edges are not walked').
 
-import type { Edge } from '@ethosagent/types';
+import type { Edge, GraphQuery } from '@ethosagent/types';
+import { pagedLookup } from './lookup';
 import type { Caller, WorldService } from './service';
 
 export const RIPPLE_DISCLAIMER = 'A graph path is a reason to look, not advice.';
@@ -38,7 +39,8 @@ export interface RippleResult {
   sources: string[];
 }
 
-const LIMIT = 500;
+const START = 500;
+const CEILING = 8000;
 
 export async function rippleWalk(
   service: Pick<WorldService, 'query'>,
@@ -48,23 +50,34 @@ export async function rippleWalk(
   const via = input.via ?? ['supplies'];
   const maxHops = input.maxHops ?? 3;
   const direction = input.direction ?? 'customers';
-  const q = (query: Parameters<WorldService['query']>[2]) => service.query(c, input.world, query);
+  // A truncated page would silently drop edges from the walk: page to completeness, else throw.
+  const q = async (query: (limit: number) => GraphQuery) => {
+    const page = await pagedLookup((limit) => service.query(c, input.world, query(limit)), {
+      start: START,
+      ceiling: CEILING,
+    });
+    if (!page.complete) {
+      throw new Error(`lookup_incomplete: over ${CEILING} rows match a ripple query; not walked`);
+    }
+    return page.result;
+  };
 
   const names = new Map<string, string>();
   const lists = new Set<string>();
-  const ents = await q({ kind: 'entities', types: ['Stock', 'List'], limit: LIMIT });
+  const ents = await q((limit) => ({ kind: 'entities', types: ['Stock', 'List'], limit }));
   for (const e of ents.entities) {
     names.set(e.id, e.name);
     if (e.type === 'List' && (input.listName === undefined || e.name === input.listName)) {
       lists.add(e.id);
     }
   }
-  const watchedEdges = (await q({ kind: 'edges', types: ['watched_in'], limit: LIMIT })).edges;
+  const watchedEdges = (await q((limit) => ({ kind: 'edges', types: ['watched_in'], limit })))
+    .edges;
   const watched = new Map<string, Edge>();
   for (const e of watchedEdges) if (lists.has(e.toId)) watched.set(e.fromId, e);
 
   const affected = (
-    await q({ kind: 'edges', types: ['affected_by'], toId: input.eventId, limit: LIMIT })
+    await q((limit) => ({ kind: 'edges', types: ['affected_by'], toId: input.eventId, limit }))
   ).edges;
 
   const found = new Map<string, { hops: Edge[]; ids: string[]; affectedBy: Edge }>();
@@ -86,11 +99,11 @@ export async function rippleWalk(
       if (cur.hops.length >= maxHops) continue;
       const next: Array<{ edge: Edge; to: string }> = [];
       if (direction !== 'suppliers') {
-        const r = await q({ kind: 'edges', types: via, fromId: at, limit: LIMIT });
+        const r = await q((limit) => ({ kind: 'edges', types: via, fromId: at, limit }));
         next.push(...r.edges.map((edge) => ({ edge, to: edge.toId })));
       }
       if (direction !== 'customers') {
-        const r = await q({ kind: 'edges', types: via, toId: at, limit: LIMIT });
+        const r = await q((limit) => ({ kind: 'edges', types: via, toId: at, limit }));
         next.push(...r.edges.map((edge) => ({ edge, to: edge.fromId })));
       }
       for (const n of next) {

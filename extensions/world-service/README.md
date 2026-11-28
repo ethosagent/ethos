@@ -73,6 +73,7 @@ Written down because nothing enforces the opposite:
 - A personality with a local shell tool can still edit `worlds/` and `worlds.yaml`; `WorldSchemaService.load` and `WorldConfigService` re-validate on load.
 - Purging a world does not revoke its share links (`revokeForSubject` exists in `extensions/share-links`, but `WorldService.purge` does not call it).
 - `import-text.ts` (`bundleFromText`) parses JSON and CSV bundle text for owner surfaces; CSV export prefixes formula-leading cells with `'` and quotes them, and import strips the prefix (pinned by `csv.test.ts`).
+- A write-deciding lookup (duplicate entity or edge, unique-edge owners, proposal endpoints) re-queries with a doubling limit from 200 up to 3200 rows because `GraphQuery` has no offset. Past that it refuses `lookup_incomplete` instead of guessing; a ripple walk over 8000 rows throws the same. Pinned by `lookup-paging.test.ts`.
 - The ripple walk treats an edge with unknown `share` as 1 and says where to look, not why; a graph path is not causation.
 - The watchlist seed (`seedWatchlist`) writes in two batches (entities, then links), so a failure between them leaves the stocks without their sector links.
 - `UsageSourceKind` has `world_extract`, but extraction is metered as `memory_capture` (one shared call); nothing emits `world_extract` yet.

@@ -53,7 +53,12 @@ export interface ServiceHarness {
 }
 
 export async function serviceHarness(
-  opts: { mountAcme?: boolean; schemaFor?: WorldId[]; schemaText?: string } = {},
+  opts: {
+    mountAcme?: boolean;
+    schemaFor?: WorldId[];
+    schemaText?: string;
+    lookupCeiling?: number;
+  } = {},
 ): Promise<ServiceHarness> {
   const dir = mkdtempSync(join(tmpdir(), 'world-service-svc-'));
   const storage = new InMemoryStorage();
@@ -92,6 +97,7 @@ export async function serviceHarness(
     store,
     config,
     now,
+    ...(opts.lookupCeiling === undefined ? {} : { lookupCeiling: opts.lookupCeiling }),
     onError: (e) => errors.push(e),
   });
   return {

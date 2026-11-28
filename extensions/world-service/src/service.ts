@@ -28,6 +28,11 @@
 //     on a private world becomes a proposal'.
 //   - A rejected fact is not proposed again: 'rejectProposal tombstones, so the
 //     same write is not proposed again'.
+//   - A truncated duplicate or unique-edge lookup is re-queried with a growing
+//     limit (lookup.ts) and, if the set is still unseen at the ceiling, the
+//     write is refused `lookup_incomplete`: lookup-paging.test.ts 'refuses
+//     lookup_incomplete when the ceiling is hit without seeing the whole
+//     unique-edge set'.
 //
 // LIMITATIONS (no enforcer, stated):
 //   - `WorldGraphProvider` has no lookup of a fact by id, so `closeFact` and
@@ -63,6 +68,7 @@ import {
 } from '@ethosagent/types';
 import { displayTag, type ResolvedWorld, resolveAccess } from './access';
 import type { WorldConfigService } from './config-service';
+import { lookupIncomplete, pagedLookup } from './lookup';
 import {
   type EntityRef,
   parseAssertPayload,
@@ -88,6 +94,8 @@ export interface WorldServiceDeps {
   store: SQLiteWorldServiceStore;
   config: WorldConfigService;
   now?: () => number;
+  /** Most rows one write-deciding lookup may read before the write is refused (default LOOKUP_CEILING). */
+  lookupCeiling?: number;
   onError?: (e: unknown) => void;
 }
 
@@ -136,7 +144,6 @@ export class WorldServiceError extends Error {
 
 /** Below this an agent's fact on a private world is a proposal (the skill's "ask when under 0.7"). */
 const MIN_DIRECT_CONFIDENCE = 0.7;
-const LOOKUP_LIMIT = 200;
 
 type Target = Pick<ResolvedWorld, 'id' | 'shared'>;
 
@@ -149,6 +156,8 @@ interface Existing {
 interface Analysis {
   duplicateOf: string | null;
   colliding: Existing[];
+  /** Set when the candidate set could not be seen in full; the write must be refused. */
+  incomplete?: string;
 }
 
 type Placement =
@@ -423,6 +432,7 @@ export class WorldService {
     const found = hasRefs
       ? { duplicateOf: null, colliding: [] }
       : await this.analyse(provider, target.id, fact, ctx.schema);
+    if (found.incomplete !== undefined) return { kind: 'refused', reason: found.incomplete };
     if (found.duplicateOf !== null) {
       return {
         kind: 'refused',
@@ -509,18 +519,20 @@ export class WorldService {
       validFrom: f.validFrom,
     });
     if (fact.kind === 'entity') {
-      const r = await provider.query(world, {
-        kind: 'entities',
-        text: fact.name,
-        types: [fact.type],
-        limit: LOOKUP_LIMIT,
-      });
       const lower = fact.name.toLowerCase();
-      const dup = r.entities.find(
-        (e) =>
-          e.type === fact.type &&
-          (e.name.toLowerCase() === lower || e.aliases.some((a) => a.toLowerCase() === lower)),
+      const find = (r: Facts) =>
+        r.entities.find(
+          (e) =>
+            e.type === fact.type &&
+            (e.name.toLowerCase() === lower || e.aliases.some((a) => a.toLowerCase() === lower)),
+        );
+      const page = await pagedLookup(
+        (limit) =>
+          provider.query(world, { kind: 'entities', text: fact.name, types: [fact.type], limit }),
+        { ceiling: this.deps.lookupCeiling, satisfied: (r) => find(r) !== undefined },
       );
+      const dup = find(page.result);
+      if (!dup && !page.complete) return { ...none, incomplete: lookupIncomplete('entity') };
       return { duplicateOf: dup?.id ?? null, colliding: [] };
     }
     if (fact.kind === 'attribute') {
@@ -531,24 +543,32 @@ export class WorldService {
       return { duplicateOf: null, colliding: same.map(brief) };
     }
     const spec = Object.hasOwn(schema.edges, fact.type) ? schema.edges[fact.type] : undefined;
-    const r = await provider.query(world, {
-      kind: 'edges',
-      fromId: fact.fromId,
-      types: [fact.type],
-      limit: LOOKUP_LIMIT,
-    });
-    const dup = r.edges.find((e) => live(e) && e.toId === fact.toId);
+    const findDup = (r: Facts) => r.edges.find((e) => live(e) && e.toId === fact.toId);
+    const page = await pagedLookup(
+      (limit) =>
+        provider.query(world, {
+          kind: 'edges',
+          fromId: fact.fromId,
+          types: [fact.type],
+          limit,
+        }),
+      { ceiling: this.deps.lookupCeiling, satisfied: (r) => findDup(r) !== undefined },
+    );
+    const dup = findDup(page.result);
     if (dup) return { duplicateOf: dup.id, colliding: [] };
+    // Not found and the set is cut short: a live duplicate or owner may be unseen.
+    if (!page.complete) return { ...none, incomplete: lookupIncomplete('edge') };
     if (spec?.unique === 'from')
-      return { duplicateOf: null, colliding: r.edges.filter(live).map(brief) };
+      return { duplicateOf: null, colliding: page.result.edges.filter(live).map(brief) };
     if (spec?.unique === 'to') {
-      const byTo = await provider.query(world, {
-        kind: 'edges',
-        toId: fact.toId,
-        types: [fact.type],
-        limit: LOOKUP_LIMIT,
-      });
-      return { duplicateOf: null, colliding: byTo.edges.filter(live).map(brief) };
+      const byTo = await pagedLookup(
+        (limit) =>
+          provider.query(world, { kind: 'edges', toId: fact.toId, types: [fact.type], limit }),
+        { ceiling: this.deps.lookupCeiling },
+      );
+      // Every live colliding edge must be seen: each one is closed or named in the proposal.
+      if (!byTo.complete) return { ...none, incomplete: lookupIncomplete('edge') };
+      return { duplicateOf: null, colliding: byTo.result.edges.filter(live).map(brief) };
     }
     return none;
   }
@@ -910,19 +930,24 @@ export class WorldService {
     fact: FactInput,
     refs: { entityId?: EntityRef; fromId?: EntityRef; toId?: EntityRef },
   ): Promise<FactInput | string> {
+    let unseen: string | null = null;
     const find = async (ref: EntityRef): Promise<string | null> => {
-      const r = await provider.query(world, {
-        kind: 'entities',
-        text: ref.name,
-        types: [ref.type],
-        limit: LOOKUP_LIMIT,
-      });
-      return r.entities.find((e) => e.type === ref.type && e.name === ref.name)?.id ?? null;
+      const match = (r: Facts) =>
+        r.entities.find((e) => e.type === ref.type && e.name === ref.name)?.id ?? null;
+      const page = await pagedLookup(
+        (limit) =>
+          provider.query(world, { kind: 'entities', text: ref.name, types: [ref.type], limit }),
+        { ceiling: this.deps.lookupCeiling, satisfied: (r) => match(r) !== null },
+      );
+      const id = match(page.result);
+      if (id === null && !page.complete) unseen = lookupIncomplete('entity');
+      return id;
     };
     const need = async (ref: EntityRef | undefined, current: string): Promise<string | null> =>
       ref ? find(ref) : current;
     if (fact.kind === 'attribute') {
       const entityId = await need(refs.entityId, fact.entityId);
+      if (unseen !== null) return unseen;
       return entityId === null
         ? `accept ${refs.entityId?.type} "${refs.entityId?.name}" first`
         : { ...fact, entityId };
@@ -930,6 +955,7 @@ export class WorldService {
     if (fact.kind === 'edge') {
       const fromId = await need(refs.fromId, fact.fromId);
       const toId = await need(refs.toId, fact.toId);
+      if (unseen !== null) return unseen;
       if (fromId === null) return `accept ${refs.fromId?.type} "${refs.fromId?.name}" first`;
       if (toId === null) return `accept ${refs.toId?.type} "${refs.toId?.name}" first`;
       return { ...fact, fromId, toId };
