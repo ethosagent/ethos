@@ -11,7 +11,8 @@ import type {
  * `ethos initiatives run`) could both spend the same remaining dollars. The enforcer is the
  * `window_reservations` table: `reserveAndOpenWindow` checks, inside the caller's
  * `BEGIN IMMEDIATE` transaction, that cap - spent - live reservations covers the request for the
- * initiative, personality, global and pool scopes, then inserts the reservation with the window
+ * initiative, personality, global and pool scopes (and, for an exploring window, the exploration's
+ * budget less its spend less live holds), then inserts the reservation with the window
  * row. Pinned by __tests__/reservations.test.ts.
  */
 
@@ -23,9 +24,15 @@ interface Scope {
   spent: string;
   reserved: string;
   args: unknown[];
+  /** Exploration spend is lifetime, not per day: its queries take no day argument. */
+  perDay?: false;
 }
 
-function scopes(r: WindowReservationRequest, initiativeCap: number): Scope[] {
+function scopes(
+  r: WindowReservationRequest,
+  initiativeCap: number,
+  exploration: { id: string; budget_usd: number } | undefined,
+): Scope[] {
   const spentFrom = `SELECT COALESCE(SUM(w.spent_usd), 0) AS n FROM windows w
     LEFT JOIN initiatives i ON i.id = w.initiative_id WHERE substr(w.started, 1, 10) = ?`;
   const reservedFrom = `SELECT COALESCE(SUM(reserved_usd), 0) AS n FROM window_reservations
@@ -53,6 +60,17 @@ function scopes(r: WindowReservationRequest, initiativeCap: number): Scope[] {
       reserved: `${reservedFrom} AND pool = 1`,
       args: [],
     },
+    // An exploring window also draws on its exploration's own budget, which two processes share.
+    // A brief window spends the reserve kept for it, not the exploration's budget, so it has no row id here.
+    {
+      scope: 'exploration',
+      cap: exploration?.budget_usd,
+      spent: 'SELECT spent_usd AS n FROM explorations WHERE id = ?',
+      reserved: `SELECT COALESCE(SUM(reserved_usd), 0) AS n FROM window_reservations
+        WHERE expires_at > ? AND exploration_id = ?`,
+      args: [exploration?.id],
+      perDay: false,
+    },
   ];
 }
 
@@ -67,10 +85,24 @@ export function reserveWindow(
   // Dead reservations are dropped, never counted.
   db.prepare('DELETE FROM window_reservations WHERE expires_at <= ?').run(at);
   if (r.reserveUsd > 0) {
-    for (const s of scopes(r, input.initiativeCap)) {
+    const exploration =
+      r.kind === 'window' && r.explorationId
+        ? (db
+            .prepare('SELECT id, budget_usd FROM explorations WHERE id = ?')
+            .get(r.explorationId) as { id: string; budget_usd: number } | undefined)
+        : undefined;
+    for (const s of scopes(r, input.initiativeCap, exploration)) {
       if (s.cap === undefined) continue;
-      const spent = db.prepare(s.spent).get(day, ...s.args) as { n: number };
-      const held = db.prepare(s.reserved).get(day, at, ...s.args) as { n: number };
+      const spent = db
+        .prepare(s.spent)
+        .get(...(s.perDay === false ? s.args : [day, ...s.args])) as {
+        n: number;
+      };
+      const held = db
+        .prepare(s.reserved)
+        .get(...(s.perDay === false ? [at, ...s.args] : [day, at, ...s.args])) as {
+        n: number;
+      };
       const left = s.cap - spent.n - held.n;
       if (left + EPSILON < r.reserveUsd)
         return { ok: false, scope: s.scope, leftUsd: Math.max(0, left) };
@@ -78,7 +110,8 @@ export function reserveWindow(
   }
   db.prepare(
     `INSERT INTO window_reservations (window_id, initiative_id, personality_id, pool, day,
-       reserved_usd, holder, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       reserved_usd, holder, created_at, expires_at, exploration_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.windowId,
     r.initiativeId,
@@ -89,6 +122,7 @@ export function reserveWindow(
     input.holder,
     at,
     new Date(input.nowMs + r.ttlMs).toISOString(),
+    r.kind === 'window' ? r.explorationId : null,
   );
   return null;
 }

@@ -168,7 +168,7 @@ export interface DraftRow {
 }
 
 /** Which per-day dollar ceiling refused a window reservation. */
-export type ReservationScope = 'initiative' | 'personality' | 'global' | 'pool';
+export type ReservationScope = 'initiative' | 'personality' | 'global' | 'pool' | 'exploration';
 
 /**
  * Cross-process reservation taken in the transaction that opens a window. `caps` are the

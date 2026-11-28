@@ -138,7 +138,80 @@ describe('SQLiteInitiativeStore: cross-process window reservations', () => {
     expect(b.reserveAndOpenWindow(req()).ok).toBe(true);
     expect(
       (rawDb(b).pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version,
-    ).toBe(2);
+    ).toBe(3);
     b.close();
+  });
+
+  it('a version 2 database gains the exploration column on open and keeps its rows', () => {
+    const path = tmpDb();
+    const a = open(path);
+    const db = rawDb(a);
+    db.prepare('DROP TABLE window_reservations').all();
+    db.prepare(
+      `CREATE TABLE window_reservations (
+        window_id TEXT PRIMARY KEY, initiative_id TEXT NOT NULL, personality_id TEXT NOT NULL,
+        pool INTEGER NOT NULL CHECK (pool IN (0,1)), day TEXT NOT NULL, reserved_usd REAL NOT NULL,
+        holder TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+      ) STRICT`,
+    ).all();
+    db.pragma('user_version = 2');
+    a.close();
+    const b = open(path);
+    const cols = rawDb(b)
+      .prepare("SELECT name FROM pragma_table_info('window_reservations')")
+      .all()
+      .map((r) => r.name);
+    expect(cols).toContain('exploration_id');
+    expect(
+      (rawDb(b).pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version,
+    ).toBe(3);
+    expect(b.reserveAndOpenWindow(req({ kind: 'window', explorationId: 'EXP-0001' })).ok).toBe(
+      true,
+    );
+    b.close();
+  });
+
+  it('two connections on one file both try the last dollar of an exploration: exactly one wins', () => {
+    const path = tmpDb();
+    const a = open(path, { cap: 3 });
+    const b = open(path, { cap: 3 });
+    // $3/day initiative, but this exploration has $1 left: the initiative scope alone passes both.
+    const exp = a.propose({
+      initiativeId: 'ini-1',
+      ideaId: null,
+      question: 'q',
+      estimateUsd: 1,
+      days: 1,
+    });
+    const win = (s: SQLiteInitiativeStore) =>
+      s.reserveAndOpenWindow(req({ kind: 'window', explorationId: exp.id, reserveUsd: 1 }));
+    const results = [win(a), win(b)];
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.find((r) => !r.ok)).toMatchObject({ ok: false, scope: 'exploration' });
+    a.close();
+    b.close();
+  });
+
+  it('an exploration scope counts its recorded spend, and a brief window is not held to it', () => {
+    const a = open(tmpDb(), { cap: 10 });
+    const exp = a.propose({
+      initiativeId: 'ini-1',
+      ideaId: null,
+      question: 'q',
+      estimateUsd: 1,
+      days: 1,
+    });
+    const first = a.reserveAndOpenWindow(
+      req({ kind: 'window', explorationId: exp.id, reserveUsd: 1 }),
+    );
+    if (!first.ok) throw new Error('refused');
+    a.closeWindow(first.windowId, { ...done, spentUsd: 0.8 });
+    expect(
+      a.reserveAndOpenWindow(req({ kind: 'window', explorationId: exp.id, reserveUsd: 0.3 })),
+    ).toMatchObject({ ok: false, scope: 'exploration' });
+    expect(
+      a.reserveAndOpenWindow(req({ kind: 'brief', explorationId: exp.id, reserveUsd: 0.3 })).ok,
+    ).toBe(true);
+    a.close();
   });
 });

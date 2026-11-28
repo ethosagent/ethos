@@ -2,7 +2,9 @@
 // STRICT; ordered reads tie-break on rowid (never in SELECT *). Timestamps are
 // ISO-8601 UTC strings, so `substr(started, 1, 10)` is the UTC day.
 
-export const INITIATIVE_STORE_SCHEMA_VERSION = 2;
+import type Database from '@ethosagent/sqlite';
+
+export const INITIATIVE_STORE_SCHEMA_VERSION = 3;
 
 export const SCHEMA = `
   CREATE TABLE IF NOT EXISTS initiatives (
@@ -38,11 +40,12 @@ export const SCHEMA = `
   ) STRICT;
 
   -- Live day-cap reservations, one per open reserved window. The cross-process enforcer of the
-  -- day caps (reservations.ts); version 2. A row past expires_at is dead.
+  -- day caps (reservations.ts); version 2, exploration_id added in version 3 (set only for an
+  -- exploring window, null for survey, scan and brief). A row past expires_at is dead.
   CREATE TABLE IF NOT EXISTS window_reservations (
     window_id TEXT PRIMARY KEY, initiative_id TEXT NOT NULL, personality_id TEXT NOT NULL,
     pool INTEGER NOT NULL CHECK (pool IN (0,1)), day TEXT NOT NULL, reserved_usd REAL NOT NULL,
-    holder TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+    holder TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, exploration_id TEXT
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS findings (
@@ -73,3 +76,17 @@ export const SCHEMA = `
     answer TEXT, created_at TEXT NOT NULL, answered_at TEXT
   ) STRICT;
 `;
+
+/** Version 3: a version 2 table lacks `exploration_id`; a version 1 file got the full table from the baseline. */
+export const INITIATIVE_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
+  3: (db) => {
+    const cols = db
+      .prepare("SELECT name FROM pragma_table_info('window_reservations')")
+      .all() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === 'exploration_id')) {
+      db.exec('ALTER TABLE window_reservations ADD COLUMN exploration_id TEXT');
+    }
+  },
+};

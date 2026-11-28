@@ -52,7 +52,7 @@ import {
   toWindow,
   type WindowDbRow,
 } from './rows';
-import { INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
+import { INITIATIVE_STORE_MIGRATIONS, INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
 
 /** `<dataDir>/initiatives.db`. */
 export function initiativesDbPath(dataDir: string): string {
@@ -145,6 +145,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
       name: 'initiative-store',
       targetVersion: INITIATIVE_STORE_SCHEMA_VERSION,
       baseline: SCHEMA,
+      migrations: INITIATIVE_STORE_MIGRATIONS,
     });
   }
 
