@@ -11,8 +11,9 @@
 // parse; ...').
 
 import type { AttrSpec, WorldSchema } from '@ethosagent/types';
-import { Document, isMap, isNode, isSeq, LineCounter, parseDocument } from 'yaml';
+import { Document, isMap, isSeq, LineCounter, parseDocument } from 'yaml';
 import { z } from 'zod';
+import { posOf } from './config';
 
 export interface ChangelogEntry {
   v: number;
@@ -90,21 +91,6 @@ const fileZ = z
   })
   .strict();
 
-type YamlDoc = ReturnType<typeof parseDocument>;
-
-function posOf(doc: YamlDoc, lc: LineCounter, path: ReadonlyArray<PropertyKey>): [number, number] {
-  const p = [...path];
-  for (;;) {
-    const node = p.length === 0 ? doc.contents : doc.getIn(p, true);
-    if (isNode(node) && node.range) {
-      const pos = lc.linePos(node.range[0]);
-      return [pos.line, pos.col];
-    }
-    if (p.length === 0) return [1, 1];
-    p.pop();
-  }
-}
-
 const STRUCTURED_HINT =
   'use the structured form: { from: [A], to: [B], attrs: { key: { type: int } } }';
 
@@ -127,10 +113,9 @@ export function parseSchemaYaml(text: string): ParseSchemaResult {
       }),
     };
   }
-  const at = (path: ReadonlyArray<PropertyKey>) => posOf(doc, lc, path);
   const issue = (path: ReadonlyArray<PropertyKey>, message: string): SchemaIssue => {
-    const [line, column] = at(path);
-    return { line, column, message };
+    const { line, col } = posOf(doc, lc, path);
+    return { line, column: col, message };
   };
 
   const parsed = fileZ.safeParse(doc.toJS());

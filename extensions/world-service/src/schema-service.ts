@@ -398,6 +398,16 @@ export class WorldSchemaService {
         throw new Error(`too many live edges to migrate in one change (over ${MIGRATE_LIMIT})`);
       return r.edges;
     };
+    const liveEntities = async (type: string) => {
+      const r = await provider.query(world, {
+        kind: 'entities',
+        types: [type],
+        limit: MIGRATE_LIMIT,
+      });
+      if (r.truncated)
+        throw new Error(`too many live entities to migrate in one change (over ${MIGRATE_LIMIT})`);
+      return r;
+    };
     const reopenEdge = async (e: Edge, over: Partial<FactInputEdge>): Promise<void> => {
       const input: FactInput = {
         kind: 'edge',
@@ -430,20 +440,14 @@ export class WorldSchemaService {
     }
 
     if (change.op === 'rename_attribute') {
-      const type = (change.on as { entity: string }).entity;
-      const found = await provider.query(world, {
-        kind: 'entities',
-        types: [type],
-        limit: MIGRATE_LIMIT,
-      });
-      if (found.truncated)
-        throw new Error(`too many live entities to migrate in one change (over ${MIGRATE_LIMIT})`);
-      for (const a of found.attributes) {
-        if (a.key !== change.from) continue;
+      const found = await liveEntities((change.on as { entity: string }).entity);
+      const moving = found.attributes.filter((a) => a.key === change.from);
+      if (moving.length > 0) {
         await expectOk(
-          provider.assert(world, [
-            {
-              kind: 'attribute',
+          provider.assert(
+            world,
+            moving.map((a) => ({
+              kind: 'attribute' as const,
               entityId: a.entityId,
               key: change.to,
               value: a.value,
@@ -451,10 +455,10 @@ export class WorldSchemaService {
               sourceRef: src,
               author: a.author,
               confidence: a.confidence,
-            },
-          ]),
+            })),
+          ),
         );
-        await expectOk(provider.retire(world, a.id, src, a.author));
+        for (const a of moving) await expectOk(provider.retire(world, a.id, src, a.author));
       }
       return;
     }
@@ -462,13 +466,7 @@ export class WorldSchemaService {
     if (change.op === 'rename_type' || change.op === 'merge_types') {
       const from = change.from;
       const to = change.op === 'rename_type' ? change.to : change.into;
-      const found = await provider.query(world, {
-        kind: 'entities',
-        types: [from],
-        limit: MIGRATE_LIMIT,
-      });
-      if (found.truncated)
-        throw new Error(`too many live entities to migrate in one change (over ${MIGRATE_LIMIT})`);
+      const found = await liveEntities(from);
       if (found.entities.length === 0) return;
       const made = await expectOk(
         provider.assert(
@@ -484,11 +482,12 @@ export class WorldSchemaService {
         ),
       );
       const idMap = new Map(found.entities.map((e, i) => [e.id, made[i] as string]));
-      for (const a of found.attributes) {
+      if (found.attributes.length > 0) {
         await expectOk(
-          provider.assert(world, [
-            {
-              kind: 'attribute',
+          provider.assert(
+            world,
+            found.attributes.map((a) => ({
+              kind: 'attribute' as const,
               entityId: idMap.get(a.entityId) as string,
               key: a.key,
               value: a.value,
@@ -496,10 +495,11 @@ export class WorldSchemaService {
               sourceRef: src,
               author: a.author,
               confidence: a.confidence,
-            },
-          ]),
+            })),
+          ),
         );
-        await expectOk(provider.retire(world, a.id, src, a.author));
+        for (const a of found.attributes)
+          await expectOk(provider.retire(world, a.id, src, a.author));
       }
       for (const e of await liveEdges()) {
         if (!idMap.has(e.fromId) && !idMap.has(e.toId)) continue;

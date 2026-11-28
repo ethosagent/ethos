@@ -235,7 +235,12 @@ export class SQLiteWorldServiceStore {
   }
 
   latestSchemaVersion(world: WorldId): SchemaVersionRow | null {
-    return this.listSchemaVersions(world)[0] ?? null;
+    const r = this.db
+      .prepare(
+        `SELECT ${VERSION_COLS} FROM schema_versions WHERE world = ? ORDER BY version DESC, rowid DESC LIMIT 1`,
+      )
+      .get(world) as SchemaVersionDbRow | undefined;
+    return r ? this.toVersion(r) : null;
   }
 
   insertSchemaVersion(row: {

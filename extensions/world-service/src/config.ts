@@ -54,15 +54,19 @@ export class WorldConfigError extends Error {
   }
 }
 
-type Doc = ReturnType<typeof parseDocument>;
+export type YamlDoc = ReturnType<typeof parseDocument>;
 
-/** Line of the node at `path`, walking up to the nearest parent that exists. */
-function lineOf(doc: Doc, lc: LineCounter, path: ReadonlyArray<PropertyKey>): number {
+/** 1-based line and column of the node at `path`, walking up to the nearest parent that exists. */
+export function posOf(
+  doc: YamlDoc,
+  lc: LineCounter,
+  path: ReadonlyArray<PropertyKey>,
+): { line: number; col: number } {
   const p = [...path];
   for (;;) {
     const node = p.length === 0 ? doc.contents : doc.getIn(p, true);
-    if (isNode(node) && node.range) return lc.linePos(node.range[0]).line;
-    if (p.length === 0) return 1;
+    if (isNode(node) && node.range) return lc.linePos(node.range[0]);
+    if (p.length === 0) return { line: 1, col: 1 };
     p.pop();
   }
 }
@@ -84,7 +88,7 @@ function parseWith<T>(
       })),
     );
   }
-  const at = (path: ReadonlyArray<PropertyKey>) => lineOf(doc, lc, path);
+  const at = (path: ReadonlyArray<PropertyKey>) => posOf(doc, lc, path).line;
   const parsed = schema.safeParse(doc.toJS());
   if (!parsed.success) {
     const issues: ConfigIssue[] = [];
