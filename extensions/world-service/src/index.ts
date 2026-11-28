@@ -6,6 +6,15 @@ export {
   resolveAccess,
 } from './access';
 export {
+  type BuildChunk,
+  type BuildChunkKind,
+  type BuildInput,
+  type BuildSourceDeps,
+  type BuildWatermark,
+  CHUNK_CHARS,
+  collectBuildInputs,
+} from './build/sources';
+export {
   type AttributeDraft,
   type ColumnField,
   type CsvImportOptions,
