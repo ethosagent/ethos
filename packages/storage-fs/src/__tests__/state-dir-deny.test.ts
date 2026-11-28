@@ -42,6 +42,8 @@ describe('always-deny floor — Ethos state dir (PST-001)', () => {
     'learning',
     // plan channel-prompts D15 — operator-written room prompts, write-denied.
     'channels',
+    // plan world-model Task 2.5, R4 — worlds/ read AND write (world-floor.test.ts).
+    'worlds',
     // verification round F1 — operator policy, read AND write.
     'constitution.yaml',
     'evolve-config.json',

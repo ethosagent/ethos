@@ -16,6 +16,11 @@ export {
   type WorldFile,
   WorldFileSchema,
 } from './config';
+export {
+  WorldConfigService,
+  type WorldConfigServiceOptions,
+  type WriteMeta,
+} from './config-service';
 export { isSafeSlug, parseWorldId, privateWorldId, sharedWorldId, worldSlug } from './ids';
 export {
   applyChange,

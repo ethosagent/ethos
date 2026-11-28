@@ -870,6 +870,15 @@ function guaranteeRows(
       detail:
         'a shared-audience turn neither reads nor writes private memory; no personality field narrows it',
     },
+    'G-WORLD-WRITE': {
+      status: 'n/a',
+      detail: 'planned: no world fact writes are wired yet (plan world-model Task 2.4)',
+    },
+    'G-WORLD-AUD': {
+      status: 'enforced',
+      detail:
+        'an owner_only world is never visible in a shared turn, and a world needs both a grant and a mount; no personality field narrows it',
+    },
   };
 }
 
@@ -877,7 +886,7 @@ function guaranteeRows(
  * Render the `## Boundary` block — which published guarantees are enforced,
  * narrowed, relaxed, or inapplicable for THIS personality.
  *
- * A table rather than bullets: thirteen rows read as a scan for the `relaxed`
+ * A table rather than bullets: fifteen rows read as a scan for the `relaxed`
  * ones, which is the operator's actual question, and the status column stays
  * aligned in a terminal as well as in the Web tab's Markdown.
  */
@@ -885,7 +894,7 @@ function boundarySection(rows: Record<GuaranteeId, GuaranteeRow>): string[] {
   const width = Math.max(...GUARANTEE_IDS.map((id) => id.length));
   return [
     '## Boundary',
-    'Register status for this personality (the thirteen published guarantees).',
+    'Register status for this personality (the fifteen published guarantees).',
     'enforced = kernel-enforced, unchanged here · narrowed = this personality tightens it ·',
     'relaxed = widens or disables something above the non-overridable floor · n/a = nothing here reaches it.',
     '',

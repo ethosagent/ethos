@@ -11,9 +11,10 @@ Before you write the report, you can decide the outcome yourself. This page carr
 Scope is defined by **what we published as a guarantee**, not by which directory the bug lives in.
 
 <!-- register-claim
-     ids: G-TOOLS, G-CAP, G-FS, G-NET, G-INJ, G-SEC, G-RED, G-APP, G-EXEC, G-WATCH, G-CHAN, G-AUDIT, G-MEM
+     ids: G-TOOLS, G-CAP, G-FS, G-NET, G-INJ, G-SEC, G-RED, G-APP, G-EXEC, G-WATCH, G-CHAN, G-AUDIT, G-MEM,
+          G-WORLD-WRITE, G-WORLD-AUD
 -->
-- **The guarantee register** — thirteen named guarantees, each with the `file:line` that enforces it, in [docs/content/security/security-boundary.md](docs/content/security/security-boundary.md#register). Anything not in the register is not guaranteed.
+- **The guarantee register** — fifteen named guarantees, each with the `file:line` that enforces it (except G-WORLD-WRITE, published as planned until `WorldService.writeFacts` lands), in [docs/content/security/security-boundary.md](docs/content/security/security-boundary.md#register). Anything not in the register is not guaranteed.
 - **The tier roster** — every workspace package carries a tier in [`.architecture-state.yaml`](.architecture-state.yaml), committed and dated before any report arrives. 155 packages: 11 at Tier 0, 31 at Tier 1, 113 at Tier 2.
 
 | Tier | What we promise | Disclosure treatment |

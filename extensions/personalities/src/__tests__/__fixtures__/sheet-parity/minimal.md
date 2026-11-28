@@ -34,22 +34,24 @@
 Publishing: not gated — send_message goes out as soon as the agent calls it
 
 ## Boundary
-Register status for this personality (the thirteen published guarantees).
+Register status for this personality (the fifteen published guarantees).
 enforced = kernel-enforced, unchanged here · narrowed = this personality tightens it ·
 relaxed = widens or disables something above the non-overridable floor · n/a = nothing here reaches it.
 
 | Guarantee | Status | For this personality |
 |---|---|---|
-| G-TOOLS | relaxed  | no toolset declared — every registered built-in tool is reachable |
-| G-CAP   | enforced | tool declarations ∩ personality policy, resolved per call |
-| G-FS    | enforced | default reach: own directory, ~/.ethos/skills/, working directory |
-| G-NET   | enforced | safeFetch floor: resolved-IP checks, per-hop redirect revalidation |
-| G-INJ   | enforced | prelude, provenance wrap, 2-tier classify, post-read downgrade; no opt-out |
-| G-SEC   | enforced | SecretsResolver is the only credential path; config carries refs, never values |
-| G-RED   | enforced | known credential shapes redacted before observability.db |
-| G-APP   | enforced | approvalMode manual — flagged calls held for approval |
-| G-EXEC  | enforced | no execution posture resolved on this surface |
-| G-WATCH | enforced | out-of-band cross-turn observer; no personality field narrows it |
-| G-CHAN  | n/a      | set by channel config, not by this personality — an unconfigured platform is ungated |
-| G-AUDIT | enforced | safety decisions land in observability.db; no tamper-evidence |
-| G-MEM   | enforced | a shared-audience turn neither reads nor writes private memory; no personality field narrows it |
+| G-TOOLS       | relaxed  | no toolset declared — every registered built-in tool is reachable |
+| G-CAP         | enforced | tool declarations ∩ personality policy, resolved per call |
+| G-FS          | enforced | default reach: own directory, ~/.ethos/skills/, working directory |
+| G-NET         | enforced | safeFetch floor: resolved-IP checks, per-hop redirect revalidation |
+| G-INJ         | enforced | prelude, provenance wrap, 2-tier classify, post-read downgrade; no opt-out |
+| G-SEC         | enforced | SecretsResolver is the only credential path; config carries refs, never values |
+| G-RED         | enforced | known credential shapes redacted before observability.db |
+| G-APP         | enforced | approvalMode manual — flagged calls held for approval |
+| G-EXEC        | enforced | no execution posture resolved on this surface |
+| G-WATCH       | enforced | out-of-band cross-turn observer; no personality field narrows it |
+| G-CHAN        | n/a      | set by channel config, not by this personality — an unconfigured platform is ungated |
+| G-AUDIT       | enforced | safety decisions land in observability.db; no tamper-evidence |
+| G-MEM         | enforced | a shared-audience turn neither reads nor writes private memory; no personality field narrows it |
+| G-WORLD-WRITE | n/a      | planned: no world fact writes are wired yet (plan world-model Task 2.4) |
+| G-WORLD-AUD   | enforced | an owner_only world is never visible in a shared turn, and a world needs both a grant and a mount; no personality field narrows it |

@@ -276,7 +276,7 @@ function readCitations(root) {
   const out = [];
   let row = '(preamble)';
   lines.forEach((line, i) => {
-    const heading = line.match(/^###\s+(G-[A-Z]+)\b/);
+    const heading = line.match(/^###\s+(G-[A-Z]+(?:-[A-Z]+)*)\b/);
     if (heading) row = heading[1];
     CITATION_RE.lastIndex = 0;
     let m = CITATION_RE.exec(line);
@@ -553,7 +553,7 @@ function registerRowIds(root) {
   if (!existsSync(docPath)) return null;
   const ids = [];
   for (const line of readFileSync(docPath, 'utf-8').split('\n')) {
-    const m = line.match(/^###\s+(G-[A-Z]+)\b/);
+    const m = line.match(/^###\s+(G-[A-Z]+(?:-[A-Z]+)*)\b/);
     if (m) ids.push(m[1]);
   }
   return ids;

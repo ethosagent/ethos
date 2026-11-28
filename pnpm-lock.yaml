@@ -2578,6 +2578,10 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
 
   extensions/world-sqlite:
     dependencies:

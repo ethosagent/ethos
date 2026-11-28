@@ -15,6 +15,7 @@ Single entry point, `src/index.ts`.
 | `parseWorldId`, `privateWorldId`, `sharedWorldId`, `worldSlug`, `isSafeSlug` | functions | `world:<slug>` / `personality:<pid>` ids; slugs go through `assertSafeId`. |
 | `parseWorldYaml`, `parseMountsYaml` | functions | Zod `.strict()` parse of `world.yaml` / `worlds.yaml`; errors are `WorldConfigError` with one `{ line, message }` per problem. |
 | `WorldFileSchema`, `MountsFileSchema`, `WorldConfigError` | values | The schemas and the error class. |
+| `WorldConfigService` | class | The only writer of `world.yaml` and `worlds.yaml`: validates, `writeAtomic`, records `# written by <who> at <time>`; `listWorlds` / `readMounts` re-validate on load. Compose-time Storage only. |
 | `WorldSchemaService`, `worldSchemaPath` | class, function | The only writer of every `schema.yaml` and of `schema_versions`: `apply`, `requestChange` (the R12 rules table), `load` (hand edits, R14), `undoLast`. Shared worlds live at `worlds/<slug>/schema.yaml`, private ones at `worlds/.private/<pid>/schema.yaml` (a dot cannot be in a slug, so no shared world collides). |
 | `parseSchemaYaml`, `serializeSchemaYaml` | functions | Canonical and short (`"A -> B"`, attribute-less edges only) forms; errors carry line and column. `sensitive: true` on an attribute is a world-service extension kept out of the frozen `WorldSchema`. |
 | `SchemaChange`, `classifySchemaChange`, `applyChange` | type, functions | The eight change ops, additive vs rewrite, and the pure application of one to a schema. |
@@ -22,9 +23,9 @@ Single entry point, `src/index.ts`.
 
 ## Seam
 
-Archcheck layer: `extensions`, security tier 1 (it sits on the world access trust boundary). Imports `@ethosagent/types` only; never `world-sqlite`. No file I/O: callers pass text and maps in.
+Archcheck layer: `extensions`, security tier 1 (it sits on the world access trust boundary). Imports `@ethosagent/types` only; never `world-sqlite`. `WorldConfigService` reads and writes the two config files through the `Storage` it is handed; the service store opens its own SQLite file; everything else takes text and maps in.
 
-Two files, two owners, both needed for access: `worlds/<slug>/world.yaml` (grants: `readers`, `proposers`, `audience`) and `personalities/<id>/worlds.yaml` (mounts). A mount the world does not list is inert; neither file is agent-writable.
+Two files, two owners, both needed for access: `worlds/<slug>/world.yaml` (grants: `readers`, `proposers`, `audience`) and `personalities/<id>/worlds.yaml` (mounts). A mount the world does not list is inert; neither file is agent-writable (`packages/wiring/src/__tests__/world-floor.test.ts`).
 
 Guarantees and what pins them:
 
