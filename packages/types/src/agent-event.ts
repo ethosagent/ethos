@@ -16,6 +16,7 @@
 
 import type { DecisionErrorCode } from './decision';
 import type { ModelDeviation, ModelResolutionSource } from './model-registry';
+import type { ModelTierName } from './personality';
 
 export const KNOWN_AGENT_EVENT_TYPES = [
   'text_delta',
@@ -36,6 +37,7 @@ export const KNOWN_AGENT_EVENT_TYPES = [
   'credential_required',
   'notification_received',
   'decision',
+  'tier_escalation',
 ] as const;
 
 export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
@@ -310,5 +312,29 @@ export type AgentEvent =
       /** injection / approver: the tool call it judged. */
       toolCallId?: string;
       /** The turn's observability trace; absent when none is wired. */
+      traceId?: string;
+    }
+  /**
+   * A `think_deeper` escalation took effect: the NEXT LLM call is served by a
+   * different model than the turn's own (think-deeper-tier-switch Task 2.1).
+   * Yielded by `streamStep` (packages/core/src/agent-loop/stages/stream-step.ts)
+   * only when the tier resolved AND the served model actually changed, so a
+   * surface never announces an escalation that did not happen. One call only:
+   * the following call is back on the turn's model.
+   *
+   * Audience: web, desktop, CLI and TUI render it; channel adapters never do
+   * (a model's reason can reveal what the user asked) — the gateway skip is
+   * pinned by `extensions/gateway/src/__tests__/streaming-integration.test.ts`.
+   */
+  | {
+      type: 'tier_escalation';
+      /** The turn's active tier (`TurnContext.activeTier`). */
+      from: ModelTierName;
+      /** The requested tier; `'deep'` today. */
+      to: ModelTierName;
+      /** The model the provider is asked to serve on the escalated call. */
+      model: string;
+      /** `escalationReason()` of the tool's `reason` arg: cleaned, truncated; may be `''`. */
+      reason: string;
       traceId?: string;
     };
