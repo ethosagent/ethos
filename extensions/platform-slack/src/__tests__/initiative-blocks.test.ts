@@ -86,3 +86,51 @@ describe('initiative blocks', () => {
     expect(buttons(quiet)).toEqual([]);
   });
 });
+
+describe('escaping and the section cap', () => {
+  const amps = '&'.repeat(400);
+  const heavy: InitiativeDigest = {
+    ...digest,
+    ownWork: {
+      windows: 8,
+      spentUsd: 1,
+      explorations: Array.from({ length: 8 }, (_, i) => ({
+        id: `EXP-${i}`,
+        question: amps,
+        auto: true,
+        windows: 1,
+        spentUsd: 0.1,
+      })),
+    },
+    questions: Array.from({ length: 8 }, (_, i) => ({
+      id: `Q-${i}`,
+      initiativeId: 'grow',
+      text: amps,
+    })),
+    suggestions: Array.from({ length: 8 }, (_, i) => ({
+      draftId: `D-${i}`,
+      parentId: 'grow',
+      why: amps,
+    })),
+  };
+
+  it('keeps every section at or under 3000 characters after escaping, with no half entity', () => {
+    const texts = digestBlocks(heavy)
+      .filter((b) => b.type === 'section')
+      .map((b) => (b.text as { text: string }).text);
+    expect(texts.length).toBeGreaterThan(3);
+    for (const t of texts) {
+      expect(t.length).toBeLessThanOrEqual(3000);
+      // every '&' that survives starts a whole entity
+      expect(t.replace(/&(amp|lt|gt);/g, '')).not.toContain('&');
+    }
+  });
+
+  it('cuts a brief section after escaping too', () => {
+    const t = (
+      briefBlocks({ ...brief, question: amps, recommendation: amps })[0]?.text as { text: string }
+    ).text;
+    expect(t.length).toBeLessThanOrEqual(3000);
+    expect(t.replace(/&(amp|lt|gt);/g, '')).not.toContain('&');
+  });
+});

@@ -47,7 +47,22 @@ function actions(...elements: ReturnType<typeof button>[]): SlackBlock {
   return { type: 'actions', elements };
 }
 
-const line = (text: string): string => escapeMrkdwn(truncate(text, LINE_MAX));
+/** Slack's section text cap is 3000; stay under it after escaping. */
+const SECTION_MAX = 2900;
+
+/**
+ * Cut ALREADY-escaped text to `max`, never inside an entity: every `&` in escaped text starts
+ * `&amp;`, `&lt;` or `&gt;`, so a cut tail matching `&[a-z]*` is a half entity and is dropped.
+ * (Truncating before escaping let each `&` grow 5x past the cap: Slack answered `invalid_blocks`.)
+ */
+function clip(escaped: string, max: number): string {
+  if (escaped.length <= max) return escaped;
+  return `${escaped.slice(0, max).replace(/&[a-z]*$/, '')}…`;
+}
+
+const line = (text: string): string => clip(escapeMrkdwn(text), LINE_MAX);
+/** A section whose text is capped after escaping, so no digest section can be refused as too long. */
+const sec = (text: string): SlackBlock => section(clip(text, SECTION_MAX));
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
 /** One brief: found (with finding ids), still unknown, options, effort and risk, recommendation, and its buttons. */
@@ -70,7 +85,7 @@ export function briefBlocks(b: DigestBrief): SlackBlock[] {
   if (b.recommendation) lines.push(`*Recommendation:* ${line(b.recommendation)}`);
   const adopt = b.recommendedOption ? `Adopt ${truncate(b.recommendedOption, 24)}` : 'Adopt';
   return [
-    section(truncate(lines.join('\n'), 2900)),
+    sec(lines.join('\n')),
     actions(
       button(adopt, 'adopt', b.explorationId, 'primary'),
       button(
@@ -89,7 +104,7 @@ export function digestBlocks(d: InitiativeDigest): SlackBlock[] {
   const blocks: SlackBlock[] = [header(`Initiatives: ${truncate(d.personalityId, 60)}`)];
   if (d.ownWork.windows > 0) {
     blocks.push(
-      section(
+      sec(
         `*Did on its own*\n${d.ownWork.windows} windows, ${usd(d.ownWork.spentUsd)} spent.\n${d.ownWork.explorations
           .slice(0, MAX_ITEMS)
           .map(
@@ -100,10 +115,10 @@ export function digestBlocks(d: InitiativeDigest): SlackBlock[] {
     );
   }
   if (d.needsYes.length) {
-    blocks.push(divider(), section('*Needs a yes*'));
+    blocks.push(divider(), sec('*Needs a yes*'));
     for (const p of d.needsYes.slice(0, MAX_ITEMS)) {
       blocks.push(
-        section(
+        sec(
           `\`${p.explorationId}\` ${line(p.question)}${p.estimateUsd === null ? '' : ` (about ${usd(p.estimateUsd)})`}`,
         ),
         actions(
@@ -116,10 +131,10 @@ export function digestBlocks(d: InitiativeDigest): SlackBlock[] {
     }
   }
   if (d.agentInitiatives.length) {
-    blocks.push(divider(), section('*Started by the agent*'));
+    blocks.push(divider(), sec('*Started by the agent*'));
     for (const i of d.agentInitiatives.slice(0, MAX_ITEMS)) {
       blocks.push(
-        section(`\`${escapeMrkdwn(i.id)}\``),
+        sec(`\`${escapeMrkdwn(i.id)}\``),
         actions(
           button('Keep', 'keep', i.id, 'primary'),
           button('Make it mine', 'make_mine', i.id),
@@ -129,13 +144,13 @@ export function digestBlocks(d: InitiativeDigest): SlackBlock[] {
     }
   }
   if (d.briefs.length) {
-    blocks.push(divider(), section('*Briefs ready*'));
+    blocks.push(divider(), sec('*Briefs ready*'));
     for (const b of d.briefs.slice(0, MAX_ITEMS)) blocks.push(...briefBlocks(b));
   }
   if (d.questions.length) {
     blocks.push(
       divider(),
-      section(
+      sec(
         `*Open questions*\n${d.questions
           .slice(0, MAX_ITEMS)
           .map((q) => `• \`${q.id}\` ${line(q.text)}`)
@@ -147,7 +162,7 @@ export function digestBlocks(d: InitiativeDigest): SlackBlock[] {
   if (d.suggestions.length) {
     blocks.push(
       divider(),
-      section(
+      sec(
         `*Agent suggestions*\n${d.suggestions
           .slice(0, MAX_ITEMS)
           .map((s) => `• \`${s.draftId}\` ${line(s.why)}`)
