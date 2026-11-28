@@ -172,4 +172,101 @@ describe('csv codec', () => {
     const back = parseCsv(out.entitiesCsv);
     expect(back.ok && back.rows[1]?.cells[2]).toBe('Doe, Mei');
   });
+
+  describe('spreadsheet formula neutralising', () => {
+    const base = { world: 'world:acme' as const, recordedAt: 't', retiredAt: null, sourceRef: 's' };
+    const TRIGGERS = ["=cmd|' /C calc'!A0", '+1+1', '-2+3', '@SUM(A1)', '\tTabbed', '\rReturned'];
+    // Values that genuinely start with a quote: only the ones where the next char is a
+    // trigger or a quote are escaped on export (see the scheme comment in csv.ts).
+    const QUOTED = ["'=real", "''double", "'plain", "'"];
+
+    function bundleOf(names: string[], score: number): GraphBundle {
+      return {
+        schema: null,
+        entities: names.map((name, i) => ({
+          ...base,
+          id: `e${i}`,
+          type: 'Person',
+          name,
+          aliases: [],
+          mergedInto: null,
+          author: 'user' as const,
+        })),
+        attributes: names.flatMap((name, i) => [
+          {
+            ...base,
+            id: `n${i}`,
+            entityId: `e${i}`,
+            key: 'note',
+            value: name,
+            validFrom: null,
+            validTo: null,
+            author: 'user' as const,
+            confidence: 1,
+          },
+          {
+            ...base,
+            id: `s${i}`,
+            entityId: `e${i}`,
+            key: 'score',
+            value: score,
+            validFrom: null,
+            validTo: null,
+            author: 'user' as const,
+            confidence: 1,
+          },
+        ]),
+        edges: [],
+      };
+    }
+
+    it('export writes a formula-leading cell as a quoted single-quote-prefixed cell', () => {
+      const { entitiesCsv } = exportCsv(bundleOf(TRIGGERS, 1));
+      for (const name of TRIGGERS) {
+        const cell = `"'${name.replaceAll('"', '""')}"`;
+        expect(entitiesCsv).toContain(`,${cell},`);
+      }
+      const parsed = parseCsv(entitiesCsv);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      expect(parsed.rows.slice(1).map((r) => r.cells[2])).toEqual(TRIGGERS.map((n) => `'${n}`));
+    });
+
+    it('export leaves a plain name and a plain quote-leading value unprefixed', () => {
+      const { entitiesCsv } = exportCsv(bundleOf(["'plain", 'Mei'], 1));
+      const parsed = parseCsv(entitiesCsv);
+      expect(parsed.ok && parsed.rows.slice(1).map((r) => r.cells[2])).toEqual(["'plain", 'Mei']);
+    });
+
+    it('round trip returns formula-leading, quote-leading and negative values unchanged', () => {
+      const names = [...TRIGGERS, ...QUOTED, 'Mei'];
+      const { entitiesCsv } = exportCsv(bundleOf(names, -5));
+      const parsed = parseCsv(entitiesCsv);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      // entities.csv is `id,type,name,aliases,note,score`; keep name,note,score cell text as written.
+      const q = (c: string): string => `"${c.replaceAll('"', '""')}"`;
+      const text = `name,note,score\r\n${parsed.rows
+        .slice(1)
+        .map((r) => [r.cells[2], r.cells[4], r.cells[5]].map((c) => q(c ?? '')).join(','))
+        .join('\r\n')}\r\n`;
+      const r = importCsv(text, schemaWithScore());
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.skipped).toEqual([]);
+      expect(r.entities.map((e) => e.name)).toEqual(names);
+      const notes = r.attributes.filter((a) => a.key === 'note').map((a) => a.value);
+      expect(notes).toEqual(names);
+      const scores = r.attributes.filter((a) => a.key === 'score').map((a) => a.value);
+      expect(scores).toEqual(names.map(() => -5));
+    });
+  });
 });
+
+function schemaWithScore() {
+  const r = parseSchemaYaml(
+    'version: 4\nentities:\n  Person: { attrs: { note: { type: string }, score: { type: number } } }\nedges: {}\n',
+  );
+  if (!r.ok) throw new Error('fixture must parse');
+  return r.schema;
+}

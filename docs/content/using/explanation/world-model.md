@@ -110,7 +110,7 @@ The proposal queue costs your attention. That is the point on a shared world, bu
 | Lookup cost | Closing or promoting a fact finds it by scanning the world export, which is slow on very large worlds. |
 | Feeds and extraction | `world_extract` usage is not emitted yet; extraction is metered as memory capture. |
 | Ripple | A path is not causation. An edge with an unknown share counts as 1. |
-| CSV | Export does not escape formula cells. Import through an agent tool is not available; use `ethos world import` or the World page. |
+| CSV | Export prefixes cells starting with `=`, `+`, `-`, `@`, tab or CR with `'` so spreadsheets read them as text; import strips that prefix again. Import through an agent tool is not available; use `ethos world import` or the World page. |
 | Web editor | The World page has no first-build preview link yet, and its schema editor saves JSON-style YAML. |
 
 ## See also

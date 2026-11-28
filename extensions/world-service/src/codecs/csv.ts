@@ -75,8 +75,25 @@ export function parseCsv(text: string): ParseCsvResult {
   return { ok: true, rows };
 }
 
+// Spreadsheet formula neutralising (OWASP CSV injection). A cell starting with
+// = + - @ TAB or CR is exported with a leading `'` and quoted, so a spreadsheet
+// reads it as text. Import strips exactly one leading `'` when the next char is
+// a trigger or another `'` (see stripFormulaGuard). To keep that unambiguous,
+// export also adds the guard to a value that already starts with `'` followed
+// by a trigger or `'`; a value like `'plain` is written as is and import leaves
+// it alone. Negative numbers (`-5`) get the guard and import strips it before
+// numeric coercion. Pinned by __tests__/csv.test.ts 'spreadsheet formula
+// neutralising' (export shape and round trip).
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+const GUARDED_QUOTE = /^'['=+\-@\t\r]/;
+
 function quoteCell(v: string): string {
+  if (FORMULA_TRIGGER.test(v) || GUARDED_QUOTE.test(v)) return `"'${v.replaceAll('"', '""')}"`;
   return /[",\r\n]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v;
+}
+
+function stripFormulaGuard(v: string): string {
+  return GUARDED_QUOTE.test(v) ? v.slice(1) : v;
 }
 
 const toCsv = (rows: string[][]): string =>
@@ -337,7 +354,7 @@ export function importCsv(
       skip(`expected ${header.length} cells, got ${row.cells.length}`);
       continue;
     }
-    const cell = (name: string): string => (row.cells[col(name)] ?? '').trim();
+    const cell = (name: string): string => stripFormulaGuard((row.cells[col(name)] ?? '').trim());
     const name = cell(mapping.nameColumn);
     if (name === '') {
       skip('empty name');

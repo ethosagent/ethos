@@ -72,7 +72,7 @@ Written down because nothing enforces the opposite:
 - Extraction precision is unknown, which is why it only proposes and is off by default.
 - A personality with a local shell tool can still edit `worlds/` and `worlds.yaml`; `WorldSchemaService.load` and `WorldConfigService` re-validate on load.
 - Purging a world does not revoke its share links (`revokeForSubject` exists in `extensions/share-links`, but `WorldService.purge` does not call it).
-- `import-text.ts` (`bundleFromText`) parses JSON and CSV bundle text for owner surfaces; CSV export does not escape formula cells.
+- `import-text.ts` (`bundleFromText`) parses JSON and CSV bundle text for owner surfaces; CSV export prefixes formula-leading cells with `'` and quotes them, and import strips the prefix (pinned by `csv.test.ts`).
 - The ripple walk treats an edge with unknown `share` as 1 and says where to look, not why; a graph path is not causation.
 - The watchlist seed (`seedWatchlist`) writes in two batches (entities, then links), so a failure between them leaves the stocks without their sector links.
 - `UsageSourceKind` has `world_extract`, but extraction is metered as `memory_capture` (one shared call); nothing emits `world_extract` yet.
