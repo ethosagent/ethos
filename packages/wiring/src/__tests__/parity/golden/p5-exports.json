@@ -6162,6 +6162,7 @@
       "withPendingGate": "value",
       "withSpokenConfirmation": "value",
       "withUsageMeter": "value",
+      "worldOwner": "namespace",
       "wrapUntrusted": "value",
       "writeManifest": "value"
     }

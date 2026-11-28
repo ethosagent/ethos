@@ -2038,6 +2038,7 @@ export async function buildAgentLoop(
     // The runner above was built on THIS goalStore — the pair leaves together.
     goals: { store: goalStore, executor: goalRunner },
     memoryBundle,
+    ...(toolsResult.worlds ? { worlds: toolsResult.worlds } : {}),
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     ...(jobControl ? { jobControl } : {}),

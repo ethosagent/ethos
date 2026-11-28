@@ -9,6 +9,7 @@ export {
   type BuildIO,
   type BuildReply,
   type BuildRequest,
+  describeBuildItem,
   type EstimateResult,
   type RunResult,
   type SaveResult,

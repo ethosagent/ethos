@@ -131,6 +131,7 @@ export interface ServiceContainer {
   debug: import('../features/debug/service').DebugService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   shares: import('../features/share/service').ShareService;
+  worlds: import('../services/worlds.service').WorldsService;
   digest: import('../services/digest.service').DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: import('../services/documents.service').DocumentsService;

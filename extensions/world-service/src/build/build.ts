@@ -29,7 +29,12 @@ import type { ResolvedWorld } from '../access';
 import { canonicalJson } from '../schema-model';
 import type { WorldSchemaService } from '../schema-service';
 import { type Caller, type WorldService, WorldServiceError } from '../service';
-import type { BuildItemInput, BuildRow, SQLiteWorldServiceStore } from '../service-store';
+import type {
+  BuildItemInput,
+  BuildItemRow,
+  BuildRow,
+  SQLiteWorldServiceStore,
+} from '../service-store';
 import { type CompleteFn, type ExtractedEntity, extractChunk } from './extract';
 import { type MergedEntity, mergeEntities, normName } from './merge';
 import { type BuildSourceDeps, collectBuildInputs } from './sources';
@@ -158,6 +163,38 @@ const ConflictItemZ = z.object({
   confidence: z.number(),
   existing: z.object({ factId: z.string(), value: z.unknown() }),
 });
+
+/**
+ * One staged item as the owner's preview row (web `worlds.buildPreview`). `duplicate` and `schema`
+ * items have no fact to show and return null. Pinned by web-api worlds-rpc.test.ts 'buildPreview'.
+ */
+export function describeBuildItem(item: BuildItemRow): {
+  kind: 'entity' | 'attribute' | 'edge';
+  label: string;
+  sourceRef: string;
+  conflict: boolean;
+} | null {
+  const at = (kind: 'entity' | 'attribute' | 'edge', label: string, conflict: boolean) => ({
+    kind,
+    label,
+    sourceRef: item.sourceRef,
+    conflict,
+  });
+  if (item.kind === 'conflict') {
+    const c = ConflictItemZ.safeParse(item.payload);
+    return c.success
+      ? at('attribute', `${c.data.entity.name}.${c.data.key} = ${String(c.data.value)}`, true)
+      : null;
+  }
+  if (item.kind !== 'fact') return null;
+  const f = FactItemZ.safeParse(item.payload);
+  if (!f.success) return null;
+  const d = f.data;
+  if (d.fact === 'entity') return at('entity', `${d.type} ${d.name}`, false);
+  if (d.fact === 'attribute')
+    return at('attribute', `${d.entity.name}.${d.key} = ${String(d.value)}`, false);
+  return at('edge', `${d.from.name} -${d.type}-> ${d.to.name}`, false);
+}
 
 const label = (w: Pick<ResolvedWorld, 'alias' | 'tag'>): string => w.alias ?? w.tag;
 

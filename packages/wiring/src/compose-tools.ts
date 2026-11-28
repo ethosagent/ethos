@@ -150,7 +150,7 @@ import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 import type { WiringContext } from './types';
 import type { UsageMeter } from './usage-meter';
 import { resolveSipTrunkClient } from './voice-stack';
-import { createWorldRuntime, type WorldBuildBindings } from './worlds';
+import { createWorldRuntime, type WorldBuildBindings, type WorldRuntime } from './worlds';
 
 // ---------------------------------------------------------------------------
 // WEB_PROMPT — kept here since platformPrompts is also assembled here
@@ -700,6 +700,8 @@ export interface ComposeToolsResult {
   memoryConsult?: GroundingMemoryConsult;
   /** `routeFact` for `MemoryCaptureRunner`; present only when `world.enabled` and `world.extraction: 'propose'`. */
   worldCapture?: RouteFactFn;
+  /** The ONE world runtime's owner-surface services (plan world-model 7.2); present only when `world.enabled`. */
+  worlds?: Pick<WorldRuntime, 'service' | 'schema' | 'configService'>;
   /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
   executionPostureFor: ExecutionRouting['resolvePosture'];
   /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
@@ -2215,6 +2217,7 @@ export async function composeAllTools(
   // personality whose toolset.yaml lists them (build-agent-loop.ts `worldTools` exclude).
   // -------------------------------------------------------------------------
   let worldCapture: RouteFactFn | undefined;
+  let worlds: ComposeToolsResult['worlds'];
   if (config.world?.enabled === true) {
     const worldRuntime = createWorldRuntime({
       dataDir,
@@ -2238,6 +2241,11 @@ export async function composeAllTools(
       tools.register(tool);
     }
     injectors.push(worldRuntime.injector());
+    worlds = {
+      service: worldRuntime.service,
+      schema: worldRuntime.schema,
+      configService: worldRuntime.configService,
+    };
     // Extraction (plan world-model 6.2): the router over THIS runtime, never a second one. It is
     // handed out only when `world.extraction` is 'propose'; build-agent-loop.ts passes it to the
     // capture runner as `routeFact`. Pinned by __tests__/world-extraction-wiring.test.ts.
@@ -2363,6 +2371,7 @@ export async function composeAllTools(
     resolveDockerBackend: routing.resolveDockerBackend,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
     ...(worldCapture ? { worldCapture } : {}),
+    ...(worlds ? { worlds } : {}),
     executionPostureFor: routing.resolvePosture,
     executionRouteFor: routing.exec,
   };

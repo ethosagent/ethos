@@ -45,6 +45,7 @@ import { detectSecrets } from '@ethosagent/safety-redact';
 import {
   type AttributeFact,
   AUTHORITATIVE_AUTHORS,
+  type ChangeRow,
   type Edge,
   type Entity,
   type FactAuthor,
@@ -53,6 +54,7 @@ import {
   type GraphBundle,
   type GraphQuery,
   type ImportReport,
+  type Subgraph,
   type TimeSlice,
   type TurnAudience,
   type WorldGraphProvider,
@@ -70,7 +72,7 @@ import {
 import type { SchemaChange } from './schema-diff';
 import { canonicalJson } from './schema-model';
 import type { WorldSchemaService } from './schema-service';
-import type { SQLiteWorldServiceStore } from './service-store';
+import type { BuildItemRow, BuildRow, ProposalRow, SQLiteWorldServiceStore } from './service-store';
 import { vetFact } from './vetting';
 
 export interface Caller {
@@ -103,6 +105,8 @@ export interface TaggedFacts {
 
 export interface WriteOutcome {
   applied: string[];
+  /** Facts a conflict proposal closed on accept (`acceptProposal` only). */
+  closed?: string[];
   proposed: string[];
   refused: Array<{ index: number; reason: string }>;
   /** One line per proposal that conflicts with a user or import fact (R2), for the tool reply. */
@@ -859,11 +863,14 @@ export class WorldService {
         (fact.kind === 'entity' ? undefined : fact.validFrom) ?? row.createdAt.slice(0, 10);
       for (const old of payload.closes) {
         const closed = await provider.close(row.world, old, closeAt, fact.sourceRef, fact.author);
-        if (!closed.ok)
+        if (closed.ok) {
+          out.closed = [...(out.closed ?? []), old];
+        } else {
           out.refused.push({
             index: 0,
             reason: `could not close ${old}: ${closed.code}: ${closed.reason}`,
           });
+        }
       }
     } else if (row.kind === 'close') {
       const payload = parseClosePayload(row.payload);
@@ -978,6 +985,74 @@ export class WorldService {
       return refuse(`${retired.code}: ${retired.reason}`);
     }
     return { applied: added.ids, proposed: [], refused: [] };
+  }
+
+  // ---- owner reads (web-api): the operator sees every world, mounted or not ----
+  // Reads only; they bypass `visible` on purpose because the operator owns every personality
+  // (plan world-model 7.2). Not on `WorldToolPort` (world-port.test.ts 'R13 tool port is narrow').
+
+  /** The facts of one world at `slice`, without a mount check. */
+  async ownerQuery(world: WorldId, q: GraphQuery, slice?: TimeSlice): Promise<Facts> {
+    return (await this.deps.providers(world)).query(world, q, slice);
+  }
+
+  async ownerNeighbours(
+    world: WorldId,
+    ref: string,
+    hops: number,
+    slice?: TimeSlice,
+  ): Promise<Subgraph> {
+    return (await this.deps.providers(world)).neighbours(world, ref, hops, slice);
+  }
+
+  async ownerHistory(
+    world: WorldId,
+    ref: string,
+  ): Promise<{ attributes: AttributeFact[]; edges: Edge[] }> {
+    return (await this.deps.providers(world)).history(world, ref);
+  }
+
+  async ownerChanges(world: WorldId, since: string, limit: number): Promise<ChangeRow[]> {
+    return (await this.deps.providers(world)).changes(world, since, limit);
+  }
+
+  async ownerExport(world: WorldId): Promise<GraphBundle> {
+    return (await this.deps.providers(world)).export(world);
+  }
+
+  /** Closes a live fact on `validTo` as the owner (author `user`). */
+  async ownerClose(
+    world: WorldId,
+    factId: string,
+    validTo: string,
+    by: string,
+  ): Promise<WriteOutcome> {
+    const refuse = (reason: string): WriteOutcome => allRefused([factId], reason);
+    const provider = await this.deps.providers(world);
+    const found = await this.findFact(provider, world, factId);
+    if (!found) return refuse(`not_found: fact ${factId} not found`);
+    if (!live(found)) return refuse(`closed: fact ${factId} is already closed or retired`);
+    const r = await provider.close(world, factId, validTo, `web:${by}`, 'user');
+    return r.ok ? { applied: r.ids, proposed: [], refused: [] } : refuse(`${r.code}: ${r.reason}`);
+  }
+
+  /** Proposals for the owner's inbox: conflicts first, then newest first. */
+  ownerProposals(filter: { world?: WorldId; status?: ProposalRow['status'] }): ProposalRow[] {
+    return this.deps.store.list(filter);
+  }
+
+  ownerProposal(id: string): ProposalRow | null {
+    return this.deps.store.get(id);
+  }
+
+  ownerPendingCount(world: WorldId): number {
+    return this.deps.store.countProposals(world);
+  }
+
+  /** A staged first build and its items, for `worlds.buildPreview`. Null when unknown. */
+  ownerBuild(id: string): { build: BuildRow; items: BuildItemRow[] } | null {
+    const build = this.deps.store.getBuild(id);
+    return build ? { build, items: this.deps.store.listBuildItems(id) } : null;
   }
 
   /** The only delete. `by` is recorded in the reason: the provider has no actor field. */

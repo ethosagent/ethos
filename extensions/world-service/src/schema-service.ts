@@ -198,6 +198,68 @@ export class WorldSchemaService {
     });
   }
 
+  /** The raw schema.yaml text (valid or not), for the owner's editor. Null before the first write. */
+  async readYaml(world: WorldId): Promise<string | null> {
+    return this.deps.storage.read(worldSchemaPath(this.deps.dataDir, world));
+  }
+
+  /** Recorded versions, newest first. */
+  versions(
+    world: WorldId,
+  ): Array<{ version: number; by: string; at: string; reason: string | null }> {
+    return this.deps.store
+      .listSchemaVersions(world)
+      .map((r) => ({ version: r.version, by: r.by, at: r.at, reason: r.reason }));
+  }
+
+  /**
+   * The owner's whole-file save (web `worlds.schemaSave`): refuse a stale `expectedVersion`, refuse
+   * text that does not parse (the issues carry line numbers), then `writeAtomic` and let `load`
+   * record the hand edit and bring the backend to it. Still the one writer of schema.yaml; the
+   * reason is not recorded, `load` writes every hand edit as `you (hand edit)`. Pinned by
+   * schema-service.test.ts 'saveYaml'.
+   */
+  async saveYaml(
+    world: WorldId,
+    yaml: string,
+    expectedVersion: number,
+  ): Promise<
+    | { ok: true; version: number }
+    | { ok: false; kind: 'conflict'; error: string }
+    | { ok: false; kind: 'invalid'; error: string; issues: SchemaIssue[] }
+  > {
+    const cur = await this.load(world);
+    if (cur.version !== expectedVersion) {
+      return {
+        ok: false,
+        kind: 'conflict',
+        error: `schema is at version ${cur.version}, expected ${expectedVersion}`,
+      };
+    }
+    const parsed = parseSchemaYaml(yaml);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        kind: 'invalid',
+        error: parsed.errors.map((i) => `schema.yaml line ${i.line}: ${i.message}`).join('; '),
+        issues: parsed.errors,
+      };
+    }
+    const path = worldSchemaPath(this.deps.dataDir, world);
+    await this.deps.storage.mkdir(dirname(path));
+    await this.deps.storage.writeAtomic(path, yaml);
+    const next = await this.load(world);
+    if (next.errors.length > 0) {
+      return {
+        ok: false,
+        kind: 'invalid',
+        error: next.errors.map((i) => `schema.yaml line ${i.line}: ${i.message}`).join('; '),
+        issues: next.errors,
+      };
+    }
+    return { ok: true, version: next.version };
+  }
+
   /**
    * Routes an agent change through the rules table (R12): additive on a private
    * world applies now; everything else becomes a proposal for the owner, except

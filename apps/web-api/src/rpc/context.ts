@@ -47,6 +47,7 @@ import type { UsageService } from '../services/usage.service';
 import type { VoiceService } from '../services/voice.service';
 import type { VoiceLaneModeService } from '../services/voice-lane-mode.service';
 import type { WakeRoutesService } from '../services/wake-routes.service';
+import type { WorldsService } from '../services/worlds.service';
 import type { SatelliteRegistry } from '../voice/satellite-registry';
 
 // Shared context type for every oRPC handler in the web-api. Each namespace
@@ -90,6 +91,8 @@ export interface RpcContext {
   apiKeys: ApiKeysService;
   /** Cookie-only share-link management (plan share-links D12). */
   shares: ShareService;
+  /** The owner's world-model surface (plan world-model 7.2); cookie-only, answers NOT_CONFIGURED when `world.enabled` is off. */
+  worlds: WorldsService;
   digest: DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: DocumentsService;

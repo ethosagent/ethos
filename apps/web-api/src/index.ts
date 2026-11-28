@@ -132,6 +132,7 @@ import { UsageService } from './services/usage.service';
 import { VoiceService } from './services/voice.service';
 import { VoiceLaneModeService } from './services/voice-lane-mode.service';
 import { WakeRoutesService } from './services/wake-routes.service';
+import { type WorldsRuntime, WorldsService } from './services/worlds.service';
 import { createBrowserVoiceSessionOpener } from './voice/browser-voice-session';
 import { withImplicitWakeRoutes } from './voice/implicit-wake-routes';
 import { createRealtimeControlDeps } from './voice/realtime-control-deps';
@@ -489,6 +490,12 @@ export interface CreateWebApiOptions {
    * `http://localhost:3000` when omitted.
    */
   webBaseUrl?: string;
+  /**
+   * The world runtime's services (`CreateAgentLoopResult.worlds`, plan world-model 7.2): the ONE
+   * WorldService / WorldSchemaService / WorldConfigService the loop composed, borrowed here, never a
+   * second set. Absent (`world.enabled` off) → `worlds.*` answer NOT_CONFIGURED.
+   */
+  worlds?: WorldsRuntime;
   /** Share links (plan share-links): the store and where `ethos serve` listens. Absent → off. */
   shareLinks?: import('./features/share/service').ShareLinksHost;
   /**
@@ -1155,6 +1162,17 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       : { editingUnsupported: memoryEditing.reason }),
     identityMap: opts.identityMap,
     pending: opts.memoryBundle.pending,
+  });
+  // The owner's world-model surface. Cookie-only (SCOPE_MAP has no `worlds`); the actor is the
+  // same `web:<admin>` the share links record.
+  const worldsService = new WorldsService({
+    runtime: opts.worlds,
+    actor: share.actor,
+    personalityIds: async () => (await opts.personalities.list()).map((p) => p.id),
+    memoryNotes: async (personalityId) => {
+      const files = await memoryService.list(personalityId).catch(() => ({ items: [] }));
+      return files.items.map((f) => ({ scope: `${personalityId}:${f.store}`, text: f.content }));
+    },
   });
   // Ticket hooks attach to the main loop's registry when that loop is wired
   // (`wireMainLoop`) — during onboarding it does not exist yet.
@@ -2164,6 +2182,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       debug: debugService,
       apiKeys: apiKeysService,
       shares: share.service,
+      worlds: worldsService,
       digest: digestService,
       documents: documentsService,
       modelRegistry: modelRegistryService,

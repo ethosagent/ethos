@@ -66,6 +66,7 @@ import { toolSettingsRouter } from './tool-settings';
 import { toolsRouter } from './tools';
 import { usageRouter } from './usage';
 import { voiceRouter } from './voice';
+import { worldsRouter } from './worlds';
 
 // Top-level oRPC router. Each namespace lives in its own file (one
 // `os.<namespace>.<method>.handler(...)` per procedure); this file only
@@ -148,6 +149,7 @@ export const apiRouter = {
   catalog: catalogRouter,
   backup: backupRouter,
   execution: executionRouter,
+  worlds: worldsRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

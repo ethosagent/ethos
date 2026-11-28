@@ -755,6 +755,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     cronTriggers,
     goals: shared.goals,
     memoryBundle: shared.memoryBundle,
+    ...(shared.worlds ? { worlds: shared.worlds } : {}),
     amendments: shared.amendments,
     jobStore: shared.jobStore,
     jobRunners: shared.jobRunners,

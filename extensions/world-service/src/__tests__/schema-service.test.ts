@@ -158,6 +158,35 @@ describe('WorldSchemaService', () => {
     expect(h.store.listSchemaVersions(W)).toHaveLength(2);
   });
 
+  it('saveYaml: stale version is a conflict, bad text keeps the file, good text is a hand-edit version', async () => {
+    const before = h.storage.files.get(h.path(W)) ?? '';
+    const stale = await h.service.saveYaml(W, before, 0);
+    expect(stale).toMatchObject({
+      ok: false,
+      kind: 'conflict',
+      error: expect.stringContaining('expected 0'),
+    });
+
+    const bad = await h.service.saveYaml(W, 'version: 2\nentities: [oops\n', 1);
+    expect(bad).toMatchObject({
+      ok: false,
+      kind: 'invalid',
+      error: expect.stringContaining('line'),
+    });
+    expect(h.storage.files.get(h.path(W))).toBe(before);
+
+    const edited = before.replace(
+      'Skill: { attrs: {} }',
+      'Skill: { attrs: {} }\n  Vendor: { attrs: {} }',
+    );
+    const ok = await h.service.saveYaml(W, edited, 1);
+    expect(ok).toEqual({ ok: true, version: 2 });
+    expect(h.storage.atomicWrites).toEqual([h.path(W)]);
+    expect((await h.service.load(W)).schema.entities.Vendor).toBeDefined();
+    expect(await h.service.readYaml(W)).toBe(edited);
+    expect(h.service.versions(W).map((v) => v.version)).toEqual([2, 1]);
+  });
+
   it('undoLast restores the previous version and logs it', async () => {
     await h.service.apply(W, { op: 'add_entity_type', type: 'Vendor' }, ME, 'oops');
     const r = await h.service.undoLast(W, 'me');

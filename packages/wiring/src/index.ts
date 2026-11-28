@@ -1857,6 +1857,13 @@ export interface CreateAgentLoopResult {
    *  `config` its memory registry resolves, so a web edit lands where the agent
    *  reads (F04). Hosts forward it to `createWebApi` as is. */
   memoryBundle: MemoryBundle;
+  /**
+   * The world runtime's owner-surface services (`WorldService`, `WorldSchemaService`,
+   * `WorldConfigService`), borrowed by the web-api's `worlds.*` (plan world-model 7.2): the ONE
+   * runtime `composeAllTools` created, never a second one, closed by `dispose()`. Absent unless
+   * `world.enabled`.
+   */
+  worlds?: Pick<import('./worlds').WorldRuntime, 'service' | 'schema' | 'configService'>;
   /** Durable background-job store — present only when the background subsystem is
    *  enabled for this loop. Shared with the gateway/Tasks surface. */
   jobStore?: import('@ethosagent/types').JobStore;
@@ -2526,4 +2533,5 @@ export {
 export * from './room-policy'; // per-room prompts and policy; also the `@ethosagent/wiring/room-policy` subpath
 export * from './share'; // share-links store + redacted snapshot builder (plan share-links)
 export * from './system-jobs';
+export * as worldOwner from './world-owner'; // owner-surface codecs and access (plan world-model 7.2)
 export { createWorldRuntime, type WorldRuntime, type WorldRuntimeDeps } from './worlds'; // world model runtime (plan world-model 4.6)

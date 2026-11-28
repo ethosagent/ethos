@@ -431,6 +431,32 @@ export class SQLiteWorldServiceStore {
     return rows.map((r) => this.toProposal(r));
   }
 
+  /**
+   * Proposals across worlds for the owner's inbox: conflicts first, then newest first, rowid
+   * breaking ties. `status` absent means every status. Pinned by web-api worlds-rpc.test.ts
+   * 'proposals list conflicts first'.
+   */
+  list(opts: { world?: WorldId; status?: ProposalStatus; limit?: number } = {}): ProposalRow[] {
+    this.expireStale();
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    if (opts.world !== undefined) {
+      where.push('world = ?');
+      params.push(opts.world);
+    }
+    if (opts.status !== undefined) {
+      where.push('status = ?');
+      params.push(opts.status);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT ${PROPOSAL_COLS} FROM proposals ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY (conflict_with IS NULL), created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(...params, opts.limit ?? 500) as ProposalDbRow[];
+    return rows.map((r) => this.toProposal(r));
+  }
+
   get(id: string): ProposalRow | null {
     const r = this.db.prepare(`SELECT ${PROPOSAL_COLS} FROM proposals WHERE id = ?`).get(id) as
       | ProposalDbRow
