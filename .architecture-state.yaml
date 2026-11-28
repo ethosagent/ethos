@@ -179,7 +179,7 @@ register_anchors:
   G-INIT-RO:
     - { path: packages/wiring/src/initiatives.ts, line: 179, contains: "export function buildReadOnlyRegistry" }
     - { path: extensions/initiative-runner/src/capability-audit.ts, line: 28, contains: "export function assertReadOnlyCapabilities" }
-    - { path: extensions/initiative-runner/src/tool-gate.ts, line: 10, contains: "export function createInitiativeToolGate" }
+    - { path: extensions/initiative-runner/src/tool-gate.ts, line: 11, contains: "export function createInitiativeToolGate" }
 
   G-INIT-CFG:
     - { path: extensions/initiative-runner/src/config-service.ts, line: 170, contains: "async save(input: SaveInput)" }

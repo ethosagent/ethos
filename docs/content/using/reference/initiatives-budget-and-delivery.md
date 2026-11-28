@@ -56,7 +56,20 @@ A run reads what is left of the day before it starts, but its spend only lands w
 
 This is what keeps `ethos initiatives run` and `ethos serve` from spending the same dollars. A run refused this way throws and opens no window; try again when the other run has finished. Pinned by `extensions/initiative-store/src/__tests__/reservations.test.ts`.
 
-The original design page assumed a flat $0.35 per window with a $0.40 scan reserve. The code does not do that. Only model `usage` is metered, so [per-call tools](../explanation/initiatives.md#trade-offs) such as `engine_ask` add no cost to these caps.
+The original design page assumed a flat $0.35 per window with a $0.40 scan reserve. The code does not do that.
+
+### Paid tool calls {#tool-prices}
+
+Model `usage` is metered as it arrives. A paid tool's provider bill never reaches the run, so each call is charged a fixed estimate (`INITIATIVE_TOOL_CALL_USD`, `tool-prices.ts`) before it runs. The L4 tool gate (`tool-gate.ts`) passes the price to `createWindowGuard`'s `chargeToolCall`. If the charge would leave any cap (day, window or exploration) below $0.05, the call is refused, nothing is charged, and the window ends as that cap. The charge lands in the window's `spent_usd` like model cost.
+
+| Tool | USD per call | Basis |
+|---|---|---|
+| `web_search`, `linkedin_search`, `reddit_web_search`, `quora_search` | 0.01 | Exa ~$0.005, Tavily ~$0.008, Brave ~$0.005 per query, rounded up. The site searches use the same backend. |
+| `web_extract` | 0.002 | Estimate from Exa contents at ~$0.001 a page. |
+| `engine_ask` | 0.10 | Estimate: model tokens plus a search fee, roughly $0.005 to $0.05. |
+| `x_search` | 0.10 | Estimate: X API pay-per-use, ~$0.005 a post, for a 20-post page. |
+
+Every other read tool is free (`INITIATIVE_FREE_READ_TOOLS`): local files, memory and session reads, Kanban and goals, Reddit and YouTube. `tool-prices.test.ts` fails when a read tool is in neither list. The repo holds no provider price, so these figures are estimates, not measured bills; `window-budget.test.ts` pins the charge and the refusal.
 
 ## Morning digest {#digest}
 

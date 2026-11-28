@@ -346,6 +346,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         safety: deps.safety,
         personalities: runPersonalities,
         allowed: new Set(runToolset),
+        chargeToolCall: (_name, usd) => guard.chargeToolCall(usd),
       }),
     );
     // The most this window may spend: the smaller of what its guard allows (day less the brief
@@ -397,10 +398,10 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
     }
     const windowId = reserved.windowId;
 
-    // Limitation (no enforcer): only LLM `usage` events are metered. Tools that bill per call
-    // (engine_ask, x_search, search providers) report no cost in `ToolResult`, and the run loop
-    // has no usage recorder seam for them, so their spend is not charged to the window or the
-    // day. A run's tool calls are bounded by the loop's per-turn tool budget, not by dollars.
+    // LLM `usage` events are metered below. A paid tool's provider bill never reaches its
+    // `ToolResult`, so it is charged a fixed per-call estimate (tool-prices.ts) BEFORE it runs, by
+    // the L4 gate (tool-gate.ts) through `guard.chargeToolCall`; a call that would cross a cap is
+    // refused and the window ends with that cap. Pinned by window-budget.test.ts.
     const tools = new Set<string>();
     const reads: string[] = [];
     let text = '';

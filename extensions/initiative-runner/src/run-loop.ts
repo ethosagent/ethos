@@ -43,9 +43,14 @@ export function createReadOnlyLoopParts(input: {
   personalities: PersonalityRegistry;
   /** The L1 names for this run (`runToolNames(toolset)`). */
   allowed: ReadonlySet<string>;
+  /** Charges a paid tool call to the window guard (see `createInitiativeToolGate`). */
+  chargeToolCall?: (toolName: string, usd: number) => 'day' | 'window' | 'exploration' | null;
 }): ReadOnlyLoopParts {
   const hooks = new DefaultHookRegistry();
-  hooks.registerModifying('before_tool_call', createInitiativeToolGate(input.allowed));
+  hooks.registerModifying(
+    'before_tool_call',
+    createInitiativeToolGate(input.allowed, input.chargeToolCall),
+  );
   return {
     tools: input.tools,
     llm: input.llm,

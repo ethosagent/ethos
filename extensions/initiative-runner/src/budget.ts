@@ -69,6 +69,13 @@ export function planDay(i: PlanDayInput): DayPlan {
 export interface WindowGuard {
   onUsage(costUsd: number): void;
   spentUsd(): number;
+  /**
+   * Charges a tool call's estimated price before it runs. Returns null and adds it to the spend
+   * when every cap still has a call's reserve left afterwards; otherwise charges nothing, ends
+   * the window with the cap that would be crossed (day, then window, then exploration) and
+   * returns it.
+   */
+  chargeToolCall(costUsd: number): 'day' | 'window' | 'exploration' | null;
   /** What the day still allows this window: the day remaining less the brief reserve, floored at 0. */
   dayRemainingUsd(): number;
   /**
@@ -100,13 +107,21 @@ export function createWindowGuard(caps: WindowCaps, abort: AbortController): Win
   let reason: 'day' | 'window' | 'exploration' | null = null;
   const dayUsableUsd = caps.dayRemainingUsd - Math.max(0, caps.briefReserveUsd ?? 0);
 
+  const reasonAt = (at: number): 'day' | 'window' | 'exploration' | null => {
+    if (dayUsableUsd - at < caps.perCallReserveUsd) return 'day';
+    if (caps.windowCapUsd !== undefined && caps.windowCapUsd - at < caps.perCallReserveUsd)
+      return 'window';
+    if (caps.explorationRemainingUsd - at < caps.perCallReserveUsd) return 'exploration';
+    return null;
+  };
+  const end = (why: 'day' | 'window' | 'exploration'): void => {
+    reason = why;
+    abort.abort();
+  };
   const check = (): void => {
     if (reason) return;
-    if (dayUsableUsd - spent < caps.perCallReserveUsd) reason = 'day';
-    else if (caps.windowCapUsd !== undefined && caps.windowCapUsd - spent < caps.perCallReserveUsd)
-      reason = 'window';
-    else if (caps.explorationRemainingUsd - spent < caps.perCallReserveUsd) reason = 'exploration';
-    if (reason) abort.abort();
+    const why = reasonAt(spent);
+    if (why) end(why);
   };
   check();
 
@@ -121,6 +136,20 @@ export function createWindowGuard(caps: WindowCaps, abort: AbortController): Win
       }
       spent += costUsd;
       check();
+    },
+    chargeToolCall(costUsd) {
+      if (reason) return reason;
+      if (!Number.isFinite(costUsd) || costUsd < 0) {
+        end('day');
+        return 'day';
+      }
+      const why = reasonAt(spent + costUsd);
+      if (why) {
+        end(why);
+        return why;
+      }
+      spent += costUsd;
+      return null;
     },
     spentUsd: () => spent,
     dayRemainingUsd: () => Math.max(0, dayUsableUsd),

@@ -221,3 +221,38 @@ describe('createWindowGuard', () => {
     expect(1 - g.spentUsd()).toBeGreaterThanOrEqual(0.25 - 1e-9);
   });
 });
+
+describe('createWindowGuard: tool charges', () => {
+  const caps = { dayRemainingUsd: 1, explorationRemainingUsd: 5, perCallReserveUsd: 0.05 };
+
+  it('adds an allowed charge to the spend', () => {
+    const abort = new AbortController();
+    const guard = createWindowGuard(caps, abort);
+    expect(guard.chargeToolCall(0.1)).toBeNull();
+    expect(guard.spentUsd()).toBeCloseTo(0.1);
+    expect(abort.signal.aborted).toBe(false);
+  });
+
+  it('refuses a charge that would cross a cap, names it and does not charge it', () => {
+    const abort = new AbortController();
+    const guard = createWindowGuard({ ...caps, windowCapUsd: 0.3 }, abort);
+    expect(guard.chargeToolCall(0.2)).toBeNull();
+    expect(guard.chargeToolCall(0.1)).toBe('window');
+    expect(guard.spentUsd()).toBeCloseTo(0.2);
+    expect(guard.endReason()).toBe('window');
+    expect(abort.signal.aborted).toBe(true);
+  });
+
+  it('day wins over window and exploration', () => {
+    const guard = createWindowGuard(
+      {
+        dayRemainingUsd: 0.1,
+        explorationRemainingUsd: 0.1,
+        windowCapUsd: 0.1,
+        perCallReserveUsd: 0,
+      },
+      new AbortController(),
+    );
+    expect(guard.chargeToolCall(0.5)).toBe('day');
+  });
+});

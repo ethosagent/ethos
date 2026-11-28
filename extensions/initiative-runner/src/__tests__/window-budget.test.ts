@@ -1,5 +1,8 @@
+import { DefaultToolRegistry } from '@ethosagent/core';
+import type { Tool } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { fakeLedger, harness, makeFile, scriptedLLM } from './helpers/fake-ledger';
+import { INITIATIVE_TOOL_CALL_USD } from '../index';
+import { fakeLedger, harness, ledgerTools, makeFile, scriptedLLM } from './helpers/fake-ledger';
 
 const note = (id: string) => ({
   name: 'initiative_note',
@@ -61,5 +64,66 @@ describe('exploration window budget', () => {
     expect(r.kind).toBe('brief');
     expect(r.endReason).not.toBe('window');
     expect(r.spentUsd).toBeGreaterThan(0.3);
+  });
+});
+
+describe('paid tool calls are charged before they run', () => {
+  const search = { name: 'web_search', input: { query: 'q' } };
+
+  function withSearch(ledger: ReturnType<typeof fakeLedger>) {
+    let ran = 0;
+    const stub: Tool = {
+      name: 'web_search',
+      description: 'web_search',
+      toolset: 'web',
+      capabilities: {},
+      schema: { type: 'object', properties: {}, required: [] },
+      async execute() {
+        ran++;
+        return { ok: true, value: 'results' };
+      },
+    };
+    return {
+      ran: () => ran,
+      buildRegistry: ({ initiativeId }: { initiativeId: string }) => {
+        const registry = new DefaultToolRegistry();
+        for (const t of ledgerTools(ledger, initiativeId)) registry.register(t);
+        registry.register(stub);
+        return registry;
+      },
+    };
+  }
+
+  it("a tool's charge shows up in the window's spent_usd", async () => {
+    const { file, ledger, exp } = setup(3);
+    const spy = withSearch(ledger);
+    const r = await harness({
+      ledger,
+      llm: scriptedLLM([[search], [search]], 0.001).llm,
+      files: { [file.id]: file },
+      extra: { buildRegistry: spy.buildRegistry },
+    }).runWindow(file.id, exp.id);
+    expect(spy.ran()).toBe(2);
+    expect(r.spentUsd).toBeCloseTo(2 * (INITIATIVE_TOOL_CALL_USD.web_search ?? 0) + 3 * 0.001, 10);
+    expect(ledger.windows[0]?.spentUsd).toBeCloseTo(r.spentUsd, 10);
+  });
+
+  it('search calls that push spend over the window cap stop the run before the next call', async () => {
+    const { file, ledger, exp } = setup(3);
+    const spy = withSearch(ledger);
+    const price = INITIATIVE_TOOL_CALL_USD.web_search ?? 0;
+    // Room for exactly two searches, then a third would cross the cap.
+    const cap = 2.5 * price + 0.05;
+    const turns = Array.from({ length: 10 }, () => [search]);
+    const r = await harness({
+      ledger,
+      llm: scriptedLLM(turns, 0.001).llm,
+      files: { [file.id]: file },
+      extra: { buildRegistry: spy.buildRegistry },
+    }).runWindow(file.id, exp.id, { capUsd: cap });
+    expect(r.endReason).toBe('window');
+    expect(spy.ran()).toBe(2);
+    expect(r.spentUsd).toBeGreaterThanOrEqual(2 * price);
+    expect(r.spentUsd).toBeLessThan(3 * price);
   });
 });
