@@ -156,3 +156,143 @@ describe('world read tools', () => {
     }
   });
 });
+
+describe('world write tools', () => {
+  let h: ToolHarness;
+  let tools: Map<string, Tool>;
+  beforeEach(async () => {
+    h = await toolHarness();
+    tools = new Map(createWorldTools(h.port).map((t) => [t.name, t as Tool]));
+  });
+  afterEach(() => h.dispose());
+
+  const run = (name: string, args: Record<string, unknown>, ctx = ctxFor()): Promise<ToolResult> =>
+    (tools.get(name) as Tool).execute(args, ctx);
+  const ravi = { kind: 'entity', type: 'Person', name: 'Ravi' };
+
+  it('R9 write without world refused when 2+ mounted', async () => {
+    const r = await run('world_assert', { facts: [ravi] });
+    expect(r.ok).toBe(false);
+    const text = textOf(r);
+    expect(text).toContain('WORLD_REQUIRED');
+    expect(text).toContain('private');
+    expect(text).toContain('acme');
+    expect(h.provider.all(PRIVATE).entities).toEqual([]);
+    expect(h.provider.all(ACME).entities).toEqual([]);
+  });
+
+  it('assert on acme becomes a proposal; on private applies', async () => {
+    const shared = await run('world_assert', { world: 'acme', facts: [ravi], why: 'met in chat' });
+    expect(textOf(shared)).toContain('applied 0 · proposed 1 · refused 0');
+    expect(h.provider.all(ACME).entities).toEqual([]);
+
+    const priv = await run('world_assert', { world: 'private', facts: [ravi] });
+    expect(textOf(priv)).toContain('applied 1 · proposed 0 · refused 0');
+    expect(h.provider.all(PRIVATE).entities.map((e) => e.name)).toEqual(['Ravi']);
+    expect(h.provider.all(PRIVATE).entities[0]?.author).toBe('agent');
+  });
+
+  it('read mount cannot propose', async () => {
+    await addWorld(h, 'ro', { mode: 'read' });
+    const r = await run('world_propose', { world: 'ro', facts: [ravi], why: 'x' });
+    expect(r.ok).toBe(false);
+    expect(textOf(r)).toContain('read_only');
+  });
+
+  it('world_propose proposes even on the private world', async () => {
+    const r = await run('world_propose', { world: 'private', facts: [ravi], why: 'check with me' });
+    expect(textOf(r)).toContain('applied 0 · proposed 1 · refused 0');
+    expect(h.provider.all(PRIVATE).entities).toEqual([]);
+  });
+
+  it('a conflict with your fact is named in the reply', async () => {
+    const e = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    h.provider.seedAttribute(PRIVATE, e.id, 'title', 'Staff Engineer', { author: 'user' });
+    const r = await run('world_assert', {
+      world: 'private',
+      facts: [{ kind: 'attribute', entity_id: e.id, key: 'title', value: 'Intern' }],
+    });
+    expect(textOf(r)).toMatch(
+      /applied 0 · proposed 1 \(conflicts with your fact: .*title.*\) · refused 0/,
+    );
+    expect(h.provider.all(PRIVATE).attributes.find((a) => a.key === 'title')?.value).toBe(
+      'Staff Engineer',
+    );
+  });
+
+  it('refusals are listed with their reason', async () => {
+    const r = await run('world_assert', {
+      world: 'private',
+      facts: [{ kind: 'entity', type: 'Nope', name: 'X' }],
+    });
+    expect(r.ok).toBe(false);
+    expect(textOf(r)).toContain('refused 1');
+    expect(textOf(r)).toContain('#0');
+  });
+
+  it('malformed facts are input_invalid', async () => {
+    const r = await run('world_assert', { world: 'private', facts: [{ kind: 'planet' }] });
+    expect(r).toMatchObject({ ok: false, code: 'input_invalid' });
+    expect((await run('world_assert', { world: 'private', facts: [] })).ok).toBe(false);
+  });
+
+  it('world_close closes an agent fact and proposes closing a user fact', async () => {
+    const e = h.provider.seedEntity(PRIVATE, 'Person', 'Priya');
+    const mine = h.provider.seedAttribute(PRIVATE, e.id, 'title', 'Eng', { author: 'agent' });
+    const theirs = h.provider.seedAttribute(PRIVATE, e.id, 'email', 'p@x.io', { author: 'user' });
+
+    const a = await run('world_close', {
+      world: 'private',
+      fact_id: mine.id,
+      valid_to: '2026-11-01',
+    });
+    expect(textOf(a)).toContain('applied 1 · proposed 0 · refused 0');
+    expect(h.provider.all(PRIVATE).attributes.find((x) => x.id === mine.id)?.validTo).toBe(
+      '2026-11-01',
+    );
+
+    const b = await run('world_close', {
+      world: 'private',
+      fact_id: theirs.id,
+      valid_to: '2026-11-01',
+    });
+    expect(textOf(b)).toContain('applied 0 · proposed 1 (conflicts with your fact');
+    expect(h.provider.all(PRIVATE).attributes.find((x) => x.id === theirs.id)?.validTo).toBeNull();
+
+    expect(
+      (await run('world_close', { world: 'private', fact_id: mine.id, valid_to: 'soon' })).ok,
+    ).toBe(false);
+  });
+
+  it('schema change on private adds mentors and reports the version', async () => {
+    const r = await run('world_schema_change', {
+      world: 'private',
+      change: { op: 'add_entity_type', type: 'Mentor' },
+      reason: 'track mentors',
+    });
+    expect(r.ok).toBe(true);
+    expect(textOf(r)).toMatch(/schema updated: now version \d+/);
+    expect(h.provider.appliedSchemas.at(-1)?.schema.entities.Mentor).toBeDefined();
+  });
+
+  it('schema change on a shared world is a proposal', async () => {
+    const r = await run('world_schema_change', {
+      world: 'acme',
+      change: { op: 'add_entity_type', type: 'Mentor' },
+      reason: 'x',
+    });
+    expect(textOf(r)).toContain('proposed');
+    expect(
+      (await run('world_schema_change', { world: 'acme', change: { op: 'explode' }, reason: '' }))
+        .ok,
+    ).toBe(false);
+  });
+
+  it('write tools are service-mediated', () => {
+    for (const n of ['world_assert', 'world_close', 'world_propose', 'world_schema_change']) {
+      const t = tools.get(n) as Tool;
+      expect(t.toolset).toBe('world');
+      expect(t.capabilities).toEqual({});
+    }
+  });
+});
