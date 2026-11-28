@@ -14,7 +14,38 @@ export interface CaptureFact {
   text: string;
   /** Candidate importance in [0,1]; rides into the history entry's `hint`. */
   hint: number;
+  /**
+   * Optional subject-relation-object reading of the fact, present only when the
+   * extraction prompt asked for one (`routeFact` set) and the model supplied a
+   * well-formed one. Parsed by `parseFacts` (extraction.ts, Zod `tripleZ`).
+   */
+  triple?: CaptureTriple;
 }
+
+/** A fact read as `subject --relation--> object`; the input to `routeFact`. */
+export interface CaptureTriple {
+  subject: string;
+  relation: string;
+  object: string;
+}
+
+/**
+ * Where one extracted fact goes. Each statement goes to exactly one place:
+ * - `'graph'`: the router took it (it becomes a world proposal); NOT written to memory.
+ * - `'memory'`: today's path.
+ * - `'both_never'`: the router declines to place it in the graph and asserts it
+ *   must never be written to both; the runner treats it as `'memory'`, so the
+ *   fact is kept rather than dropped (runner.ts `routeFacts`).
+ * Anything unrecognised, and a thrown router, also resolve to memory (fail open;
+ * pinned by route-fact.test.ts 'a router that throws or answers both_never...').
+ */
+export type FactRoute = 'memory' | 'graph' | 'both_never';
+
+/**
+ * Optional seam, a plain callback so memory-capture imports nothing from
+ * world-service. Only facts that carry a `triple` are offered to it.
+ */
+export type RouteFactFn = (fact: CaptureFact, job: CaptureJob) => Promise<FactRoute> | FactRoute;
 
 /**
  * What the `agent_done` hook handler enqueues. Deliberately small — everything

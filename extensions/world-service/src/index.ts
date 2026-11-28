@@ -15,6 +15,12 @@ export {
   collectBuildInputs,
 } from './build/sources';
 export {
+  type CapturedFact,
+  type CaptureJobRef,
+  WorldCaptureRouter,
+  type WorldCaptureRouterDeps,
+} from './capture';
+export {
   type AttributeDraft,
   type ColumnField,
   type CsvImportOptions,

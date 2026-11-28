@@ -626,6 +626,30 @@ export class WorldService {
 
   /** Agent import: proposals on a shared world, `agent` facts on the private one, same routing as `writeFacts`. */
   async importBundle(c: Caller, world: string | null, bundle: GraphBundle): Promise<ImportOutcome> {
+    return this.agentImport(c, world, bundle, 'import', undefined);
+  }
+
+  /**
+   * Like `importBundle`, but every fact becomes a proposal, even on the private
+   * world. Entities named by a bundle edge that do not exist yet are proposed in
+   * the same batch (WorldCaptureRouter, capture.ts, is the caller).
+   */
+  async proposeBundle(
+    c: Caller,
+    world: string | null,
+    bundle: GraphBundle,
+    why: string,
+  ): Promise<ImportOutcome> {
+    return this.agentImport(c, world, bundle, why, 'propose');
+  }
+
+  private async agentImport(
+    c: Caller,
+    world: string | null,
+    bundle: GraphBundle,
+    why: string,
+    force: 'propose' | undefined,
+  ): Promise<ImportOutcome> {
     const p = pick(await this.visible(c), world);
     if (!p.ok || p.w.mode === 'read') {
       const reason = p.ok ? `read_only: world '${label(p.w)}' is mounted read-only` : p.reason;
@@ -635,7 +659,7 @@ export class WorldService {
         proposed: 0,
       };
     }
-    const ctx = await this.agentCtx(c, p.w, 'import', undefined);
+    const ctx = await this.agentCtx(c, p.w, why, force);
     return this.runImport(await this.deps.providers(p.w.id), p.w, bundle, ctx);
   }
 

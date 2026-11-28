@@ -1572,6 +1572,9 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
     devDependencies:
       '@ethosagent/memory-approval':
         specifier: workspace:*

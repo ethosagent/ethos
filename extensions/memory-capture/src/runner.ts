@@ -31,6 +31,7 @@ import {
   DEFAULT_CAPTURE_CONFIG,
   type GroundingConsult,
   type ProposeFn,
+  type RouteFactFn,
   type TombstoneChecker,
 } from './types';
 
@@ -81,6 +82,14 @@ export interface MemoryCaptureRunnerOptions {
    * lane is shared (fail closed).
    */
   privateChats?: PrivateChatSet;
+  /**
+   * World-graph seam (plan world-model 6.1). When set, the extraction prompt
+   * also asks for an optional subject/relation/object triple, and each fact that
+   * carries one is offered here; `'graph'` means the router took it (a world
+   * proposal) and it is NOT written to memory. Absent → byte-identical to before
+   * (pinned by route-fact.test.ts "no routeFact → today's behaviour").
+   */
+  routeFact?: RouteFactFn;
   /** Stamped into the MemoryContext; routing ignores it, kept for contract shape. */
   platform?: string;
   workingDir?: string;
@@ -262,12 +271,16 @@ export class MemoryCaptureRunner {
       if (await this.rateLimited(scopeId)) return;
 
       const facts = await extractFacts(
-        { initialPrompt: job.initialPrompt, finalText: job.text },
+        {
+          initialPrompt: job.initialPrompt,
+          finalText: job.text,
+          ...(this.opts.routeFact ? { withTriples: true } : {}),
+        },
         this.opts.llm,
       );
       if (facts.length === 0) return;
 
-      const fresh = await this.dedup(scopeId, facts);
+      const fresh = await this.dedup(scopeId, await this.routeFacts(facts, job));
       if (fresh.length === 0) return;
 
       const unverified = job.unverified === true;
@@ -284,6 +297,32 @@ export class MemoryCaptureRunner {
     } finally {
       this.inFlight.delete(scopeId);
     }
+  }
+
+  /**
+   * Offer each triple-bearing fact to `routeFact`; drop the ones it took
+   * (`'graph'`). Everything else, including a throwing router, stays on the
+   * memory path (fail open: a lost router must not lose the fact).
+   */
+  private async routeFacts(facts: CaptureFact[], job: CaptureJob): Promise<CaptureFact[]> {
+    const route = this.opts.routeFact;
+    if (!route) return facts;
+    const kept: CaptureFact[] = [];
+    for (const fact of facts) {
+      if (!fact.triple) {
+        kept.push(fact);
+        continue;
+      }
+      try {
+        if ((await route(fact, job)) !== 'graph') kept.push(fact);
+      } catch (err) {
+        this.opts.logger.warn('memory-capture: routeFact failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        kept.push(fact);
+      }
+    }
+    return kept;
   }
 
   /** Rate cap counted from recent `capture` history entries (§3.2). */
