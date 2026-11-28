@@ -19,6 +19,7 @@ import {
   SQLiteInitiativeStore,
 } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { createWebApi, WebTokenRepository } from '../../index';
 import { SCOPE_MAP } from '../../middleware/dual-auth';
 import {
@@ -101,7 +102,18 @@ describe('initiatives RPC', () => {
       body: JSON.stringify({ json: input }),
     });
   const as = (): Record<string, string> => ({ cookie, ...SAME });
-  const body = async (res: Response) => ((await res.json()) as { json: unknown }).json;
+  const envelope = z.object({ json: z.unknown() });
+  const body = async (res: Response): Promise<unknown> => {
+    const parsed = envelope.safeParse(await res.json());
+    if (!parsed.success) throw new Error(`unexpected response envelope: ${parsed.error.message}`);
+    return parsed.data.json;
+  };
+  /** The response body parsed with `schema`; the test fails if the shape is off. */
+  const bodyAs = async <T extends z.ZodType>(res: Response, schema: T): Promise<z.infer<T>> => {
+    const parsed = schema.safeParse(await body(res));
+    if (!parsed.success) throw new Error(`unexpected response shape: ${parsed.error.message}`);
+    return parsed.data;
+  };
 
   /** Seed the ledger through the real store: one proposed and one briefed exploration, one self-started initiative. */
   function seed(): { proposed: string; briefed: string } {
@@ -206,9 +218,13 @@ describe('initiatives RPC', () => {
     const file = join(dataDir, 'personalities', 'pm', 'initiatives', 'settings.yaml');
     expect(await readFile(file, 'utf8')).toContain('dailyBudgetUsd: 3');
 
-    const read = (await body(
+    const read = await bodyAs(
       await call('initiatives/settings', { personalityId: 'pm' }, as()),
-    )) as { status: string; guidance: Array<{ text: string; status: string }> };
+      z.object({
+        status: z.string(),
+        guidance: z.array(z.object({ text: z.string(), status: z.string() })),
+      }),
+    );
     expect(read.status).toBe('loaded');
     expect(read.guidance[0]?.status).toBe('unreachable'); // pm has no reddit tool
 
@@ -248,7 +264,7 @@ describe('initiatives RPC', () => {
       for (const personalityId of ['../etc', 'a/b', 'Bad Id', '.hidden']) {
         const res = await call(path, { personalityId, settings: SETTINGS }, as());
         expect(res.status).toBe(400);
-        const err = (await body(res)) as { code: string; status: number };
+        const err = await bodyAs(res, z.object({ code: z.string(), status: z.number() }));
         expect(err.status).toBe(400);
         expect(err.code).toBe('INVALID_INPUT');
       }
@@ -389,7 +405,7 @@ describe('initiatives RPC', () => {
       as(),
     );
     expect(res.status).toBe(200);
-    const out = (await body(res)) as { chatLink?: string };
+    const out = await bodyAs(res, z.object({ chatLink: z.string().optional() }));
     expect(out.chatLink).toBe('/p/pm/chat?draft=make%20idea-x%20mine');
     // No config written, no decision recorded, state unchanged.
     expect(existsSync(join(dataDir, 'personalities', 'pm', 'initiatives'))).toBe(false);
@@ -401,9 +417,14 @@ describe('initiatives RPC', () => {
 
   it('lists seeded initiatives with open exploration counts', async () => {
     seed();
-    const out = (await body(await call('initiatives/list', { personalityId: 'pm' }, as()))) as {
-      items: Array<{ id: string; openExplorations: number; title: string | null }>;
-    };
+    const out = await bodyAs(
+      await call('initiatives/list', { personalityId: 'pm' }, as()),
+      z.object({
+        items: z.array(
+          z.object({ id: z.string(), openExplorations: z.number(), title: z.string().nullable() }),
+        ),
+      }),
+    );
     expect(out.items.map((i) => i.id)).toEqual(['grow', 'idea-x']);
     expect(out.items[0]?.openExplorations).toBe(1); // the briefed one is awaiting Gate 2, not open
     expect(out.items[0]?.title).toBeNull(); // no file on disk: reported, not thrown
