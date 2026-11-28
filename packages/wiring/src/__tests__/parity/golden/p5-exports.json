@@ -4046,6 +4046,17 @@
       "webSearchTool": "value"
     }
   },
+  "@ethosagent/tools-world": {
+    "entry": "extensions/tools-world/src/index.ts",
+    "exports": {
+      "WORLD_TOOL_NAMES": "value",
+      "WorldToolName": "type",
+      "createBulkTools": "value",
+      "createReadTools": "value",
+      "createWorldTools": "value",
+      "createWriteTools": "value"
+    }
+  },
   "@ethosagent/tools-x-search": {
     "entry": "extensions/tools-x-search/src/index.ts",
     "exports": {

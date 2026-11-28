@@ -1,4 +1,5 @@
 import type { WorldToolPort } from '@ethosagent/world-service';
+import { createBulkTools } from './bulk-tools';
 import type { ToolDef } from './common';
 import { createReadTools } from './read-tools';
 import { createWriteTools } from './write-tools';
@@ -20,7 +21,7 @@ export type WorldToolName = (typeof WORLD_TOOL_NAMES)[number];
 
 /** The `world_*` tools over one narrow port. Wiring builds the port; tools never see a provider. */
 export function createWorldTools(port: WorldToolPort): ToolDef[] {
-  return [...createReadTools(port), ...createWriteTools(port)];
+  return [...createReadTools(port), ...createWriteTools(port), ...createBulkTools(port)];
 }
 
-export { createReadTools, type createWriteTools };
+export { createBulkTools, createReadTools, createWriteTools };

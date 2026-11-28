@@ -24,3 +24,9 @@ Pinned by `world-tools.test.ts`: 'R8 unscoped queries are tagged and span only m
 `world_assert`, `world_close`, `world_propose`, `world_schema_change`. Arguments are parsed with Zod `safeParse`; the author is always `agent` (`WorldService.agentCtx` overrides whatever is sent). The reply reads `applied 2 · proposed 1 (conflicts with your fact: …) · refused 0`, then one line per refusal. A call where nothing applied or proposed and something was refused returns `input_invalid`.
 
 Pinned by `world-tools.test.ts`: 'R9 write without world refused when 2+ mounted', 'assert on acme becomes a proposal; on private applies', 'read mount cannot propose', 'schema change on private adds mentors and reports the version'.
+
+### Bulk tools (`bulk-tools.ts`)
+
+`world_import` (facts-yaml or mcp-jsonl, read through `ctx.scopedFs`, `fs_reach: { read: 'from-personality' }`), `world_export` (facts-yaml, json, graphml, mermaid, mcp-jsonl, csv; `as_of` slices; `save_to` writes through `ctx.scopedFs`), `world_build` (calls `WorldToolPort.build`, which refuses `not_implemented` until plan P5). Import and build are refused in a shared turn; export of a world the turn may not see is refused by `WorldService`. CSV import needs a column mapping and stays on the owner surfaces.
+
+Pinned by `bulk-tools.test.ts`: 'import path outside fs reach is refused', 'export respects the audience of the turn', 'world_build refused in a shared turn'.
