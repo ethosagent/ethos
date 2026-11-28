@@ -195,11 +195,19 @@ describe('ethos usage aggregation', () => {
 // `--by source` (plan background-usage-accounting §6.2)
 // ---------------------------------------------------------------------------
 
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+const SEED_AT = new Date(NOW.getTime() - 60_000);
+
 describe('ethos usage --by source', () => {
   let stateDir: string;
   const prevState = process.env.ETHOS_STATE_DIR;
 
   beforeEach(async () => {
+    // The window is half-open [since, until), so a row stamped at the instant
+    // the command runs is outside it. Freeze the clock and seed one minute in
+    // the past; the command then runs at NOW with `until === NOW`, the worst
+    // case for a fixture stamped at "now" (it vanished from the output).
+    vi.useFakeTimers({ now: SEED_AT, toFake: ['Date'] });
     stateDir = mkdtempSync(join(tmpdir(), 'ethos-usage-source-'));
     process.env.ETHOS_STATE_DIR = stateDir;
     const dbPath = join(stateDir, 'sessions.db');
@@ -220,7 +228,7 @@ describe('ethos usage --by source', () => {
     store.close();
     const ledger = new SQLiteUsageLedger(dbPath);
     ledger.record({
-      ts: new Date().toISOString(),
+      ts: SEED_AT.toISOString(),
       kind: 'memory_capture',
       sourceClass: 'background',
       provider: 'p',
@@ -233,12 +241,14 @@ describe('ethos usage --by source', () => {
       outcome: 'ok',
     });
     ledger.close();
+    vi.setSystemTime(NOW);
   });
 
   afterEach(() => {
     if (prevState === undefined) Reflect.deleteProperty(process.env, 'ETHOS_STATE_DIR');
     else process.env.ETHOS_STATE_DIR = prevState;
     vi.restoreAllMocks();
+    vi.useRealTimers();
     rmSync(stateDir, { recursive: true, force: true });
   });
 
@@ -276,6 +286,13 @@ describe('ethos usage --by source', () => {
     expect(text).toMatch(/Background\s+\$0\.25 \(1 calls\)/);
     expect(text).toContain('background:memory_capture: $0.25');
     expect(text).toContain('(1 calls | 0 messages)');
+  });
+
+  it('rows seeded before a command that runs on a frozen clock stay inside the 1d window', async () => {
+    const { out } = await capture(['--since', '1d', '--by', 'source', '--json']);
+    const body = JSON.parse(out) as { until: string; by: { rows: Array<{ key: string }> } };
+    expect(body.until).toBe(NOW.toISOString());
+    expect(body.by.rows.map((r) => r.key).sort()).toEqual(['background:memory_capture', 'turn']);
   });
 
   it('help text lists source, and an unknown dimension still exits 2', async () => {
