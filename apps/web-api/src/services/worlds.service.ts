@@ -965,8 +965,8 @@ function mountedOf(
   id: WorldId,
   worlds: ReadonlyMap<string, WorldFile>,
   mountsOf: ReadonlyMap<string, MountsFile>,
-) {
-  const out = [];
+): Array<{ personalityId: string; mode: Mode } & Effective> {
+  const out: Array<{ personalityId: string; mode: Mode } & Effective> = [];
   if (!id.startsWith('world:')) return out;
   for (const [pid, mounts] of mountsOf) {
     for (const m of mounts.mounts) {
