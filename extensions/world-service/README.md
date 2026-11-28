@@ -19,7 +19,7 @@ Single entry point, `src/index.ts`.
 | `WorldSchemaService`, `worldSchemaPath` | class, function | The only writer of every `schema.yaml` and of `schema_versions`: `apply`, `requestChange` (the R12 rules table), `load` (hand edits, R14), `undoLast`. Shared worlds live at `worlds/<slug>/schema.yaml`, private ones at `worlds/.private/<pid>/schema.yaml` (a dot cannot be in a slug, so no shared world collides). |
 | `parseSchemaYaml`, `serializeSchemaYaml` | functions | Canonical and short (`"A -> B"`, attribute-less edges only) forms; errors carry line and column. `sensitive: true` on an attribute is a world-service extension kept out of the frozen `WorldSchema`. |
 | `SchemaChange`, `classifySchemaChange`, `applyChange` | type, functions | The eight change ops, additive vs rewrite, and the pure application of one to a schema. |
-| `SQLiteWorldServiceStore`, `serviceDbPath` | class, function | `worlds/service.db` (WAL, `synchronous = FULL`, STRICT): `schema_versions`, `schema_load_errors`, `proposals`, `proposal_tombstones`. |
+| `SQLiteWorldServiceStore`, `serviceDbPath` | class, function | `worlds/service.db` (WAL, `synchronous = FULL`, STRICT): `schema_versions`, `schema_load_errors`, `proposals`, `proposal_tombstones`. `propose` / `decide` / `inbox` are the proposal queue: dedup by fingerprint, tombstone on reject, per-world cap (default 500) and TTL (default 30 days). |
 
 ## Seam
 
@@ -36,6 +36,7 @@ Guarantees and what pins them:
 - Every schema change follows the rules table, and a used type is never removed: `schema-rules.test.ts`, 'R12 change rules table', 'remove of a used type is refused with the count'.
 - An invalid hand edit keeps the last good version and is not overwritten: `schema-service.test.ts`, 'R14 invalid hand edit keeps the last good version'.
 - `schema.yaml` is written only through the injected `Storage.writeAtomic`: `schema-service.test.ts`, 'apply writes schema.yaml only through the injected Storage.writeAtomic ...'.
+- A payload is queued once, a rejected one never again, the queue is capped and expires, and the inbox lists conflicts first: `proposals.test.ts`, 'same payload twice → one pending row', 'rejected fingerprint is not re-proposed', 'cap expires the oldest', 'ttl expires stale pending proposals', 'inbox lists conflicts first, then by created_at, rowid', 'batch_id groups a first-build or shared-world batch'.
 - `service.db` is STRICT and `synchronous = FULL`: `schema-service.test.ts`, 'schema_versions is STRICT; durability posture is FULL'.
 
 ## Gotchas

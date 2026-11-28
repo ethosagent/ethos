@@ -50,6 +50,8 @@ export {
   fingerprintOf,
   type LoadErrorsRow,
   type ProposalKind,
+  type ProposalRow,
+  type ProposalStatus,
   type ProposeInput,
   type SchemaVersionRow,
   type ServiceStoreOptions,

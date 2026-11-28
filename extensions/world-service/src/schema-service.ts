@@ -217,7 +217,7 @@ export class WorldSchemaService {
       const r = await this.apply(world.id, change, { kind: 'agent', id: by }, reason);
       return r.ok ? { applied: r.version } : { refused: r.error };
     }
-    const proposalId = this.deps.store.createProposal({
+    const queued = this.deps.store.propose({
       world: world.id,
       kind: 'schema',
       payload: { change },
@@ -225,7 +225,10 @@ export class WorldSchemaService {
       sourceRef: 'schema:request',
       proposedBy: by,
     });
-    return { proposalId };
+    if ('refused' in queued) {
+      return { refused: `the owner already rejected this change (${describeChange(change)})` };
+    }
+    return { proposalId: queued.id };
   }
 
   /**
