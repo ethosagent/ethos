@@ -6,6 +6,36 @@ export {
   resolveAccess,
 } from './access';
 export {
+  type AttributeDraft,
+  type ColumnField,
+  type CsvImportOptions,
+  type CsvImportResult,
+  type CsvMapping,
+  type EdgeDraft,
+  type EntityDraft,
+  exportCsv,
+  importCsv,
+  type LinkMapping,
+  type MappingIssue,
+  type ParseCsvResult,
+  parseCsv,
+} from './codecs/csv';
+export {
+  exportFactsYaml,
+  type FactsYamlImport,
+  type FactsYamlOptions,
+  importFactsYaml,
+} from './codecs/facts-yaml';
+export { toGraphML } from './codecs/graphml';
+export { toBundleJson } from './codecs/json';
+export {
+  exportMcpJsonl,
+  importMcpJsonl,
+  type McpImportContext,
+} from './codecs/mcp-jsonl';
+export { MERMAID_MAX_NODES, toMermaid } from './codecs/mermaid';
+export { sliceBundle } from './codecs/slice';
+export {
   type ConfigIssue,
   type MountMode,
   type MountsFile,

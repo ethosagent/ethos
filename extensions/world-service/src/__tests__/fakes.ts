@@ -47,11 +47,19 @@ export class FakeStorage implements Storage {
   }
   async listEntries(dir: string): Promise<StorageDirEntry[]> {
     const prefix = dir.endsWith('/') ? dir : `${dir}/`;
-    const names = new Set<string>();
+    const entries = new Map<string, boolean>();
     for (const f of this.files.keys()) {
-      if (f.startsWith(prefix)) names.add(f.slice(prefix.length).split('/')[0] ?? '');
+      if (!f.startsWith(prefix)) continue;
+      const parts = f.slice(prefix.length).split('/');
+      const name = parts[0] ?? '';
+      entries.set(name, (entries.get(name) ?? false) || parts.length > 1);
     }
-    return [...names].map((name) => ({ name, isDir: false }));
+    for (const d of this.dirs) {
+      if (!d.startsWith(prefix)) continue;
+      const name = d.slice(prefix.length).split('/')[0] ?? '';
+      if (name) entries.set(name, true);
+    }
+    return [...entries].map(([name, isDir]) => ({ name, isDir }));
   }
   async write(path: string, content: string | Uint8Array): Promise<void> {
     this.files.set(path, typeof content === 'string' ? content : new TextDecoder().decode(content));

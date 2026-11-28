@@ -25,6 +25,10 @@ Single entry point, `src/index.ts`.
 | `vetFact` | function | Pure content check before a write or proposal: secrets (`detectSecrets`), personal data (`redactPii`, agent only), `sensitive: true` attributes (agent never), schema fit, confidence range. A refusal reason never echoes the matched text. |
 | `parseAssertPayload`, `parseClosePayload`, `parseSchemaPayload` | functions | `safeParse` of the JSON a proposal row carries; an unreadable payload fails closed on accept. |
 
+### Codecs
+
+Pure functions over a `GraphBundle` (text in, text or drafts out; no provider, no Storage). Exports: `toBundleJson`, `toGraphML`, `toMermaid` (capped at `MERMAID_MAX_NODES`), `sliceBundle` (time slice before an export), `exportFactsYaml` / `importFactsYaml`, `exportCsv` / `importCsv` / `parseCsv` (entities and links files; import infers a mapping and returns drafts plus `MappingIssue`s), `exportMcpJsonl` / `importMcpJsonl` (MCP memory server interop). Imports return drafts, never write; the owner commits them through `WorldService.ownerImport`. Behaviour is pinned by `csv.test.ts`, `facts-yaml.test.ts`, `mcp-jsonl.test.ts` and `exports.test.ts`.
+
 ## Seam
 
 Archcheck layer: `extensions`, security tier 1 (it sits on the world access trust boundary). Imports `@ethosagent/types` and `@ethosagent/safety-redact`; never `world-sqlite`. `WorldConfigService` reads and writes the two config files through the `Storage` it is handed; the service store opens its own SQLite file; everything else takes text and maps in.
