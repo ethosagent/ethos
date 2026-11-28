@@ -27,12 +27,7 @@ export function compose(_ctx: WiringContext, deps: { port: WorldToolPort }): Wor
   return { tools: createWorldTools(deps.port).map(adapt) };
 }
 
-/**
- * Only the three read tools (`world_query`, `world_neighbours`, `world_history`) over one port.
- * The initiative run registry uses this so a run never holds a world write tool; the write and
- * bulk tools are not constructed at all (pinned by
- * packages/wiring/src/__tests__/initiative-world-reads.test.ts).
- */
+/** The three read tools only; no write tool is constructed (initiative-world-reads.test.ts). */
 export function composeReadTools(deps: { port: WorldToolPort }): Tool[] {
   return createReadTools(deps.port).map(adapt);
 }

@@ -28,9 +28,7 @@ export const INITIATIVE_READ_TOOLS = Object.freeze([
   'goal_status',
   'read_file',
   'search_files',
-  // World graph reads (local SQLite via a WorldToolPort). Registered in a run only when
-  // `world.enabled` composes a port (packages/wiring/src/initiatives.ts `worldPort`); the audience
-  // rule R6 decides which worlds they see (extensions/world-service/src/access.ts).
+  // World reads; registered only with a world port, R6 audience filter: world-service access.ts.
   'world_query',
   'world_neighbours',
   'world_history',

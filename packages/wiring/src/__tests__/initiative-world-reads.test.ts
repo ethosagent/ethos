@@ -1,14 +1,5 @@
-// Initiative runs may call the three world READ tools, only when a world port is composed
-// (`world.enabled`), and only see what an incognito, shared-audience turn may see.
-//
-//   - registration: `buildReadOnlyRegistry` registers world_query / world_neighbours /
-//     world_history when `InitiativeToolDeps.worldPort` is set and the personality toolset lists
-//     them; with no port nothing is registered and nothing throws; the world write tools are
-//     never registered (they are INITIATIVE_NEVER_TOOLS). L3 (`assertReadOnlyCapabilities`)
-//     runs inside `buildReadOnlyRegistry`, so a registry that builds has passed it.
-//   - R6: a REAL AgentLoop run with `readOnlyRunOptions` (incognito, so the turn resolves to
-//     'shared', packages/core/src/agent-loop/audience.ts) reaches `world_query` with a shared
-//     caller, so `resolveAccess` drops the owner_only world and the personality's private world.
+// Pins: initiative runs register the three world reads only when a world port is composed, and an
+// incognito run is a shared turn (R6, extensions/world-service/src/access.ts resolveAccess).
 
 import { DefaultPersonalityRegistry } from '@ethosagent/core';
 import {
@@ -21,9 +12,7 @@ import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { WORLD_TOOL_NAMES } from '@ethosagent/tools-world';
 import type {
   AgentEvent,
-  CompletionChunk,
   InitiativeLedgerPort,
-  LLMProvider,
   MemoryProvider,
   PersonalityConfig,
   SessionStore,
@@ -44,6 +33,7 @@ import {
   defaultInitiativeToolFactories,
   type InitiativeToolFactories,
 } from '../initiatives';
+import { type Call, scriptedLLM } from './helpers/scripted-llm';
 
 const READS = ['world_query', 'world_neighbours', 'world_history'];
 const WRITES = WORLD_TOOL_NAMES.filter((n) => !READS.includes(n));
@@ -108,47 +98,7 @@ describe('initiative run registry: world reads', () => {
     const names = registry.getAvailable().map((t) => t.name);
     expect(names.filter((n) => n.startsWith('world_'))).toEqual([]);
   });
-
-  it('runToolNames lists the reads for an unrestricted toolset', () => {
-    for (const n of READS) expect(runToolNames(undefined)).toContain(n);
-    for (const n of WRITES) expect(runToolNames(undefined)).not.toContain(n);
-  });
 });
-
-interface Call {
-  name: string;
-  input: Record<string, unknown>;
-}
-
-function scriptedLLM(calls: Call[]): LLMProvider {
-  let n = 0;
-  return {
-    name: 'scripted',
-    model: 'mock-model',
-    maxContextTokens: 200_000,
-    supportsCaching: false,
-    supportsThinking: false,
-    async *complete(): AsyncIterable<CompletionChunk> {
-      n++;
-      if (n > 1) {
-        yield { type: 'text_delta', text: 'finished' };
-        yield { type: 'done', finishReason: 'end_turn' };
-        return;
-      }
-      for (const [i, c] of calls.entries()) {
-        const id = `call-${i}`;
-        const json = JSON.stringify(c.input);
-        yield { type: 'tool_use_start', toolCallId: id, toolName: c.name };
-        yield { type: 'tool_use_delta', toolCallId: id, partialJson: json };
-        yield { type: 'tool_use_end', toolCallId: id, inputJson: json };
-      }
-      yield { type: 'done', finishReason: 'tool_use' };
-    },
-    async countTokens() {
-      return 1;
-    },
-  };
-}
 
 describe('initiative run: world reads obey R6 (incognito run is a shared turn)', () => {
   let h: ToolHarness;

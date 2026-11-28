@@ -26,15 +26,14 @@ import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   AgentEvent,
-  CompletionChunk,
   InitiativeLedgerPort,
   InitiativeRecallPort,
-  LLMProvider,
   PersonalityConfig,
 } from '@ethosagent/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
 import { buildReadOnlyRegistry, defaultInitiativeToolFactories } from '../initiatives';
+import { type Call, scriptedLLM } from './helpers/scripted-llm';
 import { diffHashes, hashTree } from './initiative-e2e-helpers';
 
 /** In-memory ledger: records calls, touches no disk. */
@@ -105,42 +104,6 @@ const SESSION_CANARY = 'canary-session-key-4417';
 // Planted in the registry-default personality: a run bound to 'open' must never see them.
 const DEFAULT_MEMORY_CANARY = 'canary-default-memory-9902';
 const DEFAULT_SESSION_CANARY = 'canary-default-session-5530';
-
-interface Call {
-  name: string;
-  input: Record<string, unknown>;
-}
-
-/** Scripted LLM: every call in one response, then a plain end_turn. */
-function scriptedLLM(calls: Call[]): LLMProvider {
-  let n = 0;
-  return {
-    name: 'scripted',
-    model: 'mock-model',
-    maxContextTokens: 200_000,
-    supportsCaching: false,
-    supportsThinking: false,
-    async *complete(): AsyncIterable<CompletionChunk> {
-      n++;
-      if (n > 1) {
-        yield { type: 'text_delta', text: 'finished' };
-        yield { type: 'done', finishReason: 'end_turn' };
-        return;
-      }
-      for (const [i, c] of calls.entries()) {
-        const id = `call-${i}`;
-        const json = JSON.stringify(c.input);
-        yield { type: 'tool_use_start', toolCallId: id, toolName: c.name };
-        yield { type: 'tool_use_delta', toolCallId: id, partialJson: json };
-        yield { type: 'tool_use_end', toolCallId: id, inputJson: json };
-      }
-      yield { type: 'done', finishReason: 'tool_use' };
-    },
-    async countTokens() {
-      return 1;
-    },
-  };
-}
 
 describe('initiative run writes only the ledger (L9)', () => {
   let home: string;

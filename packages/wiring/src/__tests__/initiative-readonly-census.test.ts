@@ -47,7 +47,7 @@ import { createKanbanTools } from '@ethosagent/tools-kanban';
 import { createTeamMemoryTools } from '@ethosagent/tools-memory';
 import { buildDashboardTools, dashboardSaveTool } from '@ethosagent/tools-ui';
 import { createWatcherTools } from '@ethosagent/tools-watchers';
-import { compose as composeWorld } from '@ethosagent/tools-world/compose';
+import { composeReadTools, compose as composeWorld } from '@ethosagent/tools-world/compose';
 import type { InitiativeLedgerPort, Tool, WiringContext } from '@ethosagent/types';
 import type { WorldToolPort } from '@ethosagent/world-service';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -205,6 +205,12 @@ describe('initiative read-only census (L7)', () => {
     const all = Object.values(CLASSES).flatMap((s) => [...s]);
     const unknown = all.filter((n) => !tools.has(n) && NOT_COMPOSED[n] === undefined).sort();
     expect(unknown).toEqual([]);
+  });
+
+  it('every tool the run registry constructs via composeReadTools is a READ tool', () => {
+    const built = composeReadTools({ port: {} as WorldToolPort }).map((t) => t.name);
+    expect(built.length).toBeGreaterThan(0);
+    expect(built.filter((n) => !CLASSES.READ?.has(n))).toEqual([]);
   });
 
   it('NOT_COMPOSED has no stale entries', () => {
