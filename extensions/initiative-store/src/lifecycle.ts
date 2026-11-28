@@ -34,3 +34,12 @@ export function reactionClockRow(
     ? { createdAt: r.created_at, lastReactionAt: r.last_reaction_at, stopReason: r.stop_reason }
     : null;
 }
+
+/**
+ * The budget a new exploration gets: the agent's own estimate, never above the initiative's
+ * `usd_per_exploration`. An id the cap resolver does not know gets 0 (fail closed, like `capFor`).
+ * Enforced where the row is written: `SQLiteInitiativeStore.propose`.
+ */
+export function clampExplorationBudget(estimateUsd: number, capUsd: number): number {
+  return Math.max(0, Math.min(estimateUsd, capUsd));
+}

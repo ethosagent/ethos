@@ -26,7 +26,7 @@ import {
   type WindowRow,
 } from '@ethosagent/types';
 import { selectDrafts, settleDraftRow } from './drafts';
-import { extendExplorationRow, reactionClockRow } from './lifecycle';
+import { clampExplorationBudget, extendExplorationRow, reactionClockRow } from './lifecycle';
 import { INITIATIVE_STORE_SCHEMA_VERSION, SCHEMA } from './schema';
 
 /** `<dataDir>/initiatives.db`. */
@@ -42,6 +42,8 @@ export interface SQLiteInitiativeStoreOptions {
    * config; wiring binds this to the clamped config value. Defaults to 0.
    */
   capFor?: (initiativeId: string) => number;
+  /** `usd_per_exploration` per initiative; a proposal's budget is clamped to it. Unset = no clamp. */
+  explorationCapFor?: (initiativeId: string) => number;
 }
 
 const DAY_MS = 86_400_000;
@@ -315,10 +317,12 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   private readonly db: Database.Database;
   private readonly now: () => number;
   private readonly capFor: (initiativeId: string) => number;
+  private readonly explorationCapFor: ((initiativeId: string) => number) | undefined;
 
   constructor(dbPath: string, opts: SQLiteInitiativeStoreOptions = {}) {
     this.now = opts.now ?? Date.now;
     this.capFor = opts.capFor ?? (() => 0);
+    this.explorationCapFor = opts.explorationCapFor;
     // mkdir -p the parent: the same raw-fs carve-out the other SQLite stores use
     // (.claude/rules/fs-carveouts-sqlite.md). `:memory:` has no parent.
     if (dbPath !== ':memory:') {
@@ -604,23 +608,15 @@ export class SQLiteInitiativeStore implements InitiativeStore {
       const id = this.nextId('explorations', 'EXP-', 4);
       const at = this.iso();
       const deadline = new Date(this.now() + p.days * DAY_MS).toISOString();
+      const cap = this.explorationCapFor?.(p.initiativeId);
+      const budget = cap === undefined ? p.estimateUsd : clampExplorationBudget(p.estimateUsd, cap);
       this.db
         .prepare(
           `INSERT INTO explorations (id, initiative_id, idea_id, question, state, budget_usd,
              spent_usd, estimate_usd, deadline, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'proposed', ?, 0, ?, ?, ?, ?)`,
         )
-        .run(
-          id,
-          p.initiativeId,
-          p.ideaId,
-          p.question,
-          p.estimateUsd,
-          p.estimateUsd,
-          deadline,
-          at,
-          at,
-        );
+        .run(id, p.initiativeId, p.ideaId, p.question, budget, p.estimateUsd, deadline, at, at);
       return this.requireExploration(id);
     });
   }

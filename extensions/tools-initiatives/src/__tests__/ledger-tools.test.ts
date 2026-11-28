@@ -42,6 +42,52 @@ function setup() {
 const ctx = { sessionId: 's', sessionKey: 'k', roomAudience: 'private' } as ToolContext;
 
 describe('ledger tools', () => {
+  it("note and brief are bound to the window's exploration", async () => {
+    const { port } = setup();
+    const bound = createInitiativeLedgerTools(
+      port as unknown as InitiativeLedgerPort,
+      'ini-1',
+      'exp-1',
+    );
+    const find = (n: string): Tool => {
+      const t = bound.find((x) => x.name === n);
+      if (!t) throw new Error(n);
+      return t;
+    };
+    port.ownerOf.mockImplementation(() => 'ini-1');
+    const note = { claim: 'c', source_ref: 's', confidence: 0.5 };
+    const other = await find('initiative_note').execute({ exploration_id: 'exp-2', ...note }, ctx);
+    expect(other).toMatchObject({ ok: false, code: 'not_available' });
+    const brief = await find('initiative_brief').execute(
+      {
+        exploration_id: 'exp-2',
+        options: ['a'],
+        evidence: [],
+        cost: 'c',
+        risk: 'r',
+        recommendation: 'x',
+      },
+      ctx,
+    );
+    expect(brief).toMatchObject({ ok: false, code: 'not_available' });
+    expect(port.addFinding).not.toHaveBeenCalled();
+    expect(port.submitBrief).not.toHaveBeenCalled();
+    const own = await find('initiative_note').execute({ exploration_id: 'exp-1', ...note }, ctx);
+    expect(own.ok).toBe(true);
+  });
+
+  it('propose refuses a zero, negative or non-finite estimate', async () => {
+    const { t, port } = setup();
+    for (const estimate_usd of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = await t('initiative_propose').execute(
+        { question: 'q', estimate_usd, days: 2 },
+        ctx,
+      );
+      expect(r).toMatchObject({ ok: false, code: 'input_invalid', field: 'estimate_usd' });
+    }
+    expect(port.propose).not.toHaveBeenCalled();
+  });
+
   it('note without source_ref is refused', async () => {
     const { t, port } = setup();
     const r = await t('initiative_note').execute(

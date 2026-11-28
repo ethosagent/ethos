@@ -23,6 +23,15 @@ function wrongInitiative(a: Args, bound: string): ToolResult | null {
   return refused(`this run is bound to initiative "${bound}"; it cannot act on another`);
 }
 
+/**
+ * In an exploration window the run's note and brief tools write only to that window's
+ * exploration. Enforced here; pinned by ledger-tools.test.ts ('bound to the window's exploration').
+ */
+function wrongExploration(id: string, bound: string | undefined): ToolResult | null {
+  if (bound === undefined || id === bound) return null;
+  return refused(`this window is bound to exploration "${bound}"; it cannot write to "${id}"`);
+}
+
 /** Refuses an exploration or idea id that is absent or owned by another initiative. */
 function ownedBy(
   port: InitiativeLedgerPort,
@@ -99,6 +108,8 @@ function briefBody(a: Args): string | ToolResult {
 export function createInitiativeLedgerTools(
   port: InitiativeLedgerPort,
   initiativeId: string,
+  /** The exploration this window works on; `initiative_note` and `initiative_brief` refuse any other. */
+  boundExploration?: string,
 ): Tool[] {
   const idProp = {
     initiative_id: { type: 'string', description: "Optional; must equal this run's initiative." },
@@ -135,8 +146,16 @@ export function createInitiativeLedgerTools(
       if (failed(question)) return question;
       const estimateUsd = reqNumber(a, 'estimate_usd');
       if (failed(estimateUsd)) return estimateUsd;
+      // Enforced here: the store clamps the budget but a zero or NaN estimate would still pass
+      // the autonomy comparison (extensions/initiative-runner/src/autonomy.ts decideAutonomy).
+      if (!Number.isFinite(estimateUsd) || estimateUsd <= 0) {
+        return invalid('estimate_usd must be a positive number', 'estimate_usd');
+      }
       const days = reqNumber(a, 'days');
       if (failed(days)) return days;
+      if (!Number.isFinite(days) || days <= 0) {
+        return invalid('days must be a positive number', 'days');
+      }
       const ideaId = optString(a, 'idea_id');
       if (failed(ideaId)) return ideaId;
       if (ideaId !== undefined) {
@@ -172,6 +191,8 @@ export function createInitiativeLedgerTools(
     (a) => {
       const explorationId = reqString(a, 'exploration_id');
       if (failed(explorationId)) return explorationId;
+      const elsewhere = wrongExploration(explorationId, boundExploration);
+      if (elsewhere) return elsewhere;
       const claim = reqString(a, 'claim');
       if (failed(claim)) return claim;
       const sourceRef = reqString(a, 'source_ref');
@@ -204,6 +225,8 @@ export function createInitiativeLedgerTools(
     (a) => {
       const explorationId = reqString(a, 'exploration_id');
       if (failed(explorationId)) return explorationId;
+      const elsewhere = wrongExploration(explorationId, boundExploration);
+      if (elsewhere) return elsewhere;
       if (a.partial !== undefined && typeof a.partial !== 'boolean') {
         return invalid('partial must be a boolean', 'partial');
       }

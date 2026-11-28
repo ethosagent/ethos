@@ -124,3 +124,39 @@ describe('reactionClock', () => {
     expect(store.reactionClock('nope')).toBeNull();
   });
 });
+
+describe('exploration budget clamp', () => {
+  it('a $1e6 estimate gets the per-exploration cap, not the estimate', () => {
+    const store = new SQLiteInitiativeStore(':memory:', {
+      now: () => Date.parse('2026-11-28T10:00:00Z'),
+      explorationCapFor: () => 1.5,
+    });
+    store.upsertInitiative({
+      id: 'ini-1',
+      personalityId: 'ada',
+      origin: 'human',
+      parentId: null,
+      state: 'active',
+      configPath: 'initiatives/ini-1.yaml',
+      configHash: 'h',
+      version: 1,
+    });
+    const big = store.propose({
+      initiativeId: 'ini-1',
+      ideaId: null,
+      question: 'q',
+      estimateUsd: 1e6,
+      days: 1,
+    });
+    expect(big.budgetUsd).toBe(1.5);
+    expect(big.estimateUsd).toBe(1e6);
+    const small = store.propose({
+      initiativeId: 'ini-1',
+      ideaId: null,
+      question: 'q2',
+      estimateUsd: 0.4,
+      days: 1,
+    });
+    expect(small.budgetUsd).toBe(0.4);
+  });
+});
