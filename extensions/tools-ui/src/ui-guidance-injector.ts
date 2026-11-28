@@ -51,7 +51,6 @@ export function createUiGuidanceInjector(opts: UiGuidanceInjectorOptions): Conte
           .join('\n')}`
       : '';
   const content = `${COMPOSITION_RULES}${catalog}`;
-  const telegramContent = TELEGRAM_COMPOSITION_RULES;
 
   return {
     id: `ui-guidance:${personalityId}`,
@@ -65,7 +64,7 @@ export function createUiGuidanceInjector(opts: UiGuidanceInjectorOptions): Conte
     async inject(ctx: PromptContext): Promise<InjectionResult | null> {
       // Both strings are built once above; the platform is fixed per surface, so each
       // surface's text is byte-stable across turns.
-      return { content: isCanvasPlatform(surfaceOf(ctx)) ? content : telegramContent };
+      return { content: isCanvasPlatform(surfaceOf(ctx)) ? content : TELEGRAM_COMPOSITION_RULES };
     },
   };
 }

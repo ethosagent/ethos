@@ -734,14 +734,11 @@ export class TelegramAdapter
     // logger means no startup diagnostics.
     this.logger = config.logger?.child({ component: 'telegram' });
 
-    this.cardActions = new CardActionStore(
-      config.storage,
-      join(config.telegramDir ?? 'telegram', this.botKey),
-    );
+    const baseDir = join(config.telegramDir ?? 'telegram', this.botKey);
+    this.cardActions = new CardActionStore(config.storage, baseDir);
 
     // --- Persistence stores (Gap 4) ---
     if (config.storage) {
-      const baseDir = join(config.telegramDir ?? 'telegram', this.botKey);
       // The shared store (`@ethosagent/core`) takes the PER-BOT directory —
       // which Telegram's deleted copy already did — plus the adapter's own
       // mode enum, which is new.
@@ -2138,6 +2135,8 @@ export class TelegramAdapter
     });
     const threadOpt = input.threadId ? { message_thread_id: Number(input.threadId) } : {};
     const ids: string[] = [];
+    const failed = (err: unknown): DeliveryResult =>
+      ids.length > 0 ? telegramPartial(ids, rendered.chunks.length, err) : telegramFailure(err);
     for (let i = 0; i < rendered.chunks.length; i++) {
       const html = rendered.chunks[i] ?? '';
       const last = i === rendered.chunks.length - 1;
@@ -2151,11 +2150,7 @@ export class TelegramAdapter
         ids.push(String(sent.message_id));
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (!errMsg.includes('parse')) {
-          return ids.length > 0
-            ? telegramPartial(ids, rendered.chunks.length, err)
-            : telegramFailure(err);
-        }
+        if (!errMsg.includes('parse')) return failed(err);
         // D18: Telegram rejected the markup — send the same chunk as plain text.
         this.logger?.warn(
           `[telegram] card HTML parse fallback chunk=${i + 1}/${rendered.chunks.length} kind=${card.kind}`,
@@ -2168,9 +2163,7 @@ export class TelegramAdapter
           );
           ids.push(String(sent.message_id));
         } catch (fallbackErr) {
-          return ids.length > 0
-            ? telegramPartial(ids, rendered.chunks.length, fallbackErr)
-            : telegramFailure(fallbackErr);
+          return failed(fallbackErr);
         }
       }
     }

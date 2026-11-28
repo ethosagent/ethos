@@ -82,6 +82,8 @@ export async function* assembleContext(
     /** `RunOptions.roomPrompt` / `roomSkills`, verbatim (see there). */
     roomPrompt?: string;
     roomSkills?: readonly string[];
+    /** `RunOptions.origin`, copied verbatim into `PromptContext.origin`. */
+    origin?: string;
   },
 ): AsyncGenerator<AgentEvent, AssembledContext> {
   const {
