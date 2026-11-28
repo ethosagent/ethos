@@ -99,7 +99,7 @@ export {
   type ImportTextResult,
   importFormatOf,
 } from './import-text';
-export { createWorldToolPort, type WorldToolPort } from './port';
+export { createWorldToolPort, type WorldReadPort, type WorldToolPort } from './port';
 export {
   type AssertPayload,
   type ClosePayload,

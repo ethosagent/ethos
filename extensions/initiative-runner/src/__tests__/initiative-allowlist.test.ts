@@ -60,8 +60,12 @@ describe('initiative tool classes (L1)', () => {
     expect(runToolNames(['*'])).toEqual([...INITIATIVE_LEDGER_TOOLS]);
   });
 
-  it('an unrestricted (undefined) toolset yields the full read allowlist', () => {
-    expect(runToolNames(undefined)).toEqual([...INITIATIVE_READ_TOOLS, ...INITIATIVE_LEDGER_TOOLS]);
+  it('an unrestricted (undefined) toolset yields the read allowlist minus the opt-in world reads', () => {
+    const optIn = new Set(['world_query', 'world_neighbours', 'world_history']);
+    expect(runToolNames(undefined)).toEqual([
+      ...INITIATIVE_READ_TOOLS.filter((n) => !optIn.has(n)),
+      ...INITIATIVE_LEDGER_TOOLS,
+    ]);
   });
 
   it('a toolset cannot add tools outside the allowlist', () => {
@@ -102,8 +106,16 @@ describe('initiative tool classes: world model', () => {
   it('the three world reads are READ tools, free per call', () => {
     for (const n of READS) {
       expect(INITIATIVE_READ_TOOLS as readonly string[]).toContain(n);
-      expect(runToolNames(undefined)).toContain(n);
+      expect(runToolNames([n])).toContain(n);
     }
+  });
+
+  it('world reads are opt-in: an undefined toolset gets none, a listed one gets exactly those', () => {
+    for (const n of READS) expect(runToolNames(undefined), n).not.toContain(n);
+    expect(runToolNames(undefined)).toContain('web_search');
+    const listed = runToolNames(['world_query']);
+    expect(listed).toContain('world_query');
+    expect(listed).not.toContain('world_history');
   });
 
   it('every world write (and the export artifact) is NEVER and never a run tool', () => {

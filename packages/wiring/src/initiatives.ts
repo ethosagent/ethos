@@ -62,7 +62,7 @@ import {
   type Tool,
   type WindowRow,
 } from '@ethosagent/types';
-import type { WorldToolPort } from '@ethosagent/world-service';
+import type { WorldReadPort, WorldToolPort } from '@ethosagent/world-service';
 
 /**
  * The constructors an initiative run draws its tools from. Injectable so a test
@@ -150,7 +150,16 @@ export function defaultInitiativeToolFactories(deps: InitiativeToolDeps): Initia
   if (teamMemory) read.push(() => createTeamMemoryTools(teamMemory));
   if (kanbanStore) read.push(() => createKanbanTools({ store: kanbanStore }));
   if (goalStore) read.push(() => createGoalTools(goalStore));
-  if (worldPort) read.push(() => composeWorldReadTools({ port: worldPort }));
+  if (worldPort) {
+    // Only the four read methods leave this scope: a run's tools cannot reach a write method.
+    const port: WorldReadPort = Object.freeze({
+      visible: worldPort.visible.bind(worldPort),
+      query: worldPort.query.bind(worldPort),
+      neighbours: worldPort.neighbours.bind(worldPort),
+      history: worldPort.history.bind(worldPort),
+    });
+    read.push(() => composeWorldReadTools({ port }));
+  }
   return {
     read,
     ledger: (port, initiativeId, explorationId) => [

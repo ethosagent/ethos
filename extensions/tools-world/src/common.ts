@@ -5,8 +5,8 @@ import type { Tool, ToolContext, ToolResult, TurnAudience } from '@ethosagent/ty
 import {
   type Caller,
   type TaggedFacts,
+  type WorldReadPort,
   WorldServiceError,
-  type WorldToolPort,
 } from '@ethosagent/world-service';
 
 export type ToolDef = Tool<Record<string, unknown>>;
@@ -49,7 +49,7 @@ export function serviceError(e: unknown): ToolResult {
 
 /** The label the service tags results with: the mount alias when set, else the slug. */
 export async function resolveWorld(
-  port: WorldToolPort,
+  port: WorldReadPort,
   caller: Caller,
   world: string | undefined,
 ): Promise<
@@ -127,7 +127,7 @@ export function formatFacts(facts: TaggedFacts): string[] {
 
 /** The result text of a read: lines, a truncation note, or a line naming the worlds searched. */
 export async function readResult(
-  port: WorldToolPort,
+  port: WorldReadPort,
   caller: Caller,
   facts: TaggedFacts,
 ): Promise<ToolResult> {

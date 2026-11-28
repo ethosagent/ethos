@@ -1,5 +1,5 @@
 import type { Tool, WiringContext } from '@ethosagent/types';
-import type { WorldToolPort } from '@ethosagent/world-service';
+import type { WorldReadPort, WorldToolPort } from '@ethosagent/world-service';
 import { fail, type ToolDef } from './common';
 import { createReadTools, createWorldTools } from './index';
 
@@ -28,6 +28,6 @@ export function compose(_ctx: WiringContext, deps: { port: WorldToolPort }): Wor
 }
 
 /** The three read tools only; no write tool is constructed (initiative-world-reads.test.ts). */
-export function composeReadTools(deps: { port: WorldToolPort }): Tool[] {
+export function composeReadTools(deps: { port: WorldReadPort }): Tool[] {
   return createReadTools(deps.port).map(adapt);
 }

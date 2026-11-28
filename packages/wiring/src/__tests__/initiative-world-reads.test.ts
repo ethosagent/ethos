@@ -40,6 +40,8 @@ const WRITES = WORLD_TOOL_NAMES.filter((n) => !READS.includes(n));
 const ACME = 'world:acme' as const;
 const OPS = 'world:ops' as const;
 const PRIVATE = 'personality:engineer' as const;
+// World reads are opt-in (runToolNames): a personality must list them, as chat requires.
+const WITH_READS = [...READS, 'read_file'];
 
 function factoriesWith(worldPort?: WorldToolPort): InitiativeToolFactories {
   return defaultInitiativeToolFactories({
@@ -77,10 +79,31 @@ describe('initiative run registry: world reads', () => {
   afterEach(() => h.dispose());
 
   it('world enabled: the three world reads are registered, no world write is', () => {
-    const { registry } = registryFor(factoriesWith(h.port));
+    const { registry } = registryFor(factoriesWith(h.port), [...WITH_READS, ...WRITES]);
     const names = registry.getAvailable().map((t) => t.name);
     for (const n of READS) expect(names).toContain(n);
     for (const n of WRITES) expect(names).not.toContain(n);
+  });
+
+  it('world enabled but toolset undefined: no world read (opt-in, matches chat)', () => {
+    const { registry } = registryFor(factoriesWith(h.port));
+    const names = registry.getAvailable().map((t) => t.name);
+    expect(names.filter((n) => n.startsWith('world_'))).toEqual([]);
+  });
+
+  it('the run tools reach only the four read methods of the port', async () => {
+    const calls: string[] = [];
+    const spy = new Proxy(h.port, {
+      get(target, prop, receiver) {
+        if (typeof prop === 'string') calls.push(prop);
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const { registry } = registryFor(factoriesWith(spy), WITH_READS);
+    expect(registry.getAvailable().map((t) => t.name)).toContain('world_query');
+    const touched = new Set(calls);
+    for (const w of ['writeFacts', 'closeFact', 'proposeFacts', 'importBundle', 'build'])
+      expect(touched.has(w), w).toBe(false);
   });
 
   it('world enabled: the personality toolset still intersects (it can only remove)', () => {
@@ -134,7 +157,7 @@ describe('initiative run: world reads obey R6 (incognito run is a shared turn)',
           ),
       ),
     };
-    const { personality, registry } = registryFor(factories);
+    const { personality, registry } = registryFor(factories, WITH_READS);
     const personalities = new DefaultPersonalityRegistry();
     personalities.define(personality);
     const loop = createReadOnlyLoop(
