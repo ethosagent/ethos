@@ -1,0 +1,74 @@
+import type { ExplorationRow, IdeaRow } from '@ethosagent/types';
+import type { InitiativeFile } from './config-schema';
+
+/**
+ * Run prompts. The owner's guidance goes here and nowhere else: it is run-only
+ * advice (R8) and never reaches a chat prompt. Everything below is data the
+ * runner read from the ledger or the validated YAML, rendered as plain text.
+ */
+
+export interface RunPromptInput {
+  file: InitiativeFile;
+  ideas: IdeaRow[];
+  explorations: ExplorationRow[];
+}
+
+function sourceLabel(s: InitiativeFile['sources'][number]): string {
+  return typeof s === 'string' ? s : `repo ${s.repo}`;
+}
+
+function header(file: InitiativeFile): string[] {
+  const guidance = file.guidance
+    .filter((g) => g.status === undefined || g.status === 'mapped')
+    .map((g) => `- ${g.text}`);
+  return [
+    `You are running a read-only initiative window for "${file.title}" (${file.id}).`,
+    `Outcome the owner wants: ${file.outcome}`,
+    `Sources you may read: ${file.sources.map(sourceLabel).join(', ') || 'none'}.`,
+    ...(file.exclude.length ? [`Never touch: ${file.exclude.join(', ')}.`] : []),
+    ...(guidance.length
+      ? ['Owner guidance (advice only, never permission to act):', ...guidance]
+      : []),
+    'You can only read and record. You cannot change files, send messages or create anything outside the ledger.',
+  ];
+}
+
+export function surveyPrompt(i: RunPromptInput): string {
+  const seeds = i.ideas.length
+    ? i.ideas.map((d) => `- ${d.id}: ${d.text}`)
+    : ['- (none; propose explorations from what the sources show)'];
+  const open = i.explorations
+    .filter((e) => e.state !== 'rejected')
+    .map((e) => `- ${e.id} (${e.state}): ${e.question}`);
+  return [
+    ...header(i.file),
+    '',
+    'This is the survey window. Do these steps in order:',
+    '1. Read each source once. Do not re-read a source you have already read.',
+    '2. Check how the outcome stands today, using only what the sources show.',
+    '3. For each seed idea below, call initiative_propose with kind "exploration", that idea_id, a question, estimate_usd and days.',
+    '4. Add 2 or 3 explorations of your own with initiative_propose (no idea_id).',
+    'Nothing runs until the owner approves a proposal. Keep the whole survey under $1.',
+    '',
+    'Seed ideas:',
+    ...seeds,
+    ...(open.length ? ['', 'Already on the ledger (do not propose duplicates):', ...open] : []),
+    '',
+    'End with a two-line summary of what you proposed.',
+  ].join('\n');
+}
+
+export function windowPrompt(i: RunPromptInput & { exploration: ExplorationRow }): string {
+  const e = i.exploration;
+  return [
+    ...header(i.file),
+    '',
+    `This is an exploration window for ${e.id}: ${e.question}`,
+    `Budget left for this exploration: $${Math.max(0, e.budgetUsd - e.spentUsd).toFixed(2)}.`,
+    '1. Read what you need from the sources to answer the question.',
+    `2. Record each finding with initiative_note (exploration_id "${e.id}", a claim, the source_ref it came from, confidence 0 to 1).`,
+    `3. When you can answer, or the budget is nearly spent, call initiative_brief for ${e.id}. Set partial: true if the question is not fully answered.`,
+    '',
+    'End with a two-line summary of what you found.',
+  ].join('\n');
+}

@@ -17,6 +17,7 @@
     "@ethosagent/constitution": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/cron": "workspace:*",
+    "@ethosagent/pricing": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "yaml": "^2.7.1",

@@ -1688,6 +1688,11 @@ export { complementExclude } from './tool-scope';
 export interface CreateAgentLoopResult {
   loop: AgentLoop;
   /**
+   * One read-only initiative survey or window on demand (`ethos initiatives run`). Spend lives in
+   * the ledger only (O-7), not the usage ledger. Plan Task 5.5 adds the scheduled runtime beside it.
+   */
+  initiativeRunner: import('@ethosagent/initiative-runner').InitiativeRunner;
+  /**
    * The ONE owner of how a model call outside a turn's own `streamStep` is
    * recorded (plan background-usage-accounting §5.4, D4): `meter(provider,
    * kind)` for an `LLMProvider` a host calls itself, `recordExternal` for spend

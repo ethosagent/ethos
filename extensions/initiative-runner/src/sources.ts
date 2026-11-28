@@ -110,3 +110,8 @@ export function checkSources(
   }
   return { ok: true };
 }
+
+/** The absolute paths of a file's `repo` sources (`~` expanded); the run's `fs_reach.read` roots. Call `checkSources` first. */
+export function repoSourcePaths(sources: readonly SourceEntry[]): string[] {
+  return sources.flatMap((s) => (typeof s === 'string' ? [] : (expand(s.repo) ?? [])));
+}

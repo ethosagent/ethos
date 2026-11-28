@@ -11,6 +11,7 @@ export {
   type InitiativeSettingsLoad,
   InitiativeSettingsSchema,
   loadInitiativeSettings,
+  parseInitiativeFile,
   type SourceEntry,
 } from './config-schema';
 export { InitiativeConfigService, type InitiativeConfigServiceDeps } from './config-service';
@@ -29,7 +30,17 @@ export {
   readOnlyLoopConfig,
   readOnlyRunOptions,
 } from './run-loop';
-export { checkSources } from './sources';
+export {
+  createInitiativeRunner,
+  type InitiativeRunner,
+  type InitiativeRunnerDeps,
+  type LoadedInitiative,
+  PER_CALL_RESERVE_USD,
+  type RunnerStore,
+  type RunReport,
+  SURVEY_CAP_USD,
+} from './runner';
+export { checkSources, repoSourcePaths } from './sources';
 export {
   INITIATIVE_CHAT_TOOLS,
   INITIATIVE_LEDGER_TOOLS,

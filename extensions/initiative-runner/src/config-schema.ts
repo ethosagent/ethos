@@ -91,6 +91,30 @@ export const InitiativeFileSchema = z
 
 export type InitiativeFile = z.infer<typeof InitiativeFileSchema>;
 
+/** Parse and validate one initiative file's text; the reason is shown to the owner. */
+export function parseInitiativeFile(
+  raw: string,
+): { ok: true; file: InitiativeFile } | { ok: false; error: string } {
+  let doc: unknown;
+  try {
+    doc = parse(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `not valid YAML: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  const r = InitiativeFileSchema.safeParse(doc);
+  return r.success
+    ? { ok: true, file: r.data }
+    : {
+        ok: false,
+        error: r.error.issues
+          .map((i) => `${i.path.map(String).join('.') || '(root)'}: ${i.message}`)
+          .join('; '),
+      };
+}
+
 export const InitiativeSettingsSchema = z
   .object({
     enabled: z.boolean().default(true),

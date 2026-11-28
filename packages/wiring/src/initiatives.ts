@@ -3,15 +3,20 @@ import { loadConstitution } from '@ethosagent/constitution';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   assertReadOnlyCapabilities,
+  checkSources,
+  createInitiativeRunner,
   effectiveEnabled,
+  type InitiativeRunner,
   loadInitiativeSettings,
+  parseInitiativeFile,
   readOnlyCapabilityBackends,
+  repoSourcePaths,
   runToolNames,
 } from '@ethosagent/initiative-runner';
 import { initiativesDbPath, SQLiteInitiativeStore } from '@ethosagent/initiative-store';
 import type { KanbanStore } from '@ethosagent/kanban-store';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
-import { defaultAlwaysDeny } from '@ethosagent/storage-fs';
+import { defaultAlwaysDeny, sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
 import { createFileTools } from '@ethosagent/tools-file';
 import { createGoalTools } from '@ethosagent/tools-goals';
@@ -32,18 +37,22 @@ import {
 } from '@ethosagent/tools-social-search';
 import { createWebTools } from '@ethosagent/tools-web';
 import { createXSearchTool } from '@ethosagent/tools-x-search';
-import type {
-  Constitution,
-  GoalStore,
-  InitiativeLedgerPort,
-  InitiativeRecallPort,
-  InitiativeStore,
-  MemoryProvider,
-  PersonalityConfig,
-  SecretRef,
-  SessionStore,
-  Storage,
-  Tool,
+import {
+  type AgentSafety,
+  type Constitution,
+  EthosError,
+  type GoalStore,
+  type InitiativeLedgerPort,
+  type InitiativeRecallPort,
+  type InitiativeStore,
+  type LLMProvider,
+  type MemoryProvider,
+  type PersonalityConfig,
+  type PersonalityRegistry,
+  type SecretRef,
+  type SessionStore,
+  type Storage,
+  type Tool,
 } from '@ethosagent/types';
 
 /**
@@ -333,4 +342,104 @@ export function createLazyInitiativeStore(deps: {
     ready: async () => opened !== undefined || (await deps.storage.exists(path)),
     close: () => opened?.close(),
   };
+}
+
+/**
+ * The manual run surface (plan Task 5.1): one survey or one window now, through the same
+ * read-only parts the L9 e2e test assembles. 5.5 adds `createInitiativeRuntime` (`tick`,
+ * `dispose`) on top of this; the runner holds no handle, so it needs no dispose of its own.
+ *
+ * The YAML is re-read and re-validated at run time (O-4: a hand edit may have broken it) and its
+ * `repo` sources are re-checked against `readableRoots`, so a constitution that narrowed them
+ * since the save applies to the next run.
+ *
+ * Limitation: no `secrets` are passed to the registry, so a read tool that needs a stored
+ * credential (a search backend key) answers with its own "not configured" error in a run.
+ */
+export function createInitiativeRunnerFor(deps: {
+  storage: Storage;
+  dataDir: string;
+  store: InitiativeStore;
+  personalities: PersonalityRegistry;
+  llm: LLMProvider;
+  safety: AgentSafety;
+  /** Read-tool construction inputs: the loop's own search config, memory, session and goals. */
+  config: Pick<InitiativeToolDeps, 'webSearchBackend' | 'searxngUrl' | 'toolSettings'>;
+  toolsConfig: InitiativeToolDeps['toolsConfig'];
+  memory: MemoryProvider;
+  session: SessionStore;
+  goalStore?: GoalStore;
+  /** Defaults to the real constructors; a test may hand in others. */
+  factories?: InitiativeToolFactories;
+  model?: string;
+  clock?: () => Date;
+  log?: { warn(message: string): void };
+}): InitiativeRunner {
+  const factories =
+    deps.factories ??
+    defaultInitiativeToolFactories({
+      env: process.env,
+      toolsConfig: deps.toolsConfig,
+      memory: deps.memory,
+      session: deps.session,
+      ...(deps.goalStore ? { goalStore: deps.goalStore } : {}),
+      ...(deps.config.webSearchBackend ? { webSearchBackend: deps.config.webSearchBackend } : {}),
+      ...(deps.config.searxngUrl ? { searxngUrl: deps.config.searxngUrl } : {}),
+      ...(deps.config.toolSettings ? { toolSettings: deps.config.toolSettings } : {}),
+    });
+  return createInitiativeRunner({
+    store: deps.store,
+    llm: deps.llm,
+    safety: deps.safety,
+    personalities: deps.personalities,
+    ...(deps.model ? { model: deps.model } : {}),
+    ...(deps.clock ? { clock: deps.clock } : {}),
+    onError: (err) =>
+      deps.log?.warn(`initiative run failed: ${err instanceof Error ? err.message : String(err)}`),
+    load: async (id) => {
+      const row = deps.store.getInitiative(id);
+      if (!row) return null;
+      const raw = await deps.storage.read(row.configPath);
+      if (raw === null) return null;
+      const parsed = parseInitiativeFile(raw);
+      if (!parsed.ok) {
+        throw new EthosError({
+          code: 'CONFIG_INVALID',
+          cause: `initiative "${id}" is invalid: ${parsed.error}`,
+          action: 'Fix the file or ask the agent to redefine the initiative.',
+        });
+      }
+      const constitution = await readInitiativeConstitution(deps.storage, deps.dataDir);
+      const sources = checkSources(parsed.file.sources, {
+        readableRoots: constitution.initiatives?.readableRoots ?? [],
+        blocked: sensitiveDenyPaths([deps.dataDir]),
+      });
+      if (!sources.ok) {
+        throw new EthosError({
+          code: 'CONFIG_INVALID',
+          cause: `initiative "${id}" cannot run: ${sources.error}`,
+          action: 'Narrow the sources or widen readableRoots in Settings.',
+        });
+      }
+      return {
+        personalityId: row.personalityId,
+        file: parsed.file,
+        sourcePaths: repoSourcePaths(parsed.file.sources),
+      };
+    },
+    buildRegistry: ({ initiativeId, personalityId, sourcePaths }) => {
+      const personality = deps.personalities.get(personalityId);
+      if (!personality) throw new Error(`personality "${personalityId}" is not registered`);
+      return buildReadOnlyRegistry({
+        personality,
+        ledger: deps.store,
+        recall: deps.store,
+        initiativeId,
+        sourcePaths,
+        factories,
+        storage: deps.storage,
+        dataDir: deps.dataDir,
+      });
+    },
+  });
 }

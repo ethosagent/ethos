@@ -133,6 +133,7 @@ import {
   createInitiativeEnablement,
   createLazyInitiativeStore,
   type InitiativeEnablement,
+  type LazyInitiativeStore,
   readInitiativeConstitution,
 } from './initiatives';
 import { resolveKanbanDbPath } from './kanban-path';
@@ -684,6 +685,8 @@ export interface ComposeToolsResult {
   goalRunnerRef: GoalRunnerRef;
   /** Per-personality initiative on/off (cached); `buildPersonalityToolExclude` reads it each turn. */
   initiativeEnablement: InitiativeEnablement;
+  /** The lazy initiative ledger the chat tools use; the manual runner borrows it (closed by the compose disposer). */
+  initiativeLedger: LazyInitiativeStore;
   /** Skill pool built from composeSkills (needed by loadPlugins). */
   skillPool: Map<string, Skill>;
   /** Context injectors array (passed through to loadPlugins and AgentLoop). */
@@ -2282,6 +2285,7 @@ export async function composeAllTools(
     goalRunnerRef,
     goalStore,
     initiativeEnablement,
+    initiativeLedger,
     skillPool,
     injectors,
     skillScanner,

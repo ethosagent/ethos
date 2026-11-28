@@ -353,6 +353,9 @@ importers:
       '@ethosagent/inbound-spool':
         specifier: workspace:*
         version: link:../../extensions/inbound-spool
+      '@ethosagent/initiative-runner':
+        specifier: workspace:*
+        version: link:../../extensions/initiative-runner
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
@@ -1377,6 +1380,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../cron
+      '@ethosagent/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

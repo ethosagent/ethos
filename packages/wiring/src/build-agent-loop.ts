@@ -83,6 +83,7 @@ import type {
   WiringConfig,
   WiringProfile,
 } from './index';
+import { createInitiativeRunnerFor } from './initiatives';
 import { resolveJobAffinity } from './job-affinity';
 import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
@@ -319,6 +320,7 @@ export async function buildAgentLoop(
     goalStore,
     goalRunnerRef,
     initiativeEnablement,
+    initiativeLedger,
     injectors,
     mcpManager,
     skillsInjector,
@@ -1999,9 +2001,29 @@ export async function buildAgentLoop(
   });
   if (voiceStack) disposers.push('voice stack', () => voiceStack.close());
 
+  // Manual initiative runs (`ethos initiatives run`). Borrows the compose-time ledger and the
+  // loop's own llm, safety, memory and session; the read tools come from the same factories
+  // the L9 e2e test uses. The runner holds no handle, so `dispose` above covers it.
+  const initiativeRunner = createInitiativeRunnerFor({
+    storage: wiringCtx.storage,
+    dataDir,
+    store: initiativeLedger.store,
+    personalities,
+    llm,
+    safety,
+    model: config.model,
+    log,
+    config,
+    toolsConfig: (id) => personalities.getToolsConfig(id),
+    memory,
+    session,
+    goalStore,
+  });
+
   return {
     loop,
     usageMeter,
+    initiativeRunner,
     dispose: () => disposers.dispose(),
     drain: async () => {
       // Jobs first: a running job can start a goal run, never the reverse
