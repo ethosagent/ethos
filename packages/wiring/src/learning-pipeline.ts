@@ -75,6 +75,8 @@ import { type LearningSubmitPort, liveSkillDir, loadEvolveConfig } from '@ethosa
 import {
   checkSkillFrontmatter,
   parseSkillFrontmatter,
+  SkillHistory,
+  skillHistoryPromotePorts,
   vetPromotedSkillWithScan,
 } from '@ethosagent/skills';
 import type { PendingSkillSummary, PendingSkillsPort } from '@ethosagent/tools-skills';
@@ -240,6 +242,8 @@ export function learningPromoteDeps(ctx: PromoteContext): PromoteDeps {
       }
       return result;
     },
+    // The one writer of live skill bytes and the one lock check (SkillHistory).
+    ...skillHistoryPromotePorts(new SkillHistory({ storage: ctx.storage, dataDir: ctx.dataDir })),
     expressions: ctx.expressions,
   };
 }

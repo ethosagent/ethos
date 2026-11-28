@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Relative on purpose, as in `promote.test.ts`: the real frontmatter gate.
 import { vetPromotedSkill } from '../../../skills/src/promotion-vet';
 import { checkSkillFrontmatter } from '../../../skills/src/skill-compat';
+import { SkillHistory, skillHistoryPromotePorts } from '../../../skills/src/skill-history';
 import {
   type AutoPromotionKnobs,
   autoPromotionDecision,
@@ -192,6 +193,7 @@ function deps(opts: {
       skillScope: () => opts.scope,
       checkSkillFrontmatter,
       vetSkill: vetPromotedSkill,
+      ...skillHistoryPromotePorts(new SkillHistory({ storage, dataDir: DATA })),
       expressions: {
         evolveExpression:
           opts.evolveExpression ??
@@ -417,6 +419,23 @@ describe('replayAndResolve — the learning.auto_promote audit row', () => {
 
     expect(result.decision.promote).toBe(true);
     expect(result.promotion).toMatchObject({ ok: false, code: 'stale' });
+    expect(rows).toEqual([]);
+  });
+
+  it('a pass replay on a locked personality-scope skill stays pending_review and writes none', async () => {
+    const { c, destination } = await submitSkill('personality');
+    await new SkillHistory({ storage, dataDir: DATA }).setLock(destination, true, 'cli');
+
+    const result = await replayAndResolve(
+      deps({ knobs: { promotion: 'auto' }, scope: 'personality', observability }),
+      c.id,
+    );
+
+    expect(result.report.verdict).toBe('pass');
+    expect(result.decision.promote).toBe(true);
+    expect(result.promotion).toMatchObject({ ok: false, code: 'locked' });
+    expect((await readCandidate(storage, DATA, c.id))?.status).toBe('pending_review');
+    expect(await storage.exists(destination)).toBe(false);
     expect(rows).toEqual([]);
   });
 

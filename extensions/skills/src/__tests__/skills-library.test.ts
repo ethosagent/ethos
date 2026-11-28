@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { SkillHistory } from '../skill-history';
 import { SkillsLibrary } from '../skills-library';
 
 const DATA = '/data';
@@ -408,6 +409,49 @@ describe('SkillsLibrary', () => {
       const ids = skills.map((s) => s.id);
       expect(ids).toContain('web-search');
       expect(ids).toContain('create-ticket');
+    });
+  });
+  describe('history (every writer records a version)', () => {
+    const rowsOf = async (dest: string) => (await lib.history.versions(dest)).map((r) => r.source);
+
+    it('create, update and delete each write a web-edit row', async () => {
+      const dest = join(DATA, 'skills', 'tidy.md');
+      await lib.createSkill('tidy', 'one');
+      await lib.updateSkill('tidy', 'two');
+      await lib.deleteSkill('tidy');
+      expect(await rowsOf(dest)).toEqual(['web-edit', 'web-edit', 'web-edit']);
+      const rows = await lib.history.versions(dest);
+      expect(rows.map((r) => r.hash === null)).toEqual([false, false, true]);
+    });
+
+    it('the personality create, update and delete write rows too', async () => {
+      const dest = join(DATA, 'personalities', 'coach', 'skills', 'tidy.md');
+      await lib.createPersonalitySkill('coach', 'tidy', 'one');
+      await lib.updatePersonalitySkill('coach', 'tidy', 'two');
+      await lib.deletePersonalitySkill('coach', 'tidy');
+      expect(await rowsOf(dest)).toEqual(['web-edit', 'web-edit', 'web-edit']);
+    });
+
+    it('importGlobalIntoPersonality writes a web-import row', async () => {
+      await lib.createSkill('tidy', 'global body');
+      await lib.importGlobalIntoPersonality('coach', ['tidy']);
+      expect(await rowsOf(join(DATA, 'personalities', 'coach', 'skills', 'tidy.md'))).toEqual([
+        'web-import',
+      ]);
+    });
+
+    it('an update of a hand-written skill records the hand-written bytes as a baseline', async () => {
+      await storage.mkdir(join(DATA, 'skills'));
+      await storage.write(join(DATA, 'skills', 'tidy.md'), 'by hand\n');
+      await lib.updateSkill('tidy', 'edited');
+      const dest = join(DATA, 'skills', 'tidy.md');
+      expect(await rowsOf(dest)).toEqual(['external', 'web-edit']);
+    });
+
+    it('uses an injected SkillHistory', async () => {
+      const history = new SkillHistory({ storage, dataDir: DATA });
+      const injected = new SkillsLibrary({ dataDir: DATA, storage, history });
+      expect(injected.history).toBe(history);
     });
   });
 });

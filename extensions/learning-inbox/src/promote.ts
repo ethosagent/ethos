@@ -33,10 +33,20 @@
 //     write, so a promotion that crashed after touching the live file can still
 //     be rolled back, and a retry recognises its own bytes (`promoteSkill`'s
 //     `alreadyApplied`) instead of calling them stale.
-//   - The live write is `Storage.writeAtomic`.
+//   - The live write goes through the injected `writeSkill`
+//     (`SkillHistory.writeAgentAuthored`, extensions/skills/src/skill-history.ts),
+//     which records a `learning` version and is the ONE lock check: a locked
+//     skill returns `locked` and no byte changes. `promoteSkill` also asks
+//     `isSkillLocked` first so a refusal leaves no `prior.md`/`promotion.json`;
+//     that early check keeps the candidate directory clean, the write-time check
+//     is the guarantee (pinned by 'the write-time check is the guarantee' in
+//     `__tests__/promote.test.ts`). A `locked` refusal leaves the candidate's
+//     status unchanged, so unlock-then-approve works (plan D7).
 //   - Rollback restores `prior.md` or removes a created file, and refuses when
 //     the live file no longer hashes to the promoted bytes (`checkRollback`), so
-//     a later human edit is never clobbered.
+//     a later human edit is never clobbered. Its live write goes through the
+//     injected `rollbackSkill` (a `learning-rollback` version, no lock check:
+//     rollback is a human verb).
 //
 //   Expression
 //   - Promotion goes through `evolveExpression`; the revision it returns is kept
@@ -115,6 +125,27 @@ export interface PromoteDeps {
     markdown: string,
     candidate?: { candidateId: string; personalityId: string },
   ): { ok: true; content: string } | { ok: false; error: string };
+  /** Whether the skill at `destination` is locked (`SkillHistory.isLocked`). */
+  isSkillLocked(destination: string): boolean | Promise<boolean>;
+  /**
+   * The live write of agent-authored bytes (`SkillHistory.writeAgentAuthored`):
+   * records a `learning` version, and refuses with `locked` when the skill is
+   * locked, before any byte is written.
+   */
+  writeSkill(
+    destination: string,
+    content: string,
+    meta: { actor: string; candidateId: string },
+  ): Promise<{ ok: true } | { ok: false; code: 'locked' }>;
+  /**
+   * Rollback's live write (`SkillHistory.writeHuman`, source `learning-rollback`):
+   * `content` is the prior bytes, or `null` to remove a created file.
+   */
+  rollbackSkill(
+    destination: string,
+    content: string | null,
+    meta: { actor: string; candidateId: string; note?: string },
+  ): Promise<void>;
   /** The `FilePersonalityRegistry`. */
   expressions: ExpressionRevisions;
   now?: () => number;
@@ -148,7 +179,7 @@ export type PromotionRecord =
       promotedAt: string;
     };
 
-export type PromoteRefusal = 'not_found' | 'not_promotable' | 'invalid' | 'stale';
+export type PromoteRefusal = 'not_found' | 'not_promotable' | 'invalid' | 'stale' | 'locked';
 
 export type PromoteResult =
   | { ok: true; candidate: LearningCandidate; record: PromotionRecord }
@@ -289,6 +320,9 @@ async function promoteSkill(
   if (alreadyApplied) {
     record = existing;
   } else {
+    if (await deps.isSkillLocked(destination)) {
+      return refuseLocked(candidate, destination, scope === 'personality');
+    }
     if (liveHash !== candidate.baseHash) {
       return refuse(
         deps,
@@ -321,8 +355,17 @@ async function promoteSkill(
     };
     await writeRecord(storage, dataDir, candidate.id, record);
 
-    await storage.mkdir(dir);
-    await storage.writeAtomic(destination, content);
+    const written = await deps.writeSkill(destination, content, {
+      actor: opts.actor ?? 'learning',
+      candidateId: candidate.id,
+    });
+    if (!written.ok) {
+      // Locked between the early check and the write. Nothing went live, so drop
+      // the rollback record that described a promotion that did not happen.
+      await storage.remove(promotionRecordPath(dataDir, candidate.id));
+      if (live !== null) await storage.remove(priorSnapshotPath(dataDir, candidate.id));
+      return refuseLocked(candidate, destination, scope === 'personality');
+    }
   }
 
   const updated = await updateCandidate(
@@ -489,10 +532,16 @@ export async function rollback(
           candidate: check.candidate,
         };
       }
-      await storage.writeAtomic(record.destination, prior);
+      await deps.rollbackSkill(record.destination, prior, {
+        actor: opts.actor ?? 'rollback',
+        candidateId,
+      });
       summary = `restored prior bytes of ${record.destination}`;
     } else {
-      await storage.remove(record.destination);
+      await deps.rollbackSkill(record.destination, null, {
+        actor: opts.actor ?? 'rollback',
+        candidateId,
+      });
       summary = `removed created ${record.destination}`;
     }
   } else {
@@ -559,6 +608,22 @@ function skillFilename(
     return { ok: true, name: target.endsWith('.md') ? target : `${target}.md` };
   }
   return { ok: false, reason: `a skill candidate cannot ${candidate.op}` };
+}
+
+/** A refusal that changes nothing, status included (plan D7). */
+function refuseLocked(
+  candidate: LearningCandidate,
+  destination: string,
+  personalityScoped: boolean,
+): PromoteResult {
+  const id = basename(destination).replace(/\.md$/, '');
+  const flag = personalityScoped ? ` --personality ${candidate.personalityId}` : '';
+  return {
+    ok: false,
+    code: 'locked',
+    reason: `${id} is locked — unlock it on the Skills page or with \`ethos skills unlock ${id}${flag}\``,
+    candidate,
+  };
 }
 
 async function refuse(

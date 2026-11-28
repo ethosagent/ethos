@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Relative on purpose — see `promote.test.ts`: the test exercises the real gate.
 import { vetPromotedSkill } from '../../../skills/src/promotion-vet';
 import { checkSkillFrontmatter } from '../../../skills/src/skill-compat';
+import { SkillHistory, skillHistoryPromotePorts } from '../../../skills/src/skill-history';
 import { readAudit } from '../audit';
 import type { ReplayAndResolveResult } from '../auto-promotion';
 import { LEARNING_AUDIT_CODES, LearningInbox, type LearningObservability } from '../inbox';
@@ -46,6 +47,7 @@ function promoteDeps(): PromoteDeps {
     skillScope: () => undefined,
     checkSkillFrontmatter,
     vetSkill: vetPromotedSkill,
+    ...skillHistoryPromotePorts(new SkillHistory({ storage, dataDir: DATA })),
     expressions: new FilePersonalityRegistry(storage, DATA),
     now,
   };
@@ -158,6 +160,26 @@ describe('LearningInbox.approve — the override rule', () => {
     const timeline = await readAudit(storage, DATA, { candidateId: candidate.id });
     expect(timeline.at(-1)).toMatchObject({ to: 'promoted', actor: 'web' });
     expect(timeline.at(-1)?.reason).toContain('reviewed by hand; replay budget exhausted');
+  });
+
+  it('refuses approving a draft of a locked skill, leaves it waiting, and approves after unlock', async () => {
+    const dest = join(LIVE, 'cite-sources.md');
+    const history = new SkillHistory({ storage, dataDir: DATA });
+    const candidate = await submitSkill();
+    await withVerdict(candidate.id, 'pass');
+    await history.setLock(dest, true, 'cli');
+
+    const refused = await inbox().approve(candidate.id, { actor: 'cli', decidedBy: 'test' });
+
+    expect(refused).toMatchObject({ ok: false, code: 'locked' });
+    expect(refused.ok === false && refused.reason).toContain('ethos skills unlock cite-sources');
+    expect(await storage.exists(dest)).toBe(false);
+    expect((await readCandidate(storage, DATA, candidate.id))?.status).toBe('pending_review');
+    expect(rows).toEqual([]);
+
+    await history.setLock(dest, false, 'cli');
+    const approved = await inbox().approve(candidate.id, { actor: 'cli', decidedBy: 'test' });
+    expect(approved.ok).toBe(true);
   });
 
   it('a pass needs no override and writes ONE learning.approve row', async () => {
