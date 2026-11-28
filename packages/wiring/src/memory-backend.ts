@@ -329,7 +329,7 @@ export function composeGatedMemory(opts: ComposeGatedMemoryOptions): GatedMemory
 
 /** memory-vector's handle: the five `MemoryProvider` verbs plus the `close`
  *  that releases its memory.db connection (`closeMemoryProvider` in
- *  build-agent-loop calls it on dispose). */
+ *  memory-provider-helpers.ts calls it on dispose). */
 export type VectorBackend = MemoryProvider & { close(): void };
 
 /** The context an approved candidate replays under, outside any turn. */

@@ -1,0 +1,213 @@
+/* World page. DESIGN.md tokens only; raw primitives, no Card. Per-type node
+   colours map onto --info/--success/--warning/--text-secondary (world-logic.ts
+   TYPE_COLOR_TOKENS); dedicated per-type tokens are a proposal for the maintainer. */
+.world-page {
+  padding: 24px;
+  max-width: 1100px;
+}
+.world-title {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0;
+  color: var(--text-primary);
+}
+.world-title-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.world-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 12px;
+}
+.world-micro {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 16px 0 6px;
+}
+.world-small {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.world-dim {
+  color: var(--text-tertiary);
+}
+.world-mono {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.world-pill {
+  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 6px;
+  color: var(--text-secondary);
+}
+.world-mounts {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.world-mount-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.world-inert {
+  font-size: 12px;
+  color: var(--warning);
+}
+.world-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.world-tab {
+  font: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.world-tab[aria-current="page"] {
+  color: var(--text-primary);
+  background: var(--bg-overlay);
+  border-color: var(--border-strong);
+}
+.world-btn {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 4px 12px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.world-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.world-btn-primary {
+  border-color: var(--info);
+}
+.world-link {
+  font: inherit;
+  color: var(--info);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.world-input {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 28px;
+}
+.world-input[readonly] {
+  color: var(--text-tertiary);
+}
+.world-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.world-rows > li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.world-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  width: 100%;
+  font: inherit;
+  color: var(--text-primary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.world-line {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.world-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.world-check {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.world-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  max-width: 420px;
+}
+.world-slider {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.world-canvas {
+  height: 520px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-base);
+}
+.world-proposal {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.world-proposal-body {
+  flex: 1;
+}
+.world-conflict {
+  color: var(--error);
+  font-weight: 500;
+}
+.world-errors {
+  color: var(--error);
+  font-size: 13px;
+  margin: 8px 0;
+  padding-left: 16px;
+}
+.world-empty {
+  color: var(--text-secondary);
+  font-size: 14px;
+}

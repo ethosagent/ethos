@@ -1,0 +1,26 @@
+{
+  "name": "@ethosagent/world-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/safety-redact": "workspace:*",
+    "@ethosagent/sqlite": "workspace:*",
+    "@ethosagent/types": "workspace:*",
+    "yaml": "^2.7.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@ethosagent/storage-fs": "workspace:*"
+  }
+}

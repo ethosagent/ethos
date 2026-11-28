@@ -319,6 +319,7 @@ const ALLOWED_PREFIXES = [
   'extensions/notify-queue/',
   'extensions/outbox/',
   'extensions/share-links/',
+  'extensions/world-sqlite/',
   'extensions/initiative-store/',
   'extensions/inbound-dedup/',
   'extensions/inbound-spool/',
@@ -360,6 +361,7 @@ const ALLOWED_FILES = new Set([
   'extensions/platform-callcapture/src/indicator.ts',
   'extensions/platform-callcapture/src/notification.ts',
   'packages/a2a/src/sqlite-task-store.ts',
+  'extensions/world-service/src/service-store.ts',
 ]);
 
 // Matches any static or dynamic import of node:fs or node:fs/promises.

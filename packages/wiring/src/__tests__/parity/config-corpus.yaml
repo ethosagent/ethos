@@ -96,6 +96,9 @@ idleWatcher.idleThresholdMs: 120000
 nodes.enabled: true
 shareLinks.enabled: true
 shareLinks.excludePersonalities: ops, legal
+world.enabled: true
+world.contextHops: 1
+world.proposals.ttlDays: 14
 kanban.maxInProgress: 5
 kanban.maxInProgressPerProfile: 2
 kanbanPoll.intervalMs: 7000

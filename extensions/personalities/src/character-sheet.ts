@@ -21,6 +21,7 @@ import {
   toolsetLines,
 } from './permission-surface';
 import { normalizeWorkdir } from './workdirs';
+import { WORLD_GUARANTEE_ROWS } from './world-guarantees';
 
 // The generated character sheet — the "tight character sheet" promise from
 // SOUL.md made into a real artifact. One Markdown screen per personality:
@@ -871,6 +872,7 @@ function guaranteeRows(
       detail:
         'a shared-audience turn neither reads nor writes private memory; no personality field narrows it',
     },
+    ...WORLD_GUARANTEE_ROWS,
     ...INITIATIVE_GUARANTEE_ROWS,
   };
 }
@@ -878,14 +880,15 @@ function guaranteeRows(
 /**
  * Render the `## Boundary` block: which guarantees are enforced, narrowed, relaxed or n/a here.
  *
- * A table, not bullets: fifteen rows read as a scan for the `relaxed` ones (the operator's
- * actual question), and the status column stays aligned in a terminal and the Web tab's Markdown.
+ * A table rather than bullets: seventeen rows read as a scan for the `relaxed`
+ * ones, which is the operator's actual question, and the status column stays
+ * aligned in a terminal as well as in the Web tab's Markdown.
  */
 function boundarySection(rows: Record<GuaranteeId, GuaranteeRow>): string[] {
   const width = Math.max(...GUARANTEE_IDS.map((id) => id.length));
   return [
     '## Boundary',
-    'Register status for this personality (the fifteen published guarantees).',
+    'Register status for this personality (the seventeen published guarantees).',
     'enforced = kernel-enforced, unchanged here · narrowed = this personality tightens it ·',
     'relaxed = widens or disables something above the non-overridable floor · n/a = nothing here reaches it.',
     '',

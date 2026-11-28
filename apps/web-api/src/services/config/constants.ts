@@ -166,6 +166,7 @@ export const SETTINGS_PATCH_KEYS = [
   'voiceFiller',
   'memoryVault',
   'memoryApproval',
+  'world',
   'memoryConsolidation',
   'memoryCapture',
   'background',

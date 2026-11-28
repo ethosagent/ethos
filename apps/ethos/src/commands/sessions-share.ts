@@ -194,13 +194,13 @@ function describeLink(l: ShareLinkSummary): string {
 function shareList(json: boolean): void {
   const store = openShareStore();
   try {
-    const links = store.list({ activeOnly: true });
+    const links = store.list({ activeOnly: true, kind: 'session' });
     if (json) {
       writeJson(
         links.map((l) => ({
           id: l.id,
           prefix: l.prefix,
-          sessionId: l.sessionId,
+          sessionId: l.subjectId,
           title: l.title,
           createdAt: l.createdAt,
           expiresAt: l.expiresAt,

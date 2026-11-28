@@ -34,7 +34,10 @@ import { foldForDeny } from './deny-fold';
  * `.expression-history/`, whose snapshots `FilePersonalityRegistry.revertExpression`
  * writes back into `SOUL.md` (a turn that could plant one could choose what a
  * revert restores), and `commands/`, the personality's slash-command templates
- * the CLI loads as prompts (verification rounds F3, F7). Their legitimate
+ * the CLI loads as prompts (verification rounds F3, F7), and `worlds.yaml`,
+ * the personality's world mounts: a turn that could write it could mount a
+ * world on itself (plan world-model Task 2.5, R4;
+ * `packages/wiring/src/__tests__/world-floor.test.ts`). Their legitimate
  * writers — the registry's `evolveExpression`/`revertExpression` and the
  * operator — hold compose-time Storage.
  *
@@ -68,6 +71,7 @@ export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
   'skills/',
   'commands/',
   '.expression-history/',
+  'worlds.yaml',
   'initiatives/',
 ];
 

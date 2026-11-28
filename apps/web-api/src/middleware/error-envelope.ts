@@ -58,6 +58,9 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   // The caller supplied a credential or a chat the platform did not accept.
   RECIPE_CHANNEL_SETUP_FAILED: 400,
   NETWORK_ERROR: 502,
+  WORLD_NOT_FOUND: 404,
+  WORLD_SCHEMA_INVALID: 400,
+  WORLD_CONFLICT: 409,
   // `PluginsService.install` refusals (services/plugins.service.ts —
   // `resolveRegistrySpec`, `classifyNpmFailure`, `install`). Nothing is left
   // installed by any of them unless the cause says so: a failure once `npm install`

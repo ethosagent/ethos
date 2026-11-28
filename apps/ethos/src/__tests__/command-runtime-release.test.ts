@@ -45,6 +45,7 @@ describe('one-shot commands release the loop they built (G4)', () => {
       'mcp.ts',
       'personality-amendments.ts',
       'personality-evolve.ts',
+      'world.ts',
       'zero.ts',
     ]);
   });

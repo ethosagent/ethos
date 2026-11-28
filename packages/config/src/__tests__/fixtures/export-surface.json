@@ -73,6 +73,7 @@
   "resolvePersonalityDecisionSite",
   "resolveSecretRef",
   "resolveShareLinks",
+  "resolveWorld",
   "rotationSecretRef",
   "secretRefForConfigKey",
   "secretRefFromValue",

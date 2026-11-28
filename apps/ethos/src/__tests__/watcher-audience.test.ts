@@ -10,7 +10,12 @@
 import type { AgentEvent, TurnAudience } from '@ethosagent/types';
 import type { WatcherWakeEvent } from '@ethosagent/watchers';
 import { describe, expect, it } from 'vitest';
-import { callCaptureWake, runWatcherWakeTurn, watcherWakeMessage } from '../lib/watcher-wake';
+import {
+  callCaptureWake,
+  runWatcherWakeTurn,
+  watcherWakeMessage,
+  watcherWakePrompt,
+} from '../lib/watcher-wake';
 
 function event(roomAudience: TurnAudience): WatcherWakeEvent {
   return {
@@ -40,6 +45,19 @@ describe('gateway-role wake (ethos gateway start, ethos boot)', () => {
 
   it('the summary is fenced as untrusted content', () => {
     expect(watcherWakeMessage(event('private'), 'bot-1').text).toContain('file changed');
+  });
+});
+
+describe('world-feed wake prefix (plan world-model 8.2)', () => {
+  const feed = { ...event('private'), promptPrefix: 'world-feed:watch' };
+
+  it('expands to the world-feed prompt only with world.enabled', () => {
+    const on = watcherWakePrompt(feed, { world: true });
+    expect(on).toContain('world-graph');
+    expect(on).toContain('"watch"');
+    expect(on).not.toContain('world-feed:watch');
+    expect(watcherWakePrompt(feed)).toContain('world-feed:watch');
+    expect(watcherWakeMessage(feed, 'bot-1', { world: true }).text).toContain('world-graph');
   });
 });
 

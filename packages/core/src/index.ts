@@ -304,6 +304,7 @@ export {
   unwrapVoiceResolution,
   VoiceProviderError,
 } from './providers/voice-resolution';
+export { DefaultWorldGraphProviderRegistry } from './providers/world-registry';
 export { InMemoryRequestDumpStore } from './request-dump-store';
 export {
   type AgentSafetyConformanceResult,

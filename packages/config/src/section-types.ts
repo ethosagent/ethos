@@ -194,3 +194,17 @@ export interface NodesConfig {
   /** Operator switch for laptop tool nodes (plan laptop-tool-node D18). Default false: no /node routes, no node_* tools. */
   enabled?: boolean;
 }
+
+/** World model block (plan world-model 4.6). Absent means off. Read via `resolveWorld`. */
+export interface WorldConfig {
+  /** Default false. Off means no world tools, no injector and no extraction are composed. */
+  enabled?: boolean;
+  /** Default 2400, clamped to [0, 8000]. Budget of the world block in the dynamic tail. */
+  contextMaxChars?: number;
+  /** Default 2. Graph hops the injector expands from a seed entity. */
+  contextHops?: 1 | 2;
+  /** Default 'off'. 'propose' sends extracted facts to the proposal queue (plan P6). */
+  extraction?: 'off' | 'propose';
+  /** Defaults 500 / 30. */
+  proposals?: { cap?: number; ttlDays?: number };
+}

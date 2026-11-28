@@ -24,6 +24,7 @@ import { useParams } from 'react-router-dom';
 import { PersonalitySelect } from '../components/personality/PersonalitySelect';
 import { EmptyState } from '../components/ui/EmptyState';
 import { LoadingState } from '../components/ui/LoadingState';
+import { LinkedNote } from '../components/world/LinkedNote';
 import { memoryFailure, retryMemoryQuery } from '../features/memory/refusal';
 import { useFavouritePersonality } from '../hooks/useFavouritePersonality';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
@@ -305,6 +306,8 @@ function MemoryEditor({
             : '# About me\n\nWho you are, what you build, how you work. Edits land in ~/.ethos/USER.md.'
         }
       />
+
+      <LinkedNote personalityId={personalityId} text={file?.content ?? ''} />
 
       <footer className="memory-actions">
         <Button onClick={onCopy}>Copy</Button>

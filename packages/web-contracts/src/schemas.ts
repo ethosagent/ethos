@@ -27,3 +27,4 @@ export * from './schema/recipes';
 export * from './schema/sessions';
 export * from './schema/shares';
 export * from './schema/skills';
+export * from './schema/worlds';

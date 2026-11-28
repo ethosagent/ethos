@@ -3,7 +3,7 @@ title: "CLI: batch, eval, evolve, learning and plugin commands"
 description: "ethos batch, eval, evolve, learning, skills, keys and team commands."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-28
 ---
 
 ## Synopsis {#synopsis}
@@ -106,6 +106,52 @@ ethos learning rollback c-mf3k2x-a1b2c3 --reason "tone drifted in real chats"
 |---|---|
 | `0` | Success, including a replay that ended in a verdict other than `pass`. |
 | `1` | Missing id, unknown subcommand, unknown candidate, or a refusal (`override_required`, `stale`, `invalid`, `live_edited`, `not_latest`, `replay_unavailable`). |
+
+## ethos world {#ethos-world}
+
+Create, inspect, export and govern the world model: a typed, time-aware graph of the people, teams and things your agents reason about. This is the owner's command line; it reads and writes through the same services as the web app's Worlds page, so every write is recorded as `cli:<your user>`. Needs `world.enabled: true` in `config.yaml`, otherwise it exits `1` with `NOT_CONFIGURED`.
+
+Synopsis:
+
+```
+ethos world list [--json]
+ethos world create <slug> [--template company|watchlist] [--audience owner_only|shareable] [--title "<text>"]
+ethos world show <slug> [--tree] [--as-of <date>] [--entity <name>] [--json]
+ethos world export <slug> --yaml|--csv|--json|--graphml|--mermaid|--jsonl [--as-of <date>]
+ethos world import <slug> <file>
+ethos world proposals <slug> [--json]
+ethos world accept <proposalId>
+ethos world reject <proposalId> [--reason "<text>"]
+ethos world grant <slug> <personality> --read|--propose
+ethos world revoke <slug> <personality>
+ethos world mount <personality> <slug> --mode read|propose [--as <alias>]
+ethos world unmount <personality> <slug>
+ethos world purge <slug> [--entity <name>] --reason "<text>" [--yes]
+```
+
+`<slug>` names a shared world. `personality:<id>` names a personality's private world for `show`, `export`, `import`, `proposals` and `purge`.
+
+### Subcommands {#ethos-world-subcommands}
+
+| Subcommand | Description |
+|---|---|
+| `list` | Every shared world with its audience, backend, live entity count and pending proposals. |
+| `create <slug>` | Write `world.yaml`. `--template company` seeds the schema with Company, Team and Person (audience `owner_only`); `--template watchlist` seeds stocks, sectors and events (audience `shareable`). `--audience` overrides the template's default. |
+| `show <slug>` | Summary: audience, grants, schema version, counts. `--tree` prints the org chart (company, teams, people) that the terminal chat's `/world <slug>` also shows. `--entity <name>` shows one entity, or with `--tree` only its subtree. `--as-of <date>` reads the graph as it was on that date. |
+| `export <slug>` | Writes one format to stdout and nothing else: `--yaml` (facts), `--csv` (entities then links), `--json`, `--graphml`, `--mermaid`, `--jsonl` (MCP memory format). |
+| `import <slug> <file>` | Reads `.yaml`, `.json`, `.jsonl` or `.csv`. Every fact goes through the schema; a bad file imports nothing. |
+| `proposals <slug>` | Facts and schema changes agents proposed, waiting for you. |
+| `accept <id>` / `reject <id>` | Replay a proposal as written, or close it so it is not proposed again. |
+| `grant` / `revoke` | Add a personality to the world's readers (`--read`) or proposers (`--propose`, which includes reading), or remove every grant. |
+| `mount` / `unmount` | Write `personalities/<id>/worlds.yaml`. A mount does nothing until the world grants the personality. |
+| `purge <slug>` | The only delete: removes every row of the world, or of one `--entity`. Asks you to confirm; without a terminal it refuses unless `--yes` is given. `--reason` is required and recorded. |
+
+### Exit codes {#ethos-world-exit-codes}
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. |
+| `1` | `WORLD_NOT_FOUND` (unknown world, entity, personality or proposal), `WORLD_SCHEMA_INVALID` (a file or template did not validate), `WORLD_CONFLICT` (the slug exists, or a fact clashes), `INVALID_INPUT` (a missing flag, or `purge` without a terminal and without `--yes`), or `NOT_CONFIGURED`. |
 
 ## ethos plugin {#ethos-plugin}
 

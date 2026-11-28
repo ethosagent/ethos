@@ -16,7 +16,8 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/memory-history": "workspace:*",
-    "@ethosagent/types": "workspace:*"
+    "@ethosagent/types": "workspace:*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@ethosagent/memory-approval": "workspace:*",

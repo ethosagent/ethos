@@ -338,7 +338,7 @@ describe('ethos sessions delete', () => {
     expect(stdout()).toContain(`Deleted: ${sessionId}`);
     expect(stdout()).toContain('Revoked 2 share links.');
     const live = rows().filter((r) => r.revokedAt === null);
-    expect(live.map((r) => r.sessionId)).toEqual([other]);
+    expect(live.map((r) => r.subjectId)).toEqual([other]);
   });
 
   it('says nothing about links when there were none, and reports nothing', async () => {

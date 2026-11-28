@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { deriveProviderKey } from '@ethosagent/config';
+import { deriveProviderKey, type EthosConfig } from '@ethosagent/config';
 import {
   type AgentLoop,
   ChainedProvider,
@@ -152,6 +152,8 @@ export interface WiringProviderConfig {
 export interface WiringConfig {
   /** Laptop tool nodes (mapped from EthosConfig.nodes; plan laptop-tool-node D18). */
   nodes?: { enabled?: boolean };
+  /** World model (mapped from EthosConfig.world; plan world-model 4.6). Off unless `enabled`. */
+  world?: EthosConfig['world'];
   provider: string;
   model: string;
   apiKey: string;
@@ -1855,6 +1857,13 @@ export interface CreateAgentLoopResult extends InitiativeResult {
    *  `config` its memory registry resolves, so a web edit lands where the agent
    *  reads (F04). Hosts forward it to `createWebApi` as is. */
   memoryBundle: MemoryBundle;
+  /**
+   * The world runtime's owner-surface services (`WorldService`, `WorldSchemaService`,
+   * `WorldConfigService`), borrowed by the web-api's `worlds.*` (plan world-model 7.2): the ONE
+   * runtime `composeAllTools` created, never a second one, closed by `dispose()`. Absent unless
+   * `world.enabled`.
+   */
+  worlds?: Pick<import('./worlds').WorldRuntime, 'service' | 'schema' | 'configService'>;
   /** Durable background-job store — present only when the background subsystem is
    *  enabled for this loop. Shared with the gateway/Tasks surface. */
   jobStore?: import('@ethosagent/types').JobStore;
@@ -2524,3 +2533,15 @@ export {
 export * from './room-policy'; // per-room prompts and policy; also the `@ethosagent/wiring/room-policy` subpath
 export * from './share'; // share-links store + redacted snapshot builder (plan share-links)
 export * from './system-jobs';
+export * as worldOwner from './world-owner'; // owner-surface codecs and access (plan world-model 7.2)
+export {
+  createWorldChangesSource,
+  createWorldRuntime,
+  expandWorldFeedPrefix,
+  type WorldChangesReport,
+  type WorldChangesWindow,
+  type WorldRuntime,
+  type WorldRuntimeDeps,
+  worldFeedPrefix,
+  worldFeedWakePrompt,
+} from './worlds'; // world model runtime (plan world-model 4.6) and feed wake prompt (8.2)

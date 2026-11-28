@@ -3,6 +3,7 @@
 // Storage. Output is restricted to `add` on MEMORY.md / USER.md.
 
 import type { LLMProvider } from '@ethosagent/types';
+import { z } from 'zod';
 import type { CaptureFact } from './types';
 
 /**
@@ -26,9 +27,29 @@ const SYSTEM_PROMPT =
   'USER|0.8|Has a daughter named Priya, born 2019.\n' +
   'MEMORY|0.5|Working on the Q3 launch, deadline mid-September.';
 
+/**
+ * Appended to the prompt ONLY when a `routeFact` router is configured, so with
+ * no router the prompt is byte-identical to before the seam existed (pinned by
+ * route-fact.test.ts "no routeFact → today's behaviour").
+ */
+const TRIPLE_PROMPT =
+  '\n\nWhen a fact states a relationship between two named things (for example ' +
+  '"Ravi owns billing-svc"), append a fourth field: a JSON object with subject, ' +
+  'relation and object, for example:\n' +
+  'MEMORY|0.8|Ravi owns billing-svc.|{"subject":"Ravi","relation":"owns","object":"billing-svc"}\n' +
+  'Omit the fourth field for preferences and anything that is not such a relationship.';
+
+const tripleZ = z.object({
+  subject: z.string().trim().min(1).max(120),
+  relation: z.string().trim().min(1).max(60),
+  object: z.string().trim().min(1).max(120),
+});
+
 export interface ExtractionInput {
   initialPrompt: string;
   finalText: string;
+  /** Ask for the optional subject/relation/object field (a `routeFact` is set). */
+  withTriples?: boolean;
 }
 
 /**
@@ -52,7 +73,7 @@ export async function extractFacts(
 
   let text = '';
   for await (const chunk of llm.complete([{ role: 'user', content: userContent }], [], {
-    system: SYSTEM_PROMPT,
+    system: input.withTriples ? SYSTEM_PROMPT + TRIPLE_PROMPT : SYSTEM_PROMPT,
     maxTokens: 512,
     temperature: 0,
   })) {
@@ -81,15 +102,39 @@ export function parseFacts(text: string): CaptureFact[] {
     const hint = clamp01(Number.parseFloat((parts[1] ?? '').trim()));
     if (hint === null) continue;
 
-    // FACT may itself contain `|`; rejoin the tail.
-    const factText = parts.slice(2).join('|').trim();
+    // FACT may itself contain `|`; rejoin the tail. An optional trailing JSON
+    // triple (a fourth field) is split off only when it parses; otherwise the
+    // line is read exactly as before.
+    let tail = parts.slice(2);
+    let triple: CaptureFact['triple'];
+    if (tail.length >= 2) {
+      const parsed = parseTriple(tail[tail.length - 1] ?? '');
+      if (parsed) {
+        triple = parsed;
+        tail = tail.slice(0, -1);
+      }
+    }
+    const factText = tail.join('|').trim();
     if (factText.length === 0) continue;
     // Cap length to bound the memory-pollution blast radius (see MAX_FACT_CHARS).
     const capped = factText.length > MAX_FACT_CHARS ? factText.slice(0, MAX_FACT_CHARS) : factText;
 
-    facts.push({ store, text: capped, hint });
+    facts.push({ store, text: capped, hint, ...(triple ? { triple } : {}) });
   }
   return facts;
+}
+
+function parseTriple(raw: string): CaptureFact['triple'] | undefined {
+  const t = raw.trim();
+  if (!t.startsWith('{') || !t.endsWith('}')) return undefined;
+  let json: unknown;
+  try {
+    json = JSON.parse(t);
+  } catch {
+    return undefined; // not JSON: part of the fact text, as before
+  }
+  const r = tripleZ.safeParse(json);
+  return r.success ? r.data : undefined;
 }
 
 function clamp01(n: number): number | null {

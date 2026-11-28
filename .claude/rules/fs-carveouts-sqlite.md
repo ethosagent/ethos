@@ -12,6 +12,8 @@ paths:
   - "extensions/notify-queue/**"
   - "extensions/outbox/**"
   - "extensions/share-links/**"
+  - "extensions/world-sqlite/**"
+  - "extensions/world-service/src/service-store.ts"
   - "extensions/initiative-store/**"
   - "packages/a2a/src/sqlite-task-store.ts"
 ---
@@ -33,4 +35,6 @@ packages/a2a/src/sqlite-task-store.ts — SQLiteA2aTaskStore opens a raw path vi
 extensions/notify-queue/ — SQLiteNotifyQueue opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir; its `readAndConsume` is a SELECT then UPDATE inside one transaction, the same shape as delivery-ledger's atomic claim, which no Storage interface can express (same rationale as job-store/delivery-ledger/session-cards/call-log)
 extensions/outbox/ — SQLiteOutboxStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir; the bound approve and the delivery claim are conditional UPDATEs whose affected-row count IS the answer, which no Storage interface can express — same rationale as delivery-ledger/notify-queue
 extensions/share-links/ — SqliteShareLinkStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir; revoke and purge null the snapshot and append the audit event in one transaction, which no Storage interface can express (same rationale as delivery-ledger/notify-queue)
+extensions/world-sqlite/ — SQLiteWorldGraphProvider opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir (`worlds/`); a purge inserts a token, deletes and drops the token in one transaction, which no Storage interface can express (same rationale as delivery-ledger/share-links)
+extensions/world-service/src/service-store.ts — SQLiteWorldServiceStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir (`worlds/`); a reject writes its tombstone and the decision's conditional UPDATE in one transaction, which no Storage interface can express (same rationale as outbox/world-sqlite)
 extensions/initiative-store/ — SQLiteInitiativeStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir; its state transitions, window close-out and spend roll-up are multi-statement BEGIN IMMEDIATE transactions, which no Storage interface can express (same rationale as delivery-ledger/notify-queue)

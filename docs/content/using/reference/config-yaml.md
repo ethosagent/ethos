@@ -85,6 +85,7 @@ This is what `ethos setup` writes for a default Anthropic install. The key value
 | <a id="security-trusted-github-orgs"></a>[security.trusted_github_orgs](config-yaml/operations.md#security-trusted-github-orgs) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
 | <a id="goals-allow-check-commands"></a>[goals.allowCheckCommands](config-yaml/operations.md#goals-allow-check-commands) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
 | <a id="share-links"></a>[shareLinks.*](config-yaml/operations.md#share-links) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
+| <a id="world"></a>[world.*](config-yaml/operations.md#world) | [config.yaml: logs, backup and trust keys](config-yaml/operations.md) |
 | <a id="learning-replay"></a>[learningReplay.*](config-yaml/learning.md#learning-replay) | [config.yaml: learning and evolver keys](config-yaml/learning.md) |
 | <a id="nightly-pass"></a>[nightlyPass.*](config-yaml/learning.md#nightly-pass) | [config.yaml: learning and evolver keys](config-yaml/learning.md) |
 | <a id="evolver-cron-enabled"></a>[evolver.cron_enabled](config-yaml/learning.md#evolver-cron-enabled) | [config.yaml: learning and evolver keys](config-yaml/learning.md) |

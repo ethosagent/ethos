@@ -66,6 +66,7 @@ export {
   type WebhookHookConfig,
   type WebhookRateLimitConfig,
 } from './builders/webhooks';
+export { type ResolvedWorldSettings, resolveWorld } from './builders/world';
 export type { EthosConfig } from './config-types';
 // Plan decision-provider-jev §7 — the operator's `decisions.*` keys and their
 // resolver (defaults, per-site budgets); plan decision-provider-personality

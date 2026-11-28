@@ -472,6 +472,10 @@ export async function* assembleContext(
   // here, inside this loop.
   let fileWindowContent: string | undefined;
   let teamIndexContent: string | undefined;
+  // `tail` is rendered after the memory block, outside the static prefix.
+  // Injectors are already sorted priority-descending, so a lower priority
+  // stays later among tails.
+  const tailParts: string[] = [];
   for (const injector of deps.injectors) {
     // §2 — a lean model's `promptBudget.suppressMemoryGuidance` drops the
     // memory-usage guidance block (the MemoryGuidanceInjector).
@@ -486,6 +490,8 @@ export async function* assembleContext(
       if (kind) sectionChars[kind] += result.content.length;
       if (result.position === 'prepend') {
         systemParts.unshift(result.content);
+      } else if (result.position === 'tail') {
+        tailParts.push(result.content);
       } else {
         systemParts.push(result.content);
       }
@@ -566,6 +572,8 @@ export async function* assembleContext(
       systemParts.push(rendered);
     }
   }
+
+  for (const part of tailParts) systemParts.push(part);
 
   // Step 7: Before-prompt-build modifying hooks (plugins can prepend/append/override)
   const buildResult = await deps.hooks.fireModifying(

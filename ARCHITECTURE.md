@@ -365,14 +365,11 @@ treated as a §IX failure.
 ## VII. Frozen Schemas
 
 A frozen schema is a contract whose surface is governed beyond ordinary
-type changes. Every frozen schema has:
+type changes. Every frozen schema has a canonical contract module, a
+mechanical drift gate (a counter, a constant, or an enumeration test), a
+named owner, and a bump procedure.
 
-- A canonical contract module.
-- A mechanical drift gate (a counter, a constant, or an enumeration test).
-- A named owner.
-- A bump procedure.
-
-The personality schema is the worked example. [Personality governance](docs/content/building/explanation/personality-governance.md) explains how its freeze rule and the generated character sheet operationalise this section for `PersonalityConfig` — the personality-alignment phase removed four non-identity fields (`skin`, `busyInputMode`, `verbosity`, `metadata`) under exactly the procedure below. [AgentCard governance](docs/content/building/explanation/agent-card-governance.md) explains why the A2A signed card — a peer verifies it once, out of band, and trusts that anchor from then on — needed the same mechanical treatment (added in the a2a-spec-compat phase, D14). [Decision provider governance](docs/content/building/explanation/decision-provider-governance.md) is the RFC that added the Decision provider contract as a new contract type (decision-provider-jev plan, M0).
+The personality schema is the worked example. [Personality governance](docs/content/building/explanation/personality-governance.md) applies this section to `PersonalityConfig` (the personality-alignment phase removed `skin`, `busyInputMode`, `verbosity`, `metadata` by this procedure). [AgentCard governance](docs/content/building/explanation/agent-card-governance.md) explains why the A2A signed card (verified once out of band) needed the same treatment (a2a-spec-compat phase, D14). [Decision provider governance](docs/content/building/explanation/decision-provider-governance.md) is the RFC that added the Decision provider contract (decision-provider-jev, M0).
 
 ### Roster
 
@@ -391,10 +388,11 @@ The personality schema is the worked example. [Personality governance](docs/cont
 | AgentCard (A2A signed card) | Any two repository maintainers | Adding, removing, or renaming a top-level field on `AgentCard` (`packages/types/src/a2a.ts`) | Field-count + field-name test (`agent-card-field-count`) |
 | Pause lifecycle contract | Any two repository maintainers | Adding, removing, or renaming a method on `PauseLifecycle` | Method-count test (`pause-lifecycle-method-count`) |
 | Decision provider contract | Any two repository maintainers | Adding, removing, or renaming a method on `DecisionProvider` (`packages/types/src/decision.ts`) | Method-count test (`decision-provider-method-count`) |
+| World graph contract (proposed, O-8) | Any two repository maintainers | Adding, removing, or renaming a method on `WorldGraphProvider` (`packages/types/src/world-graph.ts`) | Method-count test (`world-graph-method-count`) |
 
 ### Bump obligations
 
-Bump obligations, worked examples for `ContextEngine` and `CompletionChunk`, and the categories that may never become frozen-schema fields: [ADR 0008](docs/decisions/0008-frozen-schema-bump-rules.md).
+Bump obligations, `ContextEngine` and `CompletionChunk` worked examples, and categories that may never become frozen-schema fields: [ADR 0008](docs/decisions/0008-frozen-schema-bump-rules.md).
 
 ------------------------------------------------------------------------
 
@@ -659,6 +657,15 @@ frozen_schemas:
     drift_gate: method_count_test
     frozen_method_count: 4
     frozen_methods: [put, get, has, hash]
+
+  # Proposed (O-8): pending maintainer approval of
+  # docs/content/building/explanation/world-graph-governance.md. The gate is
+  # packages/types/src/__tests__/world-graph-method-count.test.ts.
+  world_graph:
+    owner_class: any_two_maintainers
+    drift_gate: method_count_test
+    frozen_method_count: 14
+    frozen_methods: [query, neighbours, history, changes, assert, close, retire, getFact, getSchema, applySchema, import, export, purge, capabilities]
 
   pause_lifecycle:
     owner_class: any_two_maintainers

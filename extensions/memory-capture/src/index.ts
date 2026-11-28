@@ -11,9 +11,12 @@ export {
   type CaptureFact,
   type CaptureJob,
   type CaptureNotice,
+  type CaptureTriple,
   DEFAULT_CAPTURE_CONFIG,
+  type FactRoute,
   type GroundingConsult,
   type MemoryProposal,
   type ProposeFn,
+  type RouteFactFn,
   type TombstoneChecker,
 } from './types';

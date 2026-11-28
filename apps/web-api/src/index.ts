@@ -35,6 +35,7 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   type CreateAgentLoopResult,
   createLearningInbox,
+  createWorldChangesSource,
   DisposerStack,
   type FunnelTracker,
   hardlineReason,
@@ -133,6 +134,7 @@ import { UsageService } from './services/usage.service';
 import { VoiceService } from './services/voice.service';
 import { VoiceLaneModeService } from './services/voice-lane-mode.service';
 import { WakeRoutesService } from './services/wake-routes.service';
+import { type WorldsRuntime, WorldsService } from './services/worlds.service';
 import { createBrowserVoiceSessionOpener } from './voice/browser-voice-session';
 import { withImplicitWakeRoutes } from './voice/implicit-wake-routes';
 import { createRealtimeControlDeps } from './voice/realtime-control-deps';
@@ -492,6 +494,12 @@ export interface CreateWebApiOptions {
    * `http://localhost:3000` when omitted.
    */
   webBaseUrl?: string;
+  /**
+   * The world runtime's services (`CreateAgentLoopResult.worlds`, plan world-model 7.2): the ONE
+   * WorldService / WorldSchemaService / WorldConfigService the loop composed, borrowed here, never a
+   * second set. Absent (`world.enabled` off) → `worlds.*` answer NOT_CONFIGURED.
+   */
+  worlds?: WorldsRuntime;
   /** Share links (plan share-links): the store and where `ethos serve` listens. Absent → off. */
   shareLinks?: import('./features/share/service').ShareLinksHost;
   /**
@@ -1161,6 +1169,18 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     identityMap: opts.identityMap,
     pending: opts.memoryBundle.pending,
   });
+  // The owner's world-model surface. Cookie-only (SCOPE_MAP has no `worlds`); the actor is the
+  // same `web:<admin>` the share links record.
+  const worldsService = new WorldsService({
+    runtime: opts.worlds,
+    actor: share.actor,
+    publishWorld: (input) => share.service.publishWorld(input),
+    personalityIds: async () => (await opts.personalities.list()).map((p) => p.id),
+    memoryNotes: async (personalityId) => {
+      const files = await memoryService.list(personalityId).catch(() => ({ items: [] }));
+      return files.items.map((f) => ({ scope: `${personalityId}:${f.store}`, text: f.content }));
+    },
+  });
   // Ticket hooks attach to the main loop's registry when that loop is wired
   // (`wireMainLoop`) — during onboarding it does not exist yet.
   const kanbanService = new KanbanService({ mesh });
@@ -1290,11 +1310,25 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     secrets,
     ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
   });
+  const digestLogger = new ConsoleLogger({ component: 'digest' });
+  const digestOnError = (e: unknown) =>
+    digestLogger.warn(`digest: world changes: ${e instanceof Error ? e.message : String(e)}`);
   const digestService = new DigestService({
     storage,
     dataDir: opts.dataDir,
     personalities: opts.personalities,
     learning: learningService,
+    // World changes section (plan world-model 8.4): only with `world.enabled` (`opts.worlds`).
+    ...(opts.worlds
+      ? {
+          worldChanges: createWorldChangesSource({
+            service: opts.worlds.service,
+            configService: opts.worlds.configService,
+            onError: digestOnError,
+          }),
+        }
+      : {}),
+    onError: digestOnError,
   });
   const documentsService = new DocumentsService({
     personalities: opts.personalities,
@@ -2163,6 +2197,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       debug: debugService,
       apiKeys: apiKeysService,
       shares: share.service,
+      worlds: worldsService,
       digest: digestService,
       documents: documentsService,
       modelRegistry: modelRegistryService,

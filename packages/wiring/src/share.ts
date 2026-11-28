@@ -14,6 +14,7 @@ export {
   MIN_PREFIX_LENGTH,
   type ShareLinkEvent,
   type ShareLinkEventKind,
+  type ShareLinkKind,
   type ShareLinkRecord,
   type ShareLinkStoreOptions,
   type ShareLinkSummary,

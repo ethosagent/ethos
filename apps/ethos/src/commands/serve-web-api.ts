@@ -75,6 +75,8 @@ export interface BuildServeWebApiOptions {
   /** The loop's memory surfaces (`CreateAgentLoopResult.memoryBundle`) — the
    *  web editor, Timeline, restore and approve queue on its configured backend. */
   memoryBundle: import('@ethosagent/wiring').MemoryBundle;
+  /** The loop's ONE world runtime (`CreateAgentLoopResult.worlds`), behind `worlds.*`. Absent unless `world.enabled`. */
+  worlds?: import('@ethosagent/wiring').CreateAgentLoopResult['worlds'];
   /** The loop's self-amendment service (`CreateAgentLoopResult.amendments`).
    *  The web holds only its reads (`AmendmentReader`, D30). */
   amendments: import('@ethosagent/web-api').AmendmentReader;

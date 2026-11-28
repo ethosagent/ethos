@@ -2416,6 +2416,60 @@
             "recipients"
           ],
           "type": "object"
+        },
+        "world": {
+          "additionalProperties": false,
+          "properties": {
+            "contextHops": {
+              "anyOf": [
+                {
+                  "const": 1,
+                  "type": "number"
+                },
+                {
+                  "const": 2,
+                  "type": "number"
+                }
+              ]
+            },
+            "contextMaxChars": {
+              "type": "number"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "extraction": {
+              "enum": [
+                "off",
+                "propose"
+              ],
+              "type": "string"
+            },
+            "proposals": {
+              "additionalProperties": false,
+              "properties": {
+                "cap": {
+                  "type": "number"
+                },
+                "ttlDays": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "cap",
+                "ttlDays"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "enabled",
+            "contextMaxChars",
+            "contextHops",
+            "extraction",
+            "proposals"
+          ],
+          "type": "object"
         }
       },
       "required": [
@@ -2515,6 +2569,7 @@
         "compaction",
         "memoryVault",
         "memoryApproval",
+        "world",
         "memoryConsolidation",
         "memoryCapture",
         "background",
@@ -4979,6 +5034,90 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "world": {
+          "properties": {
+            "contextHops": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": 1,
+                      "type": "number"
+                    },
+                    {
+                      "const": 2,
+                      "type": "number"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contextMaxChars": {
+              "anyOf": [
+                {
+                  "maximum": 8000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "extraction": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "off",
+                    "propose"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proposalsCap": {
+              "anyOf": [
+                {
+                  "maximum": 100000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proposalsTtlDays": {
+              "anyOf": [
+                {
+                  "maximum": 3650,
+                  "minimum": 1,
+                  "type": "integer"
                 },
                 {
                   "type": "null"

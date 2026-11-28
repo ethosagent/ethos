@@ -85,6 +85,7 @@ export * from './voice';
 export * from './voice-realtime';
 export * from './wiring-context';
 export * from './worker-session';
+export * from './world-graph';
 
 // Phase 5 — Personality export/import portable bundles
 export interface ExportStamp {

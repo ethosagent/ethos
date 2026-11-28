@@ -83,6 +83,9 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       section('approval', 'approval'),
       section('consolidation', 'consolidation'),
       section('capture', 'capture'),
+      // `world.*` — the world model's switches. Owner only: the section renders
+      // only when `config.get` answered (panes/memory.tsx).
+      section('world', 'World'),
     ],
   },
   {

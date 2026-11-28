@@ -1,0 +1,2201 @@
+{
+  "worlds.buildPreview": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "maxLength": 200000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "source"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "conflict": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "entity",
+                  "attribute",
+                  "edge"
+                ],
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "sourceRef": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "sourceRef",
+              "conflict"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "additionalProperties": false,
+          "properties": {
+            "attributes": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "edges": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "entities": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proposals": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "entities",
+            "attributes",
+            "edges",
+            "proposals"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "summary",
+        "items"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.changes": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "since": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "since"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "enum": [
+                  "user",
+                  "import",
+                  "connector",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              "changes": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "author": {
+                      "enum": [
+                        "user",
+                        "import",
+                        "connector",
+                        "agent"
+                      ],
+                      "type": "string"
+                    },
+                    "factId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "opened",
+                        "closed",
+                        "retired",
+                        "entity"
+                      ],
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "at",
+                    "kind",
+                    "factId",
+                    "summary",
+                    "author"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "sourceRef": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sourceRef",
+              "author",
+              "changes"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.config": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "enum": [
+            "owner_only",
+            "shareable"
+          ],
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "proposers": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "readers": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "backend",
+        "title",
+        "audience",
+        "readers",
+        "proposers"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.configSave": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "enum": [
+            "owner_only",
+            "shareable"
+          ],
+          "type": "string"
+        },
+        "proposers": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "readers": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "title",
+        "audience",
+        "readers",
+        "proposers"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.decide": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "proposalId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "accept",
+            "reject"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposalId",
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "applied": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "closed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "applied",
+        "closed"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.entity": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "asOf": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "entityId": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "entityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "enum": [
+                  "user",
+                  "import",
+                  "connector",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "out",
+                  "in"
+                ],
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "otherId": {
+                "type": "string"
+              },
+              "otherName": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "validFrom": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "validTo": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "direction",
+              "otherId",
+              "otherName",
+              "validFrom",
+              "validTo",
+              "author"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "facts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "enum": [
+                  "user",
+                  "import",
+                  "connector",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "id": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "promotable": {
+                "type": "boolean"
+              },
+              "recordedAt": {
+                "type": "string"
+              },
+              "sourceRef": {
+                "type": "string"
+              },
+              "validFrom": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "validTo": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "value": {}
+            },
+            "required": [
+              "id",
+              "key",
+              "value",
+              "validFrom",
+              "validTo",
+              "recordedAt",
+              "author",
+              "sourceRef",
+              "confidence",
+              "promotable"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "memoryMentions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "excerpt": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope",
+              "excerpt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "mountedBy": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "effective": {
+                "enum": [
+                  "read",
+                  "propose"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "read",
+                  "propose"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "personalityId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "personalityId",
+              "mode",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "retiredAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "world",
+        "type",
+        "name",
+        "aliases",
+        "retiredAt",
+        "facts",
+        "edges",
+        "memoryMentions",
+        "mountedBy"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.export": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "asOf": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "facts-yaml",
+            "json",
+            "graphml",
+            "mermaid",
+            "mcp-jsonl",
+            "csv"
+          ],
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "format"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "filename",
+        "mime",
+        "text"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.factClose": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "factId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "validTo": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "factId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.factWrite": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "fact": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "aliases": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "const": "entity",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "type",
+                "name"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "entityId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "key": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "attribute",
+                  "type": "string"
+                },
+                "validFrom": {
+                  "maxLength": 40,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "value": {}
+              },
+              "required": [
+                "kind",
+                "entityId",
+                "key",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "attrs": {
+                  "additionalProperties": {},
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "fromId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "edge",
+                  "type": "string"
+                },
+                "toId": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validFrom": {
+                  "maxLength": 40,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "type",
+                "fromId",
+                "toId"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "fact"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "ids"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.graph": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "asOf": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "focus": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "hops": {
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "types": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "author": {
+                "enum": [
+                  "user",
+                  "import",
+                  "connector",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "validFrom": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "validTo": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "from",
+              "to",
+              "validFrom",
+              "validTo",
+              "author"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "isNew": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "name",
+              "isNew"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "nodes",
+        "edges",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.import": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "facts-yaml",
+            "json",
+            "mcp-jsonl",
+            "csv"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 8000000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "format",
+        "text"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "edges": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entities": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "line": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entities",
+        "attributes",
+        "edges",
+        "skipped"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.linkify": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "text"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "spans": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "entity": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "spans"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.list": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "worlds": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "audience": {
+                "enum": [
+                  "owner_only",
+                  "shareable"
+                ],
+                "type": "string"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "counts": {
+                "additionalProperties": false,
+                "properties": {
+                  "entities": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "liveEdges": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "pendingProposals": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "entities",
+                  "liveEdges",
+                  "pendingProposals"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "pattern": "^(world|personality):[a-z0-9-]+$",
+                "type": "string"
+              },
+              "mountedBy": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "effective": {
+                      "enum": [
+                        "read",
+                        "propose"
+                      ],
+                      "type": "string"
+                    },
+                    "mode": {
+                      "enum": [
+                        "read",
+                        "propose"
+                      ],
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "personalityId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "personalityId",
+                    "mode",
+                    "effective"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "audience",
+              "backend",
+              "counts",
+              "mountedBy"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "worlds"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.mounts": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "effective": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "effective": {
+                "enum": [
+                  "read",
+                  "propose"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "world": {
+                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "world",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "mounts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "read",
+                  "propose"
+                ],
+                "type": "string"
+              },
+              "world": {
+                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "world",
+              "mode"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "mounts",
+        "effective"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.mountsSave": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "mounts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "read",
+                  "propose"
+                ],
+                "type": "string"
+              },
+              "world": {
+                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "world",
+              "mode"
+            ],
+            "type": "object"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "personalityId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "personalityId",
+        "mounts"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "effective": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "effective": {
+                "enum": [
+                  "read",
+                  "propose"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "world": {
+                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "world",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "effective"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.promote": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "factId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "factId"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "factId": {
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "factId"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.proposals": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "accepted",
+            "rejected",
+            "superseded",
+            "expired"
+          ],
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "proposals": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "conflictWith": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decidedBy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "assert",
+                  "close",
+                  "retire",
+                  "schema",
+                  "merge_entity"
+                ],
+                "type": "string"
+              },
+              "proposedBy": {
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sourceRef": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "accepted",
+                  "rejected",
+                  "superseded",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "world": {
+                "pattern": "^(world|personality):[a-z0-9-]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "world",
+              "kind",
+              "status",
+              "summary",
+              "conflictWith",
+              "sourceRef",
+              "proposedBy",
+              "confidence",
+              "createdAt",
+              "decidedAt",
+              "decidedBy",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposals"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.schema": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "changelog": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "by": {
+                "type": "string"
+              },
+              "change": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "v": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "v",
+              "by",
+              "at",
+              "change"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "loadErrors": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "column": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "line": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line",
+              "message"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "parsed": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "edges": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "attrs": {
+                        "additionalProperties": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "enum": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "max": {
+                              "type": "number"
+                            },
+                            "min": {
+                              "type": "number"
+                            },
+                            "type": {
+                              "enum": [
+                                "string",
+                                "int",
+                                "number",
+                                "bool",
+                                "date",
+                                "url"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "from": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "to": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "unique": {
+                        "enum": [
+                          "from",
+                          "to"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to",
+                      "attrs"
+                    ],
+                    "type": "object"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "entities": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "attrs": {
+                        "additionalProperties": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "enum": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "max": {
+                              "type": "number"
+                            },
+                            "min": {
+                              "type": "number"
+                            },
+                            "type": {
+                              "enum": [
+                                "string",
+                                "int",
+                                "number",
+                                "bool",
+                                "date",
+                                "url"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ],
+                          "type": "object"
+                        },
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "attrs"
+                    ],
+                    "type": "object"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "version": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "version",
+                "entities",
+                "edges"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sensitive": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "versions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "by": {
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "version",
+              "by",
+              "at",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "yaml": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "yaml",
+        "parsed",
+        "sensitive",
+        "changelog",
+        "versions",
+        "loadErrors"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.schemaSave": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "expectedVersion": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        },
+        "yaml": {
+          "maxLength": 256000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "yaml",
+        "expectedVersion"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "type": "boolean"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ok",
+        "version"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  },
+  "worlds.shareCreate": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "asOf": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "expiresInDays": {
+          "maximum": 90,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "keepEmail": {
+          "type": "boolean"
+        },
+        "keepLocation": {
+          "type": "boolean"
+        },
+        "view": {
+          "enum": [
+            "tree",
+            "graph"
+          ],
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world",
+        "view",
+        "expiresInDays"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expiresAt": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "ok": {
+              "const": true,
+              "type": "boolean"
+            },
+            "redacted": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "url",
+            "id",
+            "expiresAt",
+            "redacted"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "limitBytes": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "ok": {
+              "const": false,
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "reason",
+            "limitBytes"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "route": {}
+  },
+  "worlds.tree": {
+    "input": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "asOf": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "world": {
+          "pattern": "^(world|personality):[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "world"
+      ],
+      "type": "object"
+    },
+    "meta": {},
+    "output": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "entities": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "edgeCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "isNew": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "edgeCount",
+                    "isNew"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "entities"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "type": "object"
+    },
+    "route": {}
+  }
+}

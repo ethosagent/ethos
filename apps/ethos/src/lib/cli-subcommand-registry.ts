@@ -59,6 +59,7 @@ export const builtInCliNames = new Set([
   'nightly',
   'digest',
   'request-dump',
+  'world',
 ]);
 
 export class CliSubcommandRegistry {

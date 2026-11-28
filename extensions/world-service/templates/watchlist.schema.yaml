@@ -1,0 +1,17 @@
+# Stocks watchlist template (read-only research; nothing here places orders).
+# Default world audience for a watchlist is `shareable` (plan open decision
+# O-2, leaning column): a watchlist is expected to be shown to others, so the
+# agent proposes and the owner promotes. Set `private` in world config for a
+# personal list. The audience lives in the world config, not in this schema.
+version: 1
+entities:
+  Stock:  { attrs: { ticker: { type: string }, exchange: { type: string } } }
+  Sector: { attrs: {} }
+  Event:  { attrs: { kind: { type: string }, date: { type: date }, url: { type: url } } }
+  List:   { attrs: {} }
+edges:
+  in_sector:     "Stock -> Sector"
+  supplies:      { from: [Stock], to: [Stock], attrs: { share: { type: number, min: 0, max: 1 } } }
+  competes_with: "Stock -> Stock"
+  affected_by:   { from: [Stock], to: [Event], attrs: { direction: { type: string, enum: [up, down, unclear] } } }
+  watched_in:    "Stock -> List"

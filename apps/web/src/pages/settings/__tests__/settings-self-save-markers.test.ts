@@ -19,8 +19,10 @@ import { BackupPane } from '../panes/backup';
 import { ChatPane } from '../panes/chat';
 import { GeneralPane } from '../panes/general';
 import { KeysPane } from '../panes/keys';
+import { MemoryPane } from '../panes/memory';
 import { ModelsPane } from '../panes/models';
 import { SecurityPane } from '../panes/security';
+import { configGetFixture } from './config-get-fixture';
 import { registryList } from './model-registry-fixture';
 
 // T10 — plan/phases/settings-navigation.md D11 / §6.4. Every `SETTINGS_INDEX`
@@ -226,6 +228,63 @@ function wakePanelMarkup(): string {
   );
 }
 
+/** The Memory pane as the owner sees it: `config.get` answered, so `config.world` is present. */
+function ownerMemoryMarkup(): string {
+  const queryClient = new QueryClient();
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        AntApp,
+        null,
+        createElement(
+          MemoryRouter,
+          { initialEntries: ['/'] },
+          createElement(
+            Routes,
+            null,
+            createElement(
+              Route,
+              { element: createElement(OwnerHarness) },
+              createElement(Route, { path: '/', element: createElement(MemoryPane) }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function OwnerHarness() {
+  const [form] = Form.useForm();
+  const context: SettingsPaneContext = {
+    form,
+    config: configGetFixture(),
+    personalities: [],
+    personalitiesLoading: false,
+    quickCommandRows: [],
+    setQuickCommandRows: noop,
+    channelToolsetRows: [],
+    setChannelToolsetRows: noop,
+    voiceTtsProviderRows: [],
+    setVoiceTtsProviderRows: noop,
+    voiceSttProviderRows: [],
+    setVoiceSttProviderRows: noop,
+    voiceRealtimeProviderRows: [],
+    setVoiceRealtimeProviderRows: noop,
+    retentionRows: [],
+    setRetentionRows: noop,
+    voiceBotRows: [],
+    setVoiceBotRows: noop,
+  };
+  return createElement(
+    Form,
+    { form, layout: 'vertical', component: false },
+    createElement(Outlet, { context }),
+  );
+}
+
 /** The slice of rendered markup between one `SectionHeading id="…"` and the next. */
 function sectionBlock(html: string, id: string): string {
   const start = html.indexOf(`id="${id}"`);
@@ -261,6 +320,7 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
       // Derived, not listed: the Keys pane has one self-saving section per
       // canonical category.
       ...[...KEY_CATEGORY_IDS].map((id) => `keys/${id}`).sort(),
+      'memory/world',
       'models/decision-models',
       'models/models',
       'models/per-personality-routing',
@@ -298,6 +358,10 @@ describe('every self-saving section renders SelfSaveMarker', () => {
       ),
     );
     expect(sectionBlock(html, 'initiatives')).toContain(MARKER_TEXT);
+  });
+
+  it('memory/world — the world.* controls', () => {
+    expect(sectionBlock(ownerMemoryMarkup(), 'world')).toContain(MARKER_TEXT);
   });
 
   it('voice/wake-routes — WakePanel', () => {

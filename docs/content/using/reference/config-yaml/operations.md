@@ -149,3 +149,26 @@ Both keys are read from `config.yaml` on every share request and every `/share/<
 shareLinks.enabled: true
 shareLinks.excludePersonalities: ops, legal
 ```
+
+## world {#world}
+
+Type: object · Default: absent (off)
+
+Switch and limits for the world model. Read in [`packages/config/src/builders/world.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/builders/world.ts); pinned by `packages/config/src/__tests__/world-config.test.ts`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `world.enabled` | boolean | `false` | Only a literal `true` or `false` is read. When off, no world tools are registered and no world context is injected (pinned by `packages/wiring/src/__tests__/worlds-wiring.test.ts`). |
+| `world.contextMaxChars` | number | `2400` | Budget for the world block in the prompt tail. Clamped to 0 to 8000. |
+| `world.contextHops` | `1` or `2` | `2` | How many relationship hops the context expands from a matched entity. |
+| `world.extraction` | `off` or `propose` | `off` | `propose` sends facts extracted from chat to the proposal queue. |
+| `world.proposals.cap` | integer | `500` | Most pending proposals per world. |
+| `world.proposals.ttlDays` | integer | `30` | Days a proposal stays pending. |
+
+A value that is not valid is dropped with a warning and the default applies. A `world.*` key this version does not know is kept as written when Ethos rewrites `config.yaml`. The `world_*` tools reach a personality only when its `toolset.yaml` lists them.
+
+```yaml
+world.enabled: true
+world.contextHops: 1
+world.proposals.ttlDays: 14
+```

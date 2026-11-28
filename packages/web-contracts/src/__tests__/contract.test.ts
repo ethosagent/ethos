@@ -365,6 +365,7 @@ describe('contract router', () => {
       'tools',
       'usage',
       'voice',
+      'worlds',
     ]);
   });
 

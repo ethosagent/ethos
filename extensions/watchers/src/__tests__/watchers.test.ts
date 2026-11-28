@@ -238,6 +238,23 @@ describe('rss watcher', () => {
     expect(h.delivered).toHaveLength(1);
   });
 
+  it('puts each new item URL in the summary when the feed gives one', async () => {
+    const withLinks = (ids: string[]): string =>
+      `<rss><channel>${ids
+        .map(
+          (i) => `<item><guid>${i}</guid><title>T ${i}</title><link>https://x/${i}</link></item>`,
+        )
+        .join('')}</channel></rss>`;
+    h.fetchImpl.fn = async () => new Response(withLinks(['a']));
+    await h.manager.createWatcher(
+      fileWatcher({ id: 'link-rss', kind: 'rss', target: 'https://example.com/feed.xml' }),
+    );
+    await h.manager.tick('link-rss');
+    h.fetchImpl.fn = async () => new Response(withLinks(['b', 'a']));
+    const result = await h.manager.tick('link-rss');
+    expect(result.summary).toBe('1 new RSS item: T b (https://x/b)');
+  });
+
   it('parses guid, falls back to link, then title hash', () => {
     const xml = `
       <rss><channel>

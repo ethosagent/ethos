@@ -73,6 +73,9 @@ describe('@ethosagent/skills bundle', () => {
       // Added with the first one advertised in BUNDLED_SKILL_IDS
       // (`personal/get-to-know-you`).
       'personal',
+      // `knowledge` covers skills that maintain the user's world graph (plan
+      // world-model §4.5). Added with `knowledge/world-graph`.
+      'knowledge',
     ]);
     for (const id of BUNDLED_SKILL_IDS) {
       const raw = readFileSync(join(SOURCE.dir, id, 'SKILL.md'), 'utf8');

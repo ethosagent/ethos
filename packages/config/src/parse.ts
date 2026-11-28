@@ -60,6 +60,7 @@ import {
 } from './builders/tools';
 import { parseBoundedFloat, parseBoundedInt, splitList, takeKvLine } from './builders/utils';
 import { buildWebhooks } from './builders/webhooks';
+import { buildWorld, WORLD_LINE } from './builders/world';
 import type { EthosConfig } from './config-types';
 import { buildDecisionsConfig, DECISIONS_LINE_RE } from './decisions';
 import {
@@ -219,6 +220,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   // Scale-to-zero idle watcher — idleWatcher.<field>: <value>.
   const idleWatcherKv: Record<string, string> = keyUse.track('idleWatcher.', {});
   const shareLinksKv: Record<string, string> = keyUse.track('shareLinks.', {});
+  const worldKv: Record<string, string> = keyUse.track('world.', {});
   const nodesKv: Record<string, string> = keyUse.track('nodes.', {}); // laptop tool nodes (D18)
   // Resume-side clock correction — pauseClockCorrection.<field>: <value>.
   const pauseClockCorrectionKv: Record<string, string> = keyUse.track('pauseClockCorrection.', {});
@@ -1050,6 +1052,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     if (takeKvLine(line, IDLE_WATCHER_LINE, idleWatcherKv)) continue;
     // shareLinks.<field>: <value>  (global share-link switch; default OFF).
     if (takeKvLine(line, SHARE_LINKS_LINE, shareLinksKv)) continue;
+    // world.<field>: <value>  (world model; default OFF).
+    if (takeKvLine(line, WORLD_LINE, worldKv)) continue;
     if (takeKvLine(line, /^nodes\.(enabled):\s*(.+)$/, nodesKv)) continue; // nodes.enabled (default OFF)
     // pauseClockCorrection.<field>: <value>  (resume clock correction; default OFF).
     const pcc = line.match(/^pauseClockCorrection\.(enabled|thresholdMs):\s*(.+)$/);
@@ -1330,6 +1334,8 @@ export function parseConfigYaml(src: string): EthosConfig {
   const idleWatcher = buildIdleWatcher(idleWatcherKv);
   const shareLinksWarnings: string[] = [];
   const shareLinks = buildShareLinks(shareLinksKv, shareLinksWarnings);
+  const worldWarnings: string[] = [];
+  const world = buildWorld(worldKv, worldWarnings);
   const nodes = buildNodes(nodesKv);
   const pauseClockCorrection = buildPauseClockCorrection(pauseClockCorrectionKv);
   // ETHOS_ORCHESTRATOR_URL / ETHOS_ORCHESTRATOR_TOKEN win over the yaml value,
@@ -1851,6 +1857,7 @@ export function parseConfigYaml(src: string): EthosConfig {
         : undefined,
     idleWatcher,
     shareLinks,
+    world,
     nodes,
     pauseClockCorrection,
     pauseLifecycle: pauseLifecycleHttp ? { http: pauseLifecycleHttp } : undefined,
@@ -1871,6 +1878,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...auxTimeoutWarnings,
     ...retentionWarnings,
     ...shareLinksWarnings,
+    ...worldWarnings,
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,

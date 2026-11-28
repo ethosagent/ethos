@@ -1474,6 +1474,7 @@ export interface EthosConfig {
    *   idleWatcher.wakePathConfirmed: false
    */
   idleWatcher?: IdleWatcherConfig;
+  world?: import('./section-types').WorldConfig; // plan world-model 4.6; read via resolveWorld
   shareLinks?: import('./section-types').ShareLinksConfig; // plan share-links D11; read via resolveShareLinks
   /**
    * Laptop tool nodes (plan laptop-tool-node D18). Off unless enabled.

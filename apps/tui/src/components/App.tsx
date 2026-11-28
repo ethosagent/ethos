@@ -57,6 +57,7 @@ import { type AgentStatus, type BudgetState, StatusBar } from './StatusBar';
 import { type DelegationRecord, SubagentsPane } from './SubagentsPane';
 import { ThinkingPane } from './ThinkingPane';
 import { type ActiveTool, type CompletedTool, ToolSpinner } from './ToolSpinner';
+import { visibleWorlds, WorldTreePanel, type WorldTreeSource } from './WorldTreePanel';
 
 interface TurnTiming {
   turnStart: number;
@@ -221,6 +222,11 @@ export interface AppProps {
       messageId: string,
     ) => Promise<{ message: string; switchTo: { sessionKey: string; personalityId?: string } }>;
   };
+  /**
+   * `/world [slug]`: the worlds this terminal may show and one world's tree, from the host's world
+   * runtime. Absent (the world model is off) -> the command reports it is unavailable.
+   */
+  worlds?: WorldTreeSource;
 }
 
 /**
@@ -327,6 +333,7 @@ export function App({
   readMemory,
   branches,
   rewind,
+  worlds,
   setPluginCredential,
 }: AppProps) {
   const { exit } = useApp();
@@ -345,6 +352,11 @@ export function App({
   const [incognito, setIncognito] = useState(initialIncognito);
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
   const [statusMsg, setStatusMsg] = useState('');
+  const [worldPanel, setWorldPanel] = useState<{
+    slug: string;
+    title: string;
+    text: string;
+  } | null>(null);
   const [details, setDetails] = useState<DetailsState>(DEFAULT_DETAILS);
   // Skin state — a valid user pin wins, otherwise the engine default.
   // `userPinnedSkin` is the value the user set via `--skin` flag, config.yaml,
@@ -1235,6 +1247,47 @@ export function App({
         }
         break;
       }
+      case 'world': {
+        if (!worlds) {
+          setStatusMsg('[worlds are not available here]');
+          break;
+        }
+        const target = args[0] ?? '';
+        if (target === 'close') {
+          setWorldPanel(null);
+          break;
+        }
+        try {
+          const shown = visibleWorlds(await worlds.list(), worlds.lane);
+          if (target === '') {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: nextId(),
+                role: 'assistant',
+                text:
+                  shown.length === 0
+                    ? 'No worlds here. Create one with: ethos world create <slug> --template company'
+                    : `Worlds (open one with /world <slug>):\n${shown.map((w) => `  ${w.slug}  ${w.title}`).join('\n')}`,
+              },
+            ]);
+            break;
+          }
+          const world = shown.find((w) => w.slug === target);
+          if (!world) {
+            setStatusMsg(`[no world ${target} here]`);
+            break;
+          }
+          setWorldPanel({
+            slug: world.slug,
+            title: world.title,
+            text: await worlds.tree(world.slug),
+          });
+        } catch (err) {
+          setStatusMsg(`[${err instanceof Error ? err.message : String(err)}]`);
+        }
+        break;
+      }
       case 'rewind': {
         if (!rewind) {
           setStatusMsg('[rewind is not available here]');
@@ -1803,6 +1856,9 @@ export function App({
           >
             <SubagentsPane delegations={delegations} />
           </AccordionSection>
+        )}
+        {worldPanel && (
+          <WorldTreePanel slug={worldPanel.slug} title={worldPanel.title} text={worldPanel.text} />
         )}
         {showKeymap && (
           <Box marginBottom={1}>

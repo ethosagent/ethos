@@ -152,6 +152,8 @@ export async function diffHttp(
 interface FeedItem {
   guid: string;
   title: string;
+  /** The item's own URL when the feed gives one (`<link>` text or an Atom `href`). */
+  link?: string;
 }
 
 function tagText(block: string, tag: string): string | null {
@@ -170,7 +172,9 @@ export function parseFeedItems(xml: string): FeedItem[] {
     const title = tagText(block, 'title') ?? '(untitled)';
     const guid =
       tagText(block, 'guid') ?? tagText(block, 'id') ?? tagText(block, 'link') ?? sha256(block);
-    return { guid, title };
+    const href = block.match(/<link\b[^>]*\bhref=["']([^"']+)["']/i)?.[1];
+    const link = tagText(block, 'link') ?? href;
+    return { guid, title, ...(link ? { link } : {}) };
   });
 }
 
@@ -204,7 +208,7 @@ export async function diffRss(
 
   const titles = fresh
     .slice(0, 5)
-    .map((i) => i.title)
+    .map((i) => (i.link ? `${i.title} (${i.link})` : i.title))
     .join('; ');
   const suffix = fresh.length > 5 ? '; …' : '';
   return {

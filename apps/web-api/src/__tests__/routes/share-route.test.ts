@@ -245,4 +245,54 @@ describe('GET /share/<token>', () => {
     await get(`/share/${token}`);
     expect(viewsOf()?.viewCount).toBe(1);
   });
+
+  it('a world link renders its tree and a mismatched body is a 404', async () => {
+    const world = JSON.stringify({
+      v: 1,
+      kind: 'world',
+      world: 'world:acme',
+      title: 'Acme',
+      view: 'tree',
+      asOf: '2026-11-28T00:00:00.000Z',
+      createdAt: '2026-11-28T00:00:00.000Z',
+      groups: [
+        {
+          type: 'Team',
+          entities: [{ id: 't1', name: 'Platform', aliases: [], attrs: [], links: [] }],
+        },
+      ],
+      redacted: ['email'],
+    });
+    const ok = store.create({
+      sessionId: 'world:acme',
+      kind: 'world',
+      personalityId: '',
+      title: 'Acme',
+      options: '{}',
+      snapshot: world,
+      expiresAt: new Date(Date.now() + 3_600_000),
+      actor: 'cli',
+    });
+    const res = await get(`/share/${ok.token}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="e-t1"');
+    // A session-shaped body under a world row does not render.
+    const bad = store.create({
+      sessionId: 'world:acme',
+      kind: 'world',
+      personalityId: '',
+      title: 'x',
+      options: '{}',
+      snapshot: JSON.stringify({
+        v: 1,
+        title: 'x',
+        personalityId: null,
+        createdAt: 'z',
+        turns: [],
+      }),
+      expiresAt: new Date(Date.now() + 3_600_000),
+      actor: 'cli',
+    });
+    expect((await get(`/share/${bad.token}`)).status).toBe(404);
+  });
 });

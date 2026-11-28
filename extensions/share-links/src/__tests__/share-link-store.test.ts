@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type Database from '@ethosagent/sqlite';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AmbiguousSharePrefixError,
@@ -409,5 +409,86 @@ describe('SqliteShareLinkStore — revokeOrphans', () => {
       }, 'system'),
     ).rejects.toThrow('sessions.db busy');
     expect(store.list({ activeOnly: true }).map((r) => r.id)).toEqual([link.id]);
+  });
+});
+
+describe('SqliteShareLinkStore — world links', () => {
+  let store: SqliteShareLinkStore;
+  beforeEach(() => {
+    store = new SqliteShareLinkStore(':memory:', { now: () => T0 });
+  });
+  afterEach(() => store.close());
+
+  it('revoke purges the world snapshot', () => {
+    const a = store.create(input({ sessionId: 'world:acme', kind: 'world' })).record;
+    const b = store.create(input({ sessionId: 'world:acme', kind: 'world' })).record;
+    const other = store.create(input({ sessionId: 'world:other', kind: 'world' })).record;
+    expect(a.kind).toBe('world');
+    expect(a.subjectId).toBe('world:acme');
+    expect(store.revoke(a.id, 'web:admin')?.snapshot).toBeNull();
+    expect(store.revokeForSubject('world:acme', 'web:admin')).toBe(1);
+    const snaps = rawDb(store)
+      .prepare('SELECT id, snapshot FROM share_links WHERE session_id = ? ORDER BY rowid')
+      .all('world:acme') as Array<{ id: string; snapshot: string | null }>;
+    expect(snaps.map((r) => r.snapshot)).toEqual([null, null]);
+    expect(store.listEvents(b.id).map((e) => e.kind)).toEqual(['created', 'revoked']);
+    expect(store.list({ activeOnly: true }).map((r) => r.id)).toEqual([other.id]);
+  });
+
+  it('the orphan sweep never revokes a world link, and list can filter by kind', async () => {
+    const world = store.create(input({ sessionId: 'world:acme', kind: 'world' })).record;
+    const sess = store.create(input({ sessionId: 'gone' })).record;
+    const asked: string[] = [];
+    expect(
+      await store.revokeOrphans(async (id) => {
+        asked.push(id);
+        return false;
+      }, 'system'),
+    ).toBe(1);
+    expect(asked).toEqual(['gone']);
+    expect(store.list({ activeOnly: true, kind: 'world' }).map((r) => r.id)).toEqual([world.id]);
+    expect(store.list({ activeOnly: false, kind: 'session' }).map((r) => r.id)).toEqual([sess.id]);
+  });
+});
+
+describe('SqliteShareLinkStore — migration', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'share-links-mig-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('migration keeps existing rows as kind session', () => {
+    const path = join(dir, 'share-links.db');
+    // A v1 file: no `kind` column, user_version 1.
+    const old = new Database(path);
+    old.exec(`CREATE TABLE share_links (
+      id TEXT PRIMARY KEY, prefix TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+      session_id TEXT NOT NULL, personality_id TEXT NOT NULL, title TEXT NOT NULL,
+      options TEXT NOT NULL, snapshot TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      revoked_at TEXT, view_count INTEGER NOT NULL DEFAULT 0, last_viewed_at TEXT
+    ) STRICT;
+    CREATE TABLE share_link_events (
+      id INTEGER PRIMARY KEY, link_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('created', 'revoked', 'purged')),
+      actor TEXT NOT NULL, at TEXT NOT NULL
+    ) STRICT;`);
+    old
+      .prepare(
+        `INSERT INTO share_links (id, prefix, token_hash, session_id, personality_id, title, options, snapshot, created_at, expires_at)
+         VALUES ('l1', 'abcdefgh', 'h1', 'web:s1', 'p', 't', '{}', '{}', ?, ?)`,
+      )
+      .run(T0.toISOString(), at(HOUR).toISOString());
+    old.pragma('user_version = 1');
+    old.close();
+
+    const store = new SqliteShareLinkStore(path, { now: () => T0 });
+    const rows = store.list({ activeOnly: false });
+    expect(rows.map((r) => [r.id, r.kind, r.subjectId])).toEqual([['l1', 'session', 'web:s1']]);
+    store.close();
+    // Opening again is a no-op (idempotent).
+    const again = new SqliteShareLinkStore(path, { now: () => T0 });
+    expect(again.list({ activeOnly: false })).toHaveLength(1);
+    again.close();
   });
 });

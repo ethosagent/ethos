@@ -174,6 +174,8 @@ export const GUARANTEE_IDS = [
   'G-CHAN',
   'G-AUDIT',
   'G-MEM',
+  'G-WORLD-WRITE',
+  'G-WORLD-AUD',
   'G-INIT-RO',
   'G-INIT-CFG',
 ] as const;

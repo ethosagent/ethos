@@ -346,6 +346,18 @@ const sqliteFiles = (name: string): string[] => [name, `${name}-wal`, `${name}-s
  * - `channels` — the per-room prompt files (`channels/<platform>/<room>.md`,
  *   plan channel-prompts D15) the gateway loads into the static system block;
  *   a turn that could write there could plant standing instructions for a room.
+ * - `worlds` — every world's definition and data (`world.yaml`, `schema.yaml`,
+ *   `graph.db`, `service.db`; plan world-model Task 2.5, R4,
+ *   docs/decisions/0012-world-graph-contract.md). A write could grant a
+ *   personality a world or plant facts and schema the owner never reviewed;
+ *   READS are denied too, because an owner-only world holds private content and
+ *   its schema alone names it. Every legitimate reader and writer —
+ *   `WorldConfigService`, `WorldSchemaService`, `WorldService` — holds
+ *   compose-time Storage or a raw SQLite handle, never a turn's. The per-
+ *   personality mounts file (`personalities/<id>/worlds.yaml`) is the other
+ *   half: write-floored as a personality-definition entry
+ *   (`PERSONALITY_DEFINITION_ENTRIES`, packages/types/src/personality-definition.ts).
+ *   Pinned by `packages/wiring/src/__tests__/world-floor.test.ts`.
  */
 const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   'keys.json',
@@ -368,6 +380,7 @@ const STATE_DIR_DENY_ENTRIES: ReadonlyArray<string> = [
   ...sqliteFiles('initiatives.db'),
   'learning',
   'channels',
+  'worlds',
 ];
 
 /**

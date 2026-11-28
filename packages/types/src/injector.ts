@@ -51,7 +51,14 @@ export interface PromptContext {
 
 export interface InjectionResult {
   content: string;
-  position?: 'prepend' | 'append';
+  /**
+   * Where the block is rendered.
+   * `prepend` — before the other sections.
+   * `append` — after other injectors, before memory. This is the default.
+   * `tail` — after the memory block, outside the static prefix (everything
+   * before `## Memory`). Per-turn text belongs here.
+   */
+  position?: 'prepend' | 'append' | 'tail';
   section?: string;
 }
 

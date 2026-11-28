@@ -283,6 +283,20 @@ export const ConfigUpdateInput = z.object({
       ttlDays: z.number().int().min(1).nullable().optional(),
     })
     .optional(),
+  /** `world.*`. Per-field merge; null clears one key (the default applies again). */
+  world: z
+    .object({
+      enabled: z.boolean().nullable().optional(),
+      contextMaxChars: z.number().int().min(0).max(8000).nullable().optional(),
+      contextHops: z
+        .union([z.literal(1), z.literal(2)])
+        .nullable()
+        .optional(),
+      extraction: z.enum(['off', 'propose']).nullable().optional(),
+      proposalsCap: z.number().int().min(1).max(100_000).nullable().optional(),
+      proposalsTtlDays: z.number().int().min(1).max(3650).nullable().optional(),
+    })
+    .optional(),
   /** `memoryConsolidation.*` decay + flush tunables. Per-field merge. */
   memoryConsolidation: z
     .object({

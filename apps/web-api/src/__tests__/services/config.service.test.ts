@@ -696,6 +696,48 @@ describe('ConfigService — settings passthrough groups', () => {
     expect(JSON.stringify(r)).not.toContain('capturekey');
   });
 
+  it('world.* shows defaults without writing them and round-trips a patch', async () => {
+    await writeBase();
+    const before = await service.get();
+    expect(before.world).toEqual({
+      enabled: false,
+      contextMaxChars: 2400,
+      contextHops: 2,
+      extraction: 'off',
+      proposals: { cap: 500, ttlDays: 30 },
+    });
+    expect(await storage.read(join(DATA, 'config.yaml'))).not.toContain('world.');
+
+    await service.update({
+      world: {
+        enabled: true,
+        contextMaxChars: 1200,
+        contextHops: 1,
+        extraction: 'propose',
+        proposalsCap: 100,
+        proposalsTtlDays: 7,
+      },
+    });
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('world.enabled: true');
+    expect(written).toContain('world.proposals.ttlDays: 7');
+    expect((await service.get()).world).toEqual({
+      enabled: true,
+      contextMaxChars: 1200,
+      contextHops: 1,
+      extraction: 'propose',
+      proposals: { cap: 100, ttlDays: 7 },
+    });
+
+    // null clears one key; the default applies again.
+    await service.update({ world: { enabled: null } });
+    expect((await service.get()).world.enabled).toBe(false);
+    expect(await storage.read(join(DATA, 'config.yaml'))).not.toContain('world.enabled');
+    await expect(service.update({ world: { proposalsCap: 0 } })).rejects.toMatchObject({
+      code: 'CONFIG_INVALID',
+    });
+  });
+
   it('round-trips background job-pool caps under their snake_case keys', async () => {
     await writeBase();
     await service.update({

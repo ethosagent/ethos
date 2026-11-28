@@ -157,13 +157,16 @@
     "@ethosagent/tools-voice": "workspace:*",
     "@ethosagent/tools-watchers": "workspace:*",
     "@ethosagent/tools-web": "workspace:*",
+    "@ethosagent/tools-world": "workspace:*",
     "@ethosagent/tools-x-search": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/voice-providers": "workspace:*",
     "@ethosagent/voice-session": "workspace:*",
     "@ethosagent/voice-text": "workspace:*",
     "@ethosagent/watchers": "workspace:*",
-    "@ethosagent/worker-router": "workspace:*"
+    "@ethosagent/worker-router": "workspace:*",
+    "@ethosagent/world-service": "workspace:*",
+    "@ethosagent/world-sqlite": "workspace:*"
   },
   "devDependencies": {
     "@ethosagent/tools-a2a": "workspace:*",

@@ -94,6 +94,7 @@ import {
   createUndecoratedBackend,
   privateMemoryExtraRoots,
 } from './memory-backend';
+import { closeMemoryProvider, readOnlyMemory } from './memory-provider-helpers';
 import {
   lookupContextWindow,
   lookupLegacyCatalogModelId,
@@ -241,38 +242,6 @@ export function resolveJobClarifyOrigin(
       // 'originator' clarify from this job binds to whoever started it.
       ...(job?.originUserId ? { originatorUserId: job.originUserId } : {}),
     },
-  };
-}
-
-/**
- * `MemoryProvider` (five methods, drift-gated) has no close; a backend that
- * holds a connection of its own — memory-vector's memory.db — exposes one.
- */
-async function closeMemoryProvider(provider: MemoryProvider): Promise<void> {
-  const close = (provider as Partial<{ close: () => unknown }>).close;
-  if (typeof close === 'function') await close.call(provider);
-}
-
-/**
- * L-T3 — the replay arm's memory: reads pass through, `sync` does nothing.
- *
- * A replay is a measurement: it must not record what it said. The backends
- * write through `WiringContext.storage`, which under replay IS the overlay, so
- * the alternative to a no-op is a `BoundaryError` — a `memory_write` coming
- * back as a tool failure the model then reasons about, which changes the very
- * behaviour the arm is measuring. A no-op `sync` is the honest shape: memory is
- * READ exactly as the live agent reads it, and nothing is written.
- *
- * Local to this module rather than exported: it is not a reusable policy, it is
- * one arm of `CreateAgentLoopOptions.replay`.
- */
-function readOnlyMemory(base: MemoryProvider): MemoryProvider {
-  return {
-    prefetch: (ctx) => base.prefetch(ctx),
-    read: (key, ctx) => base.read(key, ctx),
-    search: (query, ctx, opts) => base.search(query, ctx, opts),
-    list: (ctx, opts) => base.list(ctx, opts),
-    sync: async () => {},
   };
 }
 
@@ -777,6 +746,7 @@ export async function buildAgentLoop(
   const personalityToolExclude = buildPersonalityToolExclude(decisions, {
     ...(config.nodes?.enabled === true ? { nodeTools: NODE_TOOL_NAMES } : {}),
     initiatives: toolsResult.initiativeEnablement,
+    ...(config.world?.enabled === true ? { worldTools: true } : {}),
   });
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
@@ -1959,6 +1929,13 @@ export async function buildAgentLoop(
       // own tools contradict. Absent when `grounding.enabled: false`, so an
       // opted-out deployment's capture path is byte-identical to today's.
       ...(toolsResult.memoryConsult ? { grounding: toolsResult.memoryConsult } : {}),
+      // World extraction (plan world-model 6.2): graph-shaped facts of the SAME extraction call
+      // become pending world proposals. Present only for `world.enabled` + `extraction: 'propose'`
+      // (compose-tools.ts `worldCapture`), so otherwise capture is unchanged. No second LLM call
+      // is made (pinned by __tests__/world-extraction-wiring.test.ts 'no second LLM call per
+      // turn'), so the call stays metered as `memory_capture` below; `world_extract`
+      // (packages/types/src/usage.ts) is reserved for a future dedicated pass and is not emitted.
+      ...(toolsResult.worldCapture ? { routeFact: toolsResult.worldCapture } : {}),
       config: {
         ...(captureConfig.maxPerHour !== undefined ? { maxPerHour: captureConfig.maxPerHour } : {}),
         ...(captureConfig.maxPerDay !== undefined ? { maxPerDay: captureConfig.maxPerDay } : {}),
@@ -2035,6 +2012,7 @@ export async function buildAgentLoop(
     // The runner above was built on THIS goalStore — the pair leaves together.
     goals: { store: goalStore, executor: goalRunner },
     memoryBundle,
+    ...(toolsResult.worlds ? { worlds: toolsResult.worlds } : {}),
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     ...(jobControl ? { jobControl } : {}),

@@ -329,6 +329,16 @@ export class ConfigService {
         cap: passNum(p, 'memoryApproval.cap', 200),
         ttlDays: passNum(p, 'memoryApproval.ttlDays', 30),
       },
+      world: {
+        enabled: passBool(p, 'world.enabled', false),
+        contextMaxChars: passNum(p, 'world.contextMaxChars', 2400),
+        contextHops: p['world.contextHops']?.trim() === '1' ? 1 : 2,
+        extraction: pickEnum(p['world.extraction'], ['off', 'propose'], 'off'),
+        proposals: {
+          cap: passNum(p, 'world.proposals.cap', 500),
+          ttlDays: passNum(p, 'world.proposals.ttlDays', 30),
+        },
+      },
       memoryConsolidation: {
         halfLifeDays: passNum(p, 'memoryConsolidation.halfLifeDays', 30),
         threshold: passNum(p, 'memoryConsolidation.threshold', 0.05),
@@ -702,6 +712,14 @@ export class ConfigService {
       set('memoryApproval.mode', patch.memoryApproval.mode);
       set('memoryApproval.cap', patch.memoryApproval.cap);
       set('memoryApproval.ttlDays', patch.memoryApproval.ttlDays);
+    }
+    if (patch.world) {
+      set('world.enabled', patch.world.enabled);
+      set('world.contextMaxChars', patch.world.contextMaxChars);
+      set('world.contextHops', patch.world.contextHops);
+      set('world.extraction', patch.world.extraction);
+      set('world.proposals.cap', patch.world.proposalsCap);
+      set('world.proposals.ttlDays', patch.world.proposalsTtlDays);
     }
     if (patch.memoryConsolidation) {
       set('memoryConsolidation.halfLifeDays', patch.memoryConsolidation.halfLifeDays);

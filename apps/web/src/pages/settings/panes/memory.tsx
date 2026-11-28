@@ -9,7 +9,9 @@
 import { Form, Input, InputNumber, Radio, Select, Switch } from 'antd';
 import { AdvancedBlock } from '../components/advanced';
 import { SectionHeading } from '../components/section-heading';
+import { SelfSaveMarker } from '../components/self-save-marker';
 import { SettingRow } from '../components/setting-row';
+import { WorldSettingsRows } from '../components/world-settings';
 import { useSettingsPane } from '../pane-context';
 
 export function MemoryPane() {
@@ -359,6 +361,16 @@ export function MemoryPane() {
           <Switch />
         </Form.Item>
       </SettingRow>
+
+      {/* Owner only: config.get answers cookie sessions alone (dual-auth.ts), so a
+          missing `world` block means this is not the owner (or an older backend). */}
+      {configData?.world ? (
+        <>
+          <SectionHeading id="world">World</SectionHeading>
+          <SelfSaveMarker />
+          <WorldSettingsRows world={configData.world} />
+        </>
+      ) : null}
     </>
   );
 }

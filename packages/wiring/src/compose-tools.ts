@@ -1,4 +1,5 @@
 import { dirname, join } from 'node:path';
+import { resolveWorld } from '@ethosagent/config';
 import {
   createSpokenStyleInjector,
   type DefaultToolRegistry,
@@ -9,6 +10,7 @@ import {
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
+import type { RouteFactFn } from '@ethosagent/memory-capture';
 import type { PendingNotify, PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import {
@@ -31,6 +33,7 @@ import {
   platformId as whatsappId,
   platformPrompt as whatsappPrompt,
 } from '@ethosagent/platform-whatsapp/format';
+import { sanitize as sanitizeInjection } from '@ethosagent/safety-injection';
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
@@ -81,6 +84,7 @@ import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { buildCardTools, buildUiTools, createUiGuidanceInjector } from '@ethosagent/tools-ui';
 import { createVoiceTools } from '@ethosagent/tools-voice';
 import { compose as composeWatchers } from '@ethosagent/tools-watchers/compose';
+import { compose as composeWorld } from '@ethosagent/tools-world/compose';
 import { createXSearchTool } from '@ethosagent/tools-x-search';
 import type {
   Constitution,
@@ -106,7 +110,9 @@ import type {
   Storage,
   Tool,
   TurnAuditor,
+  UsageSourceKind,
 } from '@ethosagent/types';
+import { WorldCaptureRouter } from '@ethosagent/world-service';
 import { createAmendmentIntake } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
 import { composeInitiativeChat } from './compose-initiatives';
@@ -145,6 +151,8 @@ import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 import type { WiringContext } from './types';
 import type { UsageMeter } from './usage-meter';
 import { resolveSipTrunkClient } from './voice-stack';
+import { worldBuildBindings } from './world-build-bindings';
+import { createWorldRuntime, type WorldRuntime } from './worlds';
 
 // ---------------------------------------------------------------------------
 // WEB_PROMPT — kept here since platformPrompts is also assembled here
@@ -696,6 +704,10 @@ export interface ComposeToolsResult {
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
+  /** `routeFact` for `MemoryCaptureRunner`; present only when `world.enabled` and `world.extraction: 'propose'`. */
+  worldCapture?: RouteFactFn;
+  /** The ONE world runtime's owner-surface services (plan world-model 7.2); present only when `world.enabled`. */
+  worlds?: Pick<WorldRuntime, 'service' | 'schema' | 'configService'>;
   /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
   executionPostureFor: ExecutionRouting['resolvePosture'];
   /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
@@ -1233,6 +1245,8 @@ function buildVerifierProviderGetter(
   config: WiringConfig,
   log: Logger,
   usageMeter: Pick<UsageMeter, 'meter'>,
+  // The completion verifier by default; the world first build meters its calls as `tool_llm`.
+  meterAs: { kind: UsageSourceKind; sourceRef?: string } = { kind: 'completion_verifier' },
 ): () => Promise<LLMProvider> {
   let cachedProvider: LLMProvider | undefined;
   return async () => {
@@ -1262,7 +1276,11 @@ function buildVerifierProviderGetter(
       logger: log,
     });
     // §5.4 — attributed to the completing turn by the scope around its tool batch.
-    cachedProvider = usageMeter.meter(provider, 'completion_verifier');
+    cachedProvider = usageMeter.meter(
+      provider,
+      meterAs.kind,
+      meterAs.sourceRef ? { sourceRef: meterAs.sourceRef } : undefined,
+    );
     return cachedProvider;
   };
 }
@@ -2138,6 +2156,59 @@ export async function composeAllTools(
   }
 
   // -------------------------------------------------------------------------
+  // World model (plan world-model 4.6). Off by default: nothing below runs, no store is
+  // opened, no tool is registered and no injector is pushed. This is the only place the
+  // world runtime is created; its store and provider handles close with this stage's
+  // DisposerStack. The tools get a port (never a provider) and reach the model only for a
+  // personality whose toolset.yaml lists them (build-agent-loop.ts `worldTools` exclude).
+  // -------------------------------------------------------------------------
+  let worldCapture: RouteFactFn | undefined;
+  let worlds: ComposeToolsResult['worlds'];
+  if (config.world?.enabled === true) {
+    const worldRuntime = createWorldRuntime({
+      dataDir,
+      storage: wiringCtx.storage,
+      config: config.world,
+      providers: infra.worldProviders,
+      secrets: config.secretsResolver ?? NOOP_SECRETS,
+      logger: log,
+      // The same function AgentSafety.injection.sanitize is built from (build-agent-loop.ts).
+      sanitize: sanitizeInjection,
+      build: worldBuildBindings(
+        config,
+        infra,
+        wiringCtx,
+        config.secretsResolver ?? NOOP_SECRETS,
+        buildVerifierProviderGetter(infra.llmProviders, config, log, deps.usageMeter, {
+          kind: 'tool_llm',
+          sourceRef: 'world_build',
+        }),
+      ),
+    });
+    disposers.push('world runtime', () => worldRuntime.close());
+    for (const tool of composeWorld(wiringCtx, { port: worldRuntime.toolPort() }).tools) {
+      tools.register(tool);
+    }
+    injectors.push(worldRuntime.injector());
+    worlds = {
+      service: worldRuntime.service,
+      schema: worldRuntime.schema,
+      configService: worldRuntime.configService,
+    };
+    // Extraction (plan world-model 6.2): the router over THIS runtime, never a second one. It is
+    // handed out only when `world.extraction` is 'propose'; build-agent-loop.ts passes it to the
+    // capture runner as `routeFact`. Pinned by __tests__/world-extraction-wiring.test.ts.
+    if (resolveWorld({ world: config.world }).extraction === 'propose') {
+      const router = new WorldCaptureRouter({
+        service: worldRuntime.service,
+        schema: worldRuntime.schema,
+        onError: (e) => log.warn(`world: ${e instanceof Error ? e.message : String(e)}`),
+      });
+      worldCapture = (fact, job) => router.route(fact, job);
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Remote execution injector (D4) — only when the TURN's personality actually
   // routes over ssh. A refused or fallen-back ssh posture must not tell the
   // model its commands run on another machine when they do not run at all, or
@@ -2250,6 +2321,8 @@ export async function composeAllTools(
     turnAuditors: grounding.turnAuditors,
     resolveDockerBackend: routing.resolveDockerBackend,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
+    ...(worldCapture ? { worldCapture } : {}),
+    ...(worlds ? { worlds } : {}),
     executionPostureFor: routing.resolvePosture,
     executionRouteFor: routing.exec,
   };

@@ -190,6 +190,21 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
     reason: 'Background jobs, including ones still owed a wake notice.',
   },
   {
+    source: 'extensions/world-sqlite/src/store.ts',
+    sites: 1,
+    database: 'worlds/graph.db',
+    scope: 'state',
+    reason: 'World facts; the source of truth for user-entered facts.',
+  },
+  {
+    source: 'extensions/world-service/src/service-store.ts',
+    sites: 1,
+    database: 'worlds/service.db',
+    scope: 'state',
+    reason:
+      'World schema versions and pending proposals; a pending proposal is a decision owed to the user and nothing rebuilds it.',
+  },
+  {
     source: 'extensions/call-log/src/index.ts',
     sites: 1,
     database: 'calls.db',

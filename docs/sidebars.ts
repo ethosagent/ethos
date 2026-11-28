@@ -314,6 +314,7 @@ const sidebars: SidebarsConfig = {
             'using/explanation/user-profiles',
             'using/explanation/dreaming',
             'using/explanation/initiatives',
+            'using/explanation/world-model',
             'using/explanation/sessions-and-history',
             'using/explanation/plugin-commands',
             'using/explanation/wake-privilege',
@@ -472,6 +473,7 @@ const sidebars: SidebarsConfig = {
             ),
             'building/explanation/personality-governance',
             'building/explanation/decision-provider-governance',
+            'building/explanation/world-graph-governance',
             'building/explanation/tool-shape',
             'building/explanation/injection-at-construction',
             splitDoc(

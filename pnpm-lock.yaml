@@ -455,6 +455,9 @@ importers:
       '@ethosagent/wiring':
         specifier: workspace:*
         version: link:../../packages/wiring
+      '@ethosagent/world-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/world-sqlite
       '@types/nodemailer':
         specifier: ^6.4.17
         version: 6.4.23
@@ -599,6 +602,9 @@ importers:
       antd:
         specifier: ^6.5.0
         version: 6.5.3(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      cytoscape:
+        specifier: 3.35.0
+        version: 3.35.0
       dayjs:
         specifier: ^1.11.21
         version: 1.11.21
@@ -801,6 +807,14 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
+
+    devDependencies:
+      '@ethosagent/world-service':
+        specifier: workspace:*
+        version: link:../../extensions/world-service
+      '@ethosagent/world-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/world-sqlite
 
   docs:
     dependencies:
@@ -1621,6 +1635,9 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
     devDependencies:
       '@ethosagent/memory-approval':
         specifier: workspace:*
@@ -2101,6 +2118,13 @@ importers:
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
+    devDependencies:
+      '@ethosagent/tools-world':
+        specifier: workspace:*
+        version: link:../tools-world
+      '@ethosagent/world-service':
+        specifier: workspace:*
+        version: link:../world-service
 
   extensions/storage-crypto:
     dependencies:
@@ -2576,6 +2600,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-world:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@ethosagent/world-service':
+        specifier: workspace:*
+        version: link:../world-service
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+
   extensions/tools-x-search:
     dependencies:
       '@ethosagent/core':
@@ -2618,6 +2654,40 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+
+  extensions/world-service:
+    dependencies:
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      yaml:
+        specifier: ^2.7.1
+        version: 2.9.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
+  extensions/world-sqlite:
+    dependencies:
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
 
   extensions/voice-session:
     dependencies:
@@ -3234,6 +3304,9 @@ importers:
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../../extensions/tools-web
+      '@ethosagent/tools-world':
+        specifier: workspace:*
+        version: link:../../extensions/tools-world
       '@ethosagent/tools-x-search':
         specifier: workspace:*
         version: link:../../extensions/tools-x-search
@@ -3255,6 +3328,12 @@ importers:
       '@ethosagent/worker-router':
         specifier: workspace:*
         version: link:../worker-router
+      '@ethosagent/world-service':
+        specifier: workspace:*
+        version: link:../../extensions/world-service
+      '@ethosagent/world-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/world-sqlite
     devDependencies:
       '@ethosagent/tools-a2a':
         specifier: workspace:*
@@ -8356,6 +8435,10 @@ packages:
 
   curve25519-js@0.0.4:
     resolution: {integrity: sha512-axn2UMEnkhyDUPWOwVKBMVIzSQy2ejH2xRGy1wq81dqRwApXfIzfbE3hIX0ZRFBIihf/KDqK158DLwESu4AK1w==}
+
+  cytoscape@3.35.0:
+    resolution: {integrity: sha512-sMvBIXiGMnhkCaWz2R06FwF/27MNlS+Tqvi17foO9UhnUg3XGZccKjxsvEqQFAQYMSSZmN5SxYzUYlQ0DOJJ3g==}
+    engines: {node: '>=0.10'}
 
   data-urls@7.0.0:
     resolution: {integrity: sha512-23XHcCF+coGYevirZceTVD7NdJOqVn+49IHyxgszm+JIiHLoB2TkmPtsYkNWT1pvRSGkc35L6NHs0yHkN2SumA==}
@@ -20025,6 +20108,8 @@ snapshots:
   csstype@3.2.3: {}
 
   curve25519-js@0.0.4: {}
+
+  cytoscape@3.35.0: {}
 
   data-urls@7.0.0(@noble/hashes@2.2.0):
     dependencies:
