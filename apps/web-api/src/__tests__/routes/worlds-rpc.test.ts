@@ -1,11 +1,16 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DefaultWorldGraphProviderRegistry } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import { SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { createWorldRuntime, type WorldRuntime } from '@ethosagent/wiring';
+import {
+  createWorldRuntime,
+  hashShareToken,
+  SqliteShareLinkStore,
+  type WorldRuntime,
+} from '@ethosagent/wiring';
 import { SQLiteWorldServiceStore, serviceDbPath } from '@ethosagent/world-service';
 import { SQLiteWorldGraphProvider, worldGraphDbPath } from '@ethosagent/world-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -42,6 +47,7 @@ describe('worlds RPC', () => {
   let sessions: SQLiteSessionStore;
   let keys: SqliteApiKeyStore;
   let runtime: WorldRuntime;
+  let shares: SqliteShareLinkStore;
   let app: ReturnType<typeof createWebApi>['app'];
   let cookie: string;
 
@@ -49,6 +55,8 @@ describe('worlds RPC', () => {
     dataDir = await mkdtemp(join(tmpdir(), 'ethos-worlds-rpc-'));
     sessions = new SQLiteSessionStore(':memory:');
     keys = new SqliteApiKeyStore(':memory:');
+    shares = new SqliteShareLinkStore(':memory:');
+    await writeFile(join(dataDir, 'config.yaml'), 'shareLinks.enabled: true\n');
     const providers = new DefaultWorldGraphProviderRegistry();
     providers.register(
       'sqlite',
@@ -80,6 +88,7 @@ describe('worlds RPC', () => {
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
       apiKeys: keys,
       worlds: runtime,
+      shareLinks: { store: shares, bind: { host: '127.0.0.1', port: 3000 } },
     }).app;
     const token = await new WebTokenRepository({ dataDir, storage: new FsStorage() }).getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
@@ -107,6 +116,7 @@ describe('worlds RPC', () => {
     runtime.close();
     sessions.close();
     keys.close();
+    shares.close();
     await rm(dataDir, { recursive: true, force: true });
   });
 
@@ -722,12 +732,85 @@ describe('worlds RPC', () => {
     );
   });
 
-  it('shareCreate is refused 503 NOT_CONFIGURED until world snapshots land (7.6)', async () => {
-    const res = await call('shareCreate', { world: 'world:acme', view: 'tree', expiresInDays: 7 });
-    expect(res.status).toBe(503);
+  it('shareCreate stores a world link, strips sensitive fields and serves a frozen page', async () => {
+    must(
+      await call('schemaSave', {
+        world: 'world:acme',
+        yaml: `version: 1
+entities:
+  Person:
+    attrs:
+      title: { type: string }
+      salary: { type: int, sensitive: true }
+      email: { type: string }
+  Team: { attrs: {} }
+edges:
+  member_of: { from: [Person], to: [Team], attrs: {} }
+`,
+        expectedVersion: 0,
+      }),
+    );
+    const person = await write('world:acme', {
+      kind: 'entity',
+      type: 'Person',
+      name: 'Ravi',
+    });
+    await write('world:acme', {
+      kind: 'attribute',
+      entityId: person,
+      key: 'title',
+      value: 'Staff',
+    });
+    await write('world:acme', {
+      kind: 'attribute',
+      entityId: person,
+      key: 'salary',
+      value: 777123,
+    });
+    await write('world:acme', {
+      kind: 'attribute',
+      entityId: person,
+      key: 'email',
+      value: 'ravi@acme.test',
+    });
+    const out = must(
+      await call<{ url: string; id: string; expiresAt: string; redacted: string[] }>(
+        'shareCreate',
+        { world: 'world:acme', view: 'tree', expiresInDays: 7 },
+      ),
+    );
+    expect(out.redacted).toEqual(['sensitive attributes', 'email', 'location']);
+    const token = out.url.split('/share/')[1] ?? '';
+    const row = shares.findLive(hashShareToken(token), new Date());
+    expect(row?.kind).toBe('world');
+    expect(row?.subjectId).toBe('world:acme');
+    expect(row?.snapshot).toContain('Staff');
+    expect(row?.snapshot).not.toContain('777123');
+    expect(row?.snapshot).not.toContain('ravi@acme.test');
+    // Frozen: a fact written after the link was made is not on the page.
+    await write('world:acme', {
+      kind: 'attribute',
+      entityId: person,
+      key: 'title',
+      value: 'LaterTitle',
+    });
+    const page = await app.request(`/share/${token}`);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('Staff');
+    expect(html).not.toContain('LaterTitle');
+    // Unknown world is still a 404; the link revokes by subject.
     expect(
       (await call('shareCreate', { world: 'world:ghost', view: 'tree', expiresInDays: 7 })).status,
     ).toBe(404);
+    expect(shares.revokeForSubject('world:acme', 'test')).toBe(1);
+    expect((await app.request(`/share/${token}`)).status).toBe(404);
+  });
+
+  it('shareCreate is refused 503 when share links are off', async () => {
+    await writeFile(join(dataDir, 'config.yaml'), 'shareLinks.enabled: false\n');
+    const res = await call('shareCreate', { world: 'world:acme', view: 'tree', expiresInDays: 7 });
+    expect(res.status).toBe(503);
   });
 
   it('linkify links names and aliases and the spans cover the text', async () => {

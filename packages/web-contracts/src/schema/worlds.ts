@@ -464,7 +464,61 @@ export const WorldsShareCreateInputSchema = z.strictObject({
   view: z.enum(['tree', 'graph']),
   asOf: WorldInstantSchema.optional(),
   expiresInDays: z.number().int().min(1).max(90),
+  /** The owner unticks these to keep them; both default to stripped. */
+  keepEmail: z.boolean().optional(),
+  keepLocation: z.boolean().optional(),
 });
+const SnapshotAttrSchema = z.strictObject({ key: z.string(), value: z.string() });
+
+/**
+ * The stored body of a world share link, parsed by the public page (routes/share.ts) before
+ * rendering. Mirrors `WorldSnapshot` in extensions/world-service/src/share-snapshot.ts.
+ */
+export const WorldSnapshotWireSchema = z.strictObject({
+  v: z.literal(1),
+  kind: z.literal('world'),
+  world: z.string(),
+  title: z.string(),
+  view: z.enum(['tree', 'graph']),
+  asOf: z.string(),
+  createdAt: z.string(),
+  groups: z.array(
+    z.strictObject({
+      type: z.string(),
+      entities: z.array(
+        z.strictObject({
+          id: z.string(),
+          name: z.string(),
+          aliases: z.array(z.string()),
+          attrs: z.array(SnapshotAttrSchema),
+          links: z.array(
+            z.strictObject({
+              type: z.string(),
+              direction: z.enum(['out', 'in']),
+              otherId: z.string(),
+              otherName: z.string(),
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+  edges: z
+    .array(
+      z.strictObject({
+        type: z.string(),
+        fromId: z.string(),
+        fromName: z.string(),
+        toId: z.string(),
+        toName: z.string(),
+        attrs: z.array(SnapshotAttrSchema),
+      }),
+    )
+    .optional(),
+  redacted: z.array(z.string()),
+});
+export type WorldSnapshotWire = z.infer<typeof WorldSnapshotWireSchema>;
+
 /** Same shape as the session share service: a refusal is data (apps/web-api/src/features/share/service.ts). */
 export const WorldsShareCreateOutputSchema = z.discriminatedUnion('ok', [
   z.strictObject({

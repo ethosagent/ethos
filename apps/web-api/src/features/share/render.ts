@@ -21,7 +21,7 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-const CSS = `:root{--bg:#FAFAF7;--fg:#1A1A1A;--fg2:#585857;--fg3:#70706B;--line:#E8E8E4;--chip:#F0F0EC;--err:#CE2C2C;color-scheme:light dark}
+export const CSS = `:root{--bg:#FAFAF7;--fg:#1A1A1A;--fg2:#585857;--fg3:#70706B;--line:#E8E8E4;--chip:#F0F0EC;--err:#CE2C2C;color-scheme:light dark}
 @media (prefers-color-scheme:dark){:root{--bg:#0F0F0F;--fg:#E8E8E6;--fg2:#9A9A98;--fg3:#7E7E7D;--line:#2A2A2A;--chip:#2A2A2A;--err:#F87171}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:400 14px/1.5 'Geist',system-ui,sans-serif;padding:32px 16px 24px}
@@ -39,7 +39,7 @@ h1{font:600 24px/1.25 'Geist',system-ui,sans-serif;margin:0 0 8px;overflow-wrap:
 footer{margin-top:24px;color:var(--fg3);font-size:12px}
 p{margin:0;color:var(--fg2)}`;
 
-const HEAD = (title: string, styleAttrs: string): string =>
+export const HEAD = (title: string, styleAttrs: string, extraCss = ''): string =>
   `<!doctype html>
 <html lang="en">
 <head>
@@ -48,7 +48,7 @@ const HEAD = (title: string, styleAttrs: string): string =>
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
 <title>${escapeHtml(title)}</title>
-<style${styleAttrs}>${CSS}</style>
+<style${styleAttrs}>${CSS}${extraCss}</style>
 </head>
 <body>
 <div class="col">

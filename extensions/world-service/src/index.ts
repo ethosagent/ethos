@@ -127,6 +127,16 @@ export {
   serializeSchemaYaml,
 } from './schema-model';
 export {
+  buildWorldSnapshot,
+  type WorldSnapshot,
+  type WorldSnapshotAttr,
+  type WorldSnapshotEdge,
+  type WorldSnapshotEntity,
+  type WorldSnapshotLink,
+  type WorldSnapshotOptions,
+  type WorldSnapshotResult,
+} from './share-snapshot';
+export {
   type ChangeBy,
   type LoadedSchema,
   WorldSchemaService,

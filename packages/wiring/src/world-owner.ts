@@ -11,8 +11,10 @@ export type {
   WorldFile,
   WorldSchemaService,
   WorldService,
+  WorldSnapshot,
 } from '@ethosagent/world-service';
 export {
+  buildWorldSnapshot,
   describeBuildItem,
   exportCsv,
   exportFactsYaml,

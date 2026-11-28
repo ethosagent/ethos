@@ -86,20 +86,65 @@ export class ShareService {
     }
   }
 
+  /**
+   * Store one frozen world snapshot as a `kind: 'world'` link (plan world-model 7.6). The caller
+   * (WorldsService.shareCreate) built and size-checked the snapshot; this adds the live switch,
+   * the audit actor and the URL base, exactly as `create` does for sessions. Refusals are data.
+   * Pinned by __tests__/routes/worlds-rpc.test.ts 'shareCreate stores a world link'.
+   */
+  async publishWorld(input: {
+    world: string;
+    title: string;
+    snapshot: string;
+    expiresInDays: number;
+  }): Promise<
+    | { ok: true; url: string; id: string; expiresAt: string }
+    | { ok: false; reason: 'disabled' }
+    | { ok: false; reason: 'too_large'; limitBytes: number }
+  > {
+    const settings = await this.deps.settings();
+    const host = this.deps.host;
+    if (!host || !settings.enabled) return { ok: false, reason: 'disabled' };
+    const now = (this.deps.now ?? (() => new Date()))();
+    try {
+      const { token, record } = host.store.create({
+        sessionId: input.world,
+        kind: 'world',
+        personalityId: '',
+        title: input.title,
+        options: JSON.stringify({ expiresInDays: input.expiresInDays }),
+        snapshot: input.snapshot,
+        expiresAt: new Date(now.getTime() + input.expiresInDays * 86_400_000),
+        actor: await this.deps.actor(),
+      });
+      return {
+        ok: true,
+        url: `${this.baseUrl(settings).url}/share/${token}`,
+        id: record.id,
+        expiresAt: record.expiresAt,
+      };
+    } catch (err) {
+      if (err instanceof SnapshotTooLargeError) {
+        return { ok: false, reason: 'too_large', limitBytes: MAX_SNAPSHOT_BYTES };
+      }
+      throw err;
+    }
+  }
+
   async list(input: {
     activeOnly?: boolean;
   }): Promise<{ enabled: boolean; links: ShareLinkSummaryWire[] }> {
     const { enabled } = await this.deps.settings();
     const store = this.deps.host?.store;
     if (!store) return { enabled: false, links: [] };
-    const rows = store.list({ activeOnly: input.activeOnly ?? true });
+    const rows = store.list({ activeOnly: input.activeOnly ?? true, kind: 'session' });
     return {
       enabled,
       // Field by field: a new store column never reaches the wire by accident.
       links: rows.map((r) => ({
         id: r.id,
         prefix: r.prefix,
-        sessionId: r.sessionId,
+        sessionId: r.subjectId,
         title: r.title,
         createdAt: r.createdAt,
         expiresAt: r.expiresAt,

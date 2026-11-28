@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { ShareSnapshotWireSchema } from '@ethosagent/web-contracts';
+import { ShareSnapshotWireSchema, WorldSnapshotWireSchema } from '@ethosagent/web-contracts';
 import { hashShareToken, type SqliteShareLinkStore } from '@ethosagent/wiring';
 import { type Context, Hono } from 'hono';
 import { NOT_FOUND_PAGE, renderSharePage } from '../features/share/render';
+import { renderWorldPage } from '../features/share/render-world';
 import type { ShareSettingsReader } from '../features/share/settings';
 import { rateLimitMiddleware } from '../middleware/rate-limit';
 import type { RouteModule } from './route-module';
@@ -87,13 +88,23 @@ export function shareRouteModule(deps: ShareRouteDeps): RouteModule {
       return notFound(c);
     }
     if (!record?.snapshot) return notFound(c);
-    let parsed: ReturnType<typeof ShareSnapshotWireSchema.safeParse>;
+    // The row's `kind` picks the schema and renderer; a body that fails its kind's schema is a
+    // miss (pinned by share-route.test.ts 'a world link renders its tree and a mismatched body is a 404').
+    let page: (nonce: string) => string;
     try {
-      parsed = ShareSnapshotWireSchema.safeParse(JSON.parse(record.snapshot));
+      const body: unknown = JSON.parse(record.snapshot);
+      if (record.kind === 'world') {
+        const parsed = WorldSnapshotWireSchema.safeParse(body);
+        if (!parsed.success) return notFound(c);
+        page = (nonce) => renderWorldPage(parsed.data, { nonce, expiresAt: record.expiresAt });
+      } else {
+        const parsed = ShareSnapshotWireSchema.safeParse(body);
+        if (!parsed.success) return notFound(c);
+        page = (nonce) => renderSharePage(parsed.data, { nonce, expiresAt: record.expiresAt });
+      }
     } catch {
       return notFound(c);
     }
-    if (!parsed.success) return notFound(c);
     // HEAD fetches no body, so it is not a view (pinned: 'HEAD serves the page headers…').
     // LIMITATION: link unfurlers (Slack, Teams) GET the page, so they count as views and show
     // the redacted title in previews; see docs/content/security/controls/share-links.md.
@@ -105,7 +116,7 @@ export function shareRouteModule(deps: ShareRouteDeps): RouteModule {
       }
     }
     const nonce = randomBytes(16).toString('base64');
-    return c.html(renderSharePage(parsed.data, { nonce, expiresAt: record.expiresAt }), 200, {
+    return c.html(page(nonce), 200, {
       ...BASE_HEADERS,
       'content-security-policy': csp(`'nonce-${nonce}'`),
     });

@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { EthosError, type FactInput, type GraphBundle, type WorldId } from '@ethosagent/types';
-import { worldOwner } from '@ethosagent/wiring';
+import { MAX_SNAPSHOT_BYTES, worldOwner } from '@ethosagent/wiring';
 import { z } from 'zod';
 import type { ActorReader } from '../features/share/actor';
 
 const {
+  buildWorldSnapshot,
   describeBuildItem,
   exportCsv,
   exportFactsYaml,
@@ -45,7 +46,6 @@ type WorldService = worldOwner.WorldService;
 //   - `list` counts entities and live edges from `ownerExport`, so its cost grows with each world.
 //   - `reason` on `schemaSave` is not recorded: WorldSchemaService.saveYaml writes every whole-file
 //     edit as `you (hand edit)`.
-//   - `shareCreate` is refused NOT_CONFIGURED until the world snapshot lands (plan Task 7.6).
 //   - `isNew` means "recorded in the last 7 days"; the wire contract does not define it.
 
 /** What the wiring-composed world runtime hands this service (`WorldRuntime` in @ethosagent/wiring). */
@@ -63,6 +63,17 @@ export interface WorldsServiceDeps {
   personalityIds: () => Promise<string[]>;
   /** A personality's memory notes (`MEMORY.md`, `USER.md`); empty when the backend has no editor. */
   memoryNotes: (personalityId: string) => Promise<Array<{ scope: string; text: string }>>;
+  /** Stores one world snapshot as a share link (ShareService.publishWorld). */
+  publishWorld: (input: {
+    world: string;
+    title: string;
+    snapshot: string;
+    expiresInDays: number;
+  }) => Promise<
+    | { ok: true; url: string; id: string; expiresAt: string }
+    | { ok: false; reason: 'disabled' }
+    | { ok: false; reason: 'too_large'; limitBytes: number }
+  >;
   now?: () => number;
 }
 
@@ -918,14 +929,67 @@ export class WorldsService {
 
   // ---- share ------------------------------------------------------------------
 
-  /** Refused until the world snapshot exists (plan Task 7.6); the world is still checked first. */
-  async shareCreate(input: { world: string }): Promise<never> {
-    await this.known(input.world);
-    throw new EthosError({
-      code: 'NOT_CONFIGURED',
-      cause: 'Sharing a world snapshot is not available yet',
-      action: 'Export the world instead (worlds.export).',
+  /**
+   * A frozen, redacted, read-only copy of one world view behind an unguessable link (plan 7.6).
+   * Sensitive attributes, email and location never leave unless the owner unticks the last two;
+   * the builder is extensions/world-service/src/share-snapshot.ts (pinned by world-snapshot.test.ts).
+   * Sharing off is NOT_CONFIGURED (shareLinks.enabled); an oversize view is data (`too_large`).
+   * Pinned by __tests__/routes/worlds-rpc.test.ts 'shareCreate stores a world link'.
+   */
+  async shareCreate(input: {
+    world: string;
+    view: 'tree' | 'graph';
+    asOf?: string | undefined;
+    expiresInDays: number;
+    keepEmail?: boolean | undefined;
+    keepLocation?: boolean | undefined;
+  }) {
+    const world = await this.known(input.world);
+    const rt = this.rt();
+    const createdAt = this.nowIso();
+    const asOf = input.asOf ?? createdAt;
+    const slug = worldSlug(world);
+    const title = world.startsWith('world:')
+      ? ((await rt.configService.readWorld(slug))?.title ?? slug)
+      : `${slug} (private)`;
+    const [bundle, loaded] = await Promise.all([
+      rt.service.ownerExport(world),
+      rt.schema.load(world),
+    ]);
+    const built = buildWorldSnapshot(bundle, {
+      world,
+      title,
+      view: input.view,
+      asOf,
+      createdAt,
+      sensitive: loaded.sensitive,
+      ...(input.keepEmail ? { keepEmail: true } : {}),
+      ...(input.keepLocation ? { keepLocation: true } : {}),
+      maxBytes: MAX_SNAPSHOT_BYTES,
     });
+    if (!built.ok)
+      return { ok: false as const, reason: built.reason, limitBytes: built.limitBytes };
+    const stored = await this.deps.publishWorld({
+      world,
+      title: built.snapshot.title,
+      snapshot: JSON.stringify(built.snapshot),
+      expiresInDays: input.expiresInDays,
+    });
+    if (!stored.ok && stored.reason === 'disabled') {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'Share links are turned off',
+        action: 'Set shareLinks.enabled: true in config.yaml and restart.',
+      });
+    }
+    if (!stored.ok) return stored;
+    return {
+      ok: true as const,
+      url: stored.url,
+      id: stored.id,
+      expiresAt: stored.expiresAt,
+      redacted: built.snapshot.redacted,
+    };
   }
 
   // ---- linkify ----------------------------------------------------------------

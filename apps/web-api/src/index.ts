@@ -1168,6 +1168,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const worldsService = new WorldsService({
     runtime: opts.worlds,
     actor: share.actor,
+    publishWorld: (input) => share.service.publishWorld(input),
     personalityIds: async () => (await opts.personalities.list()).map((p) => p.id),
     memoryNotes: async (personalityId) => {
       const files = await memoryService.list(personalityId).catch(() => ({ items: [] }));

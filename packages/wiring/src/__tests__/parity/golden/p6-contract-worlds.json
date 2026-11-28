@@ -2031,6 +2031,12 @@
           "minimum": 1,
           "type": "integer"
         },
+        "keepEmail": {
+          "type": "boolean"
+        },
+        "keepLocation": {
+          "type": "boolean"
+        },
         "view": {
           "enum": [
             "tree",

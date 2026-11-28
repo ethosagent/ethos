@@ -29,6 +29,9 @@ export const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 const TOKEN_BYTES = 32; // 256 bits, base64url -> 43 chars
 const PREFIX_LENGTH = 8;
 
+/** What a link shows: a conversation or a frozen world view. */
+export type ShareLinkKind = 'session' | 'world';
+
 export type ShareLinkEventKind = 'created' | 'revoked' | 'purged';
 
 export class SnapshotTooLargeError extends Error {
@@ -63,7 +66,10 @@ export class SharePrefixTooShortError extends Error {
 }
 
 export interface CreateShareLinkInput {
+  /** The session id, or `world:<slug>` for a world link (stored in the `session_id` column). */
   sessionId: string;
+  /** Default `'session'`. Pinned by 'migration keeps existing rows as kind session'. */
+  kind?: ShareLinkKind;
   personalityId: string;
   /**
    * The already-redacted snapshot title (`ShareSnapshot.title`), never the raw
@@ -84,7 +90,9 @@ export interface ShareLinkSummary {
   id: string;
   /** First 8 chars of the token, kept in cleartext for `ethos sessions share revoke <prefix>`. */
   prefix: string;
-  sessionId: string;
+  /** Session id, or `world:<slug>` for a world link. */
+  subjectId: string;
+  kind: ShareLinkKind;
   personalityId: string;
   title: string;
   options: string;
@@ -124,6 +132,19 @@ export function hashShareToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+const SCHEMA_VERSION = 2;
+
+// v2: world links. Additive and idempotent (a half-applied file that already has the column is
+// left alone). Existing rows take the DEFAULT, i.e. 'session'; pinned by
+// __tests__/share-link-store.test.ts 'migration keeps existing rows as kind session'.
+function addKindColumn(db: Database.Database): void {
+  const cols = db.prepare('PRAGMA table_info(share_links)').all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === 'kind')) return;
+  db.exec(
+    `ALTER TABLE share_links ADD COLUMN kind TEXT NOT NULL DEFAULT 'session' CHECK (kind IN ('session','world'))`,
+  );
+}
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS share_links (
     id             TEXT PRIMARY KEY,
@@ -138,7 +159,8 @@ const SCHEMA = `
     expires_at     TEXT NOT NULL,
     revoked_at     TEXT,
     view_count     INTEGER NOT NULL DEFAULT 0,
-    last_viewed_at TEXT
+    last_viewed_at TEXT,
+    kind           TEXT NOT NULL DEFAULT 'session' CHECK (kind IN ('session','world'))
   ) STRICT;
 
   CREATE INDEX IF NOT EXISTS idx_share_links_session ON share_links(session_id);
@@ -167,6 +189,7 @@ interface LinkRow {
   revoked_at: string | null;
   view_count: number;
   last_viewed_at: string | null;
+  kind: ShareLinkKind;
 }
 
 interface EventRow {
@@ -178,13 +201,14 @@ interface EventRow {
 }
 
 const SUMMARY_COLUMNS =
-  'id, prefix, session_id, personality_id, title, options, created_at, expires_at, revoked_at, view_count, last_viewed_at';
+  'id, prefix, session_id, personality_id, title, options, created_at, expires_at, revoked_at, view_count, last_viewed_at, kind';
 
 function toSummary(row: Omit<LinkRow, 'snapshot'>): ShareLinkSummary {
   return {
     id: row.id,
     prefix: row.prefix,
-    sessionId: row.session_id,
+    subjectId: row.session_id,
+    kind: row.kind,
     personalityId: row.personality_id,
     title: row.title,
     options: row.options,
@@ -231,7 +255,12 @@ export class SqliteShareLinkStore {
     this.db.pragma('synchronous = FULL');
     // Shared cross-process (serve + CLI): wait instead of throwing SQLITE_BUSY.
     this.db.pragma('busy_timeout = 5000');
-    migrate(this.db, { name: 'share-links', targetVersion: 1, baseline: SCHEMA });
+    migrate(this.db, {
+      name: 'share-links',
+      targetVersion: SCHEMA_VERSION,
+      baseline: SCHEMA,
+      migrations: { 2: addKindColumn },
+    });
     this.stmts = {
       byId: this.db.prepare('SELECT * FROM share_links WHERE id = ?'),
       livePrefix: this.db.prepare(
@@ -252,7 +281,8 @@ export class SqliteShareLinkStore {
       ),
       liveSessions: this.db.prepare(
         `SELECT DISTINCT session_id FROM share_links
-         WHERE revoked_at IS NULL AND snapshot IS NOT NULL ORDER BY session_id`,
+         WHERE kind = 'session' AND revoked_at IS NULL AND snapshot IS NOT NULL
+         ORDER BY session_id`,
       ),
       expired: this.db.prepare(
         `SELECT id FROM share_links
@@ -281,14 +311,15 @@ export class SqliteShareLinkStore {
     const id = randomUUID();
     const now = this.clock().toISOString();
     const prefix = token.slice(0, PREFIX_LENGTH);
+    const kind = input.kind ?? 'session';
 
     this.db.transaction(() => {
       this.db
         .prepare(
           `INSERT INTO share_links
              (id, prefix, token_hash, session_id, personality_id, title, options, snapshot,
-              created_at, expires_at, revoked_at, view_count, last_viewed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)`,
+              created_at, expires_at, revoked_at, view_count, last_viewed_at, kind)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?)`,
         )
         .run(
           id,
@@ -301,6 +332,7 @@ export class SqliteShareLinkStore {
           input.snapshot,
           now,
           input.expiresAt.toISOString(),
+          kind,
         );
       this.appendEvent(id, 'created', input.actor, now);
     })();
@@ -310,7 +342,8 @@ export class SqliteShareLinkStore {
       record: {
         id,
         prefix,
-        sessionId: input.sessionId,
+        subjectId: input.sessionId,
+        kind,
         personalityId: input.personalityId,
         title: input.title,
         options: input.options,
@@ -346,11 +379,18 @@ export class SqliteShareLinkStore {
   }
 
   /** Newest first; `rowid` breaks ties at equal timestamps. Never carries snapshots. */
-  list(options: { activeOnly: boolean }): ShareLinkSummary[] {
-    const where = options.activeOnly
-      ? 'WHERE revoked_at IS NULL AND snapshot IS NOT NULL AND expires_at > ?'
-      : '';
-    const params = options.activeOnly ? [this.clock().toISOString()] : [];
+  list(options: { activeOnly: boolean; kind?: ShareLinkKind }): ShareLinkSummary[] {
+    const clauses: string[] = [];
+    const params: string[] = [];
+    if (options.activeOnly) {
+      clauses.push('revoked_at IS NULL AND snapshot IS NOT NULL AND expires_at > ?');
+      params.push(this.clock().toISOString());
+    }
+    if (options.kind) {
+      clauses.push('kind = ?');
+      params.push(options.kind);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db
       .prepare(
         `SELECT ${SUMMARY_COLUMNS} FROM share_links ${where} ORDER BY created_at DESC, rowid DESC`,
@@ -381,6 +421,12 @@ export class SqliteShareLinkStore {
 
   /** Revoke every live link of a session (session delete). Returns how many. */
   revokeForSession(sessionId: string, actor: string): number {
+    return this.revokeForSubject(sessionId, actor);
+  }
+
+  /** Revoke every live link of a subject: a session id, or `world:<slug>` for a world. */
+  revokeForSubject(subjectId: string, actor: string): number {
+    const sessionId = subjectId;
     const run = this.db.transaction((): number => {
       const rows = this.stmts.sessionLive.all(sessionId) as Array<{ id: string }>;
       const now = this.clock().toISOString();
