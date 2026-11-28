@@ -31,6 +31,7 @@ Layer names are archcheck's.
 - `extensions/platform-*` + `extensions/gateway` channel adapters; gateway owns dedup, ledger, spool
 - SQLite stores: `session-sqlite`, `job-store`, `delivery-ledger`, `inbound-spool`, `notify-queue`
 - `extensions/personalities` registry + built-ins
+- `extensions/world-sqlite`, `world-service`, `tools-world` world graph, rules, tools
 - `apps/*` ethos (CLI), web-api, web, desktop, tui, mcp-server, acp-server → `app-entry`
 
 ## Commands
@@ -132,7 +133,6 @@ Source comments cite `CLAUDE.md, "<old heading>"`; files in `.claude/rules/`.
 - "Adding a personality", "What does NOT belong on PersonalityConfig" → personality.md
 - "Memory", "Memory tool reference" → memory.md, memory-tools.md
 - "Design system" → ui-design.md; "Learnings" → toolchain-gotchas.md
-- "Monorepo layout", "Key files", "Core design principles" → dropped
 
 # Compact instructions
 

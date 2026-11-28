@@ -21,7 +21,7 @@ Single entry point, `src/index.ts`.
 | `SchemaChange`, `classifySchemaChange`, `applyChange` | type, functions | The eight change ops, additive vs rewrite, and the pure application of one to a schema. |
 | `SQLiteWorldServiceStore`, `serviceDbPath` | class, function | `worlds/service.db` (WAL, `synchronous = FULL`, STRICT): `schema_versions`, `schema_load_errors`, `proposals`, `proposal_tombstones`. `propose` / `decide` / `inbox` are the proposal queue: dedup by fingerprint, tombstone on reject, per-world cap (default 500) and TTL (default 30 days). |
 | `WorldService`, `WorldServiceError` | class | The one place facts are read or written. Reads span visible worlds and tag every result `acme:Ravi` (R8). `writeFacts` routes per fact: refuse (no world with 2+ visible, read-only mount, vetting), proposal (shared world, authoritative collision, confidence under 0.7) or direct write with unique collisions closed. Owner surfaces only: `acceptProposal` (replays with the original author, records `decided_by`), `rejectProposal` (tombstone), `promoteToUser`, `ownerWrite`, `ownerImport`, `purge`. |
-| `createWorldToolPort`, `WorldToolPort` | function, type | A frozen object of eleven methods bound to a `WorldService`: no provider, no `purge`, no `acceptProposal`, no config writer. `build` refuses `not_implemented` until plan P5. |
+| `createWorldToolPort`, `WorldToolPort` | function, type | A frozen object of eleven methods bound to a `WorldService`: no provider, no `purge`, no `acceptProposal`, no config writer. `build` runs the first-build pipeline (`WorldBuildService`). |
 | `vetFact` | function | Pure content check before a write or proposal: secrets (`detectSecrets`), personal data (`redactPii`, agent only), `sensitive: true` attributes (agent never), schema fit, confidence range. A refusal reason never echoes the matched text. |
 | `parseAssertPayload`, `parseClosePayload`, `parseSchemaPayload` | functions | `safeParse` of the JSON a proposal row carries; an unreadable payload fails closed on accept. |
 
@@ -48,6 +48,12 @@ Guarantees and what pins them:
 - `service.db` is STRICT and `synchronous = FULL`: `schema-service.test.ts`, 'schema_versions is STRICT; durability posture is FULL'.
 - Writes: an agent write on a shared world is a proposal, a user or import fact is never overwritten or closed by the agent (a conflict proposal instead), a tool's claimed author is ignored, and a secret, personal data or sensitive attribute is refused (R1, R2, R11): `write-routing.test.ts` 'R1 shared-world writes are proposals only', 'R2 user facts are never overwritten by the agent', 'an agent cannot claim the user author'; `fact-vetting.test.ts` 'R11 a fact carrying a secret is refused', 'sensitive attribute refused for the agent, allowed for the owner'.
 - A write with no world and 2+ visible worlds is refused `WORLD_REQUIRED` (R9): 'R9 null world with 2+ visible worlds → WORLD_REQUIRED'. The tool port exposes no owner method (R13): `world-port.test.ts` 'R13 tool port is narrow'.
+- Graph context is tail only, retrieved text passes the injected `sanitize`, and an `owner_only` world is dropped per world in a shared turn (R5, R6): `WorldContextInjector` (`context-injector.ts`, priority 5, `position: 'append'`); `packages/wiring/src/__tests__/world-context-prefix.test.ts` 'R5 graph context is tail only'; `world-context-injector.test.ts` 'R6 shared turn: owner_only world dropped, shareable world used', 'sanitize is applied'.
+- First build reads only the personality's own sources, and extraction only proposes (R10): `collectBuildInputs` (`build/`), `build-sources.test.ts` 'R10 first build skips shared and incognito sessions', "another personality's sessions are never listed", 'a folder outside fs reach is refused'; `capture.ts`, `world-capture.test.ts` 'graph fact is proposed, never applied, even on the private world', 'R10 a shared audience sees no owner_only world, so nothing can be proposed for it'.
+- Turns cannot write `worlds/` or `worlds.yaml` (R4): `packages/wiring/src/__tests__/world-floor.test.ts` 'write_file and read_file on worlds/<slug>/schema.yaml are refused', 'write_file to personalities/<id>/worlds.yaml is refused, even for the personality itself'.
+- A share snapshot is frozen, redacted and capped: `share-snapshot.ts`, `world-snapshot.test.ts` 'snapshot strips sensitive and email fields', 'snapshot is frozen: a later fact does not appear', 'refuses above the byte cap'.
+- The ripple walk never walks a closed edge and every result carries its sources and `RIPPLE_DISCLAIMER`: `ripple.ts`, `ripple.test.ts` 'closed supplies edges are not walked', 'every result line carries its sources'.
+- A feed wake from a shared audience cannot read an `owner_only` world: `packages/wiring/src/__tests__/world-feed.test.ts` 'a shared-audience wake cannot read an owner_only world'.
 
 ## Gotchas
 
@@ -57,3 +63,16 @@ Guarantees and what pins them:
 - Limitation: `WorldGraphProvider` cannot retire or retype an entity, so renaming or merging an entity type re-asserts the entities under the new type and moves their attributes and edges, but the old entity rows remain in the backend under a type the schema no longer lists.
 - `undoLast` is refused after a rename or merge (facts were rewritten); apply the inverse change instead.
 - Limitations: `closeFact` and `promoteToUser` find a fact by reading `export(world)` (the contract has no lookup by id), each fact is asserted on its own, and an imported bundle carries live facts only (`FactInput` has no `validTo`).
+
+## Known limits
+
+Written down because nothing enforces the opposite:
+
+- Consent to save a first build is behavioural. `world_build save` cannot see the user's yes; on a shared world it only creates proposals, on the private world it writes `agent` facts the user can retire.
+- Extraction precision is unknown, which is why it only proposes and is off by default.
+- A personality with a local shell tool can still edit `worlds/` and `worlds.yaml`; `WorldSchemaService.load` and `WorldConfigService` re-validate on load.
+- Purging a world does not revoke its share links (`revokeForSubject` exists in `extensions/share-links`, but `WorldService.purge` does not call it).
+- `import-text.ts` (`bundleFromText`) parses JSON and CSV bundle text for owner surfaces; CSV export does not escape formula cells.
+- The ripple walk treats an edge with unknown `share` as 1 and says where to look, not why; a graph path is not causation.
+- The watchlist seed (`seedWatchlist`) writes in two batches (entities, then links), so a failure between them leaves the stocks without their sector links.
+- `UsageSourceKind` has `world_extract`, but extraction is metered as `memory_capture` (one shared call); nothing emits `world_extract` yet.

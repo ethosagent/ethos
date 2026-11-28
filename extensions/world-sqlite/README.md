@@ -37,3 +37,10 @@ Guarantees and what pins them, all in `src/__tests__/graph-store.test.ts`:
 - `close` and `retire` take `sourceRef` and `author`, but graph.db has no column for the closer, so `changes` reports the fact's own provenance.
 - The FTS5 index is keyed by `entities.rowid`; never VACUUM `graph.db` (same caveat as `messages_fts` in session-sqlite).
 - `graph.db` is in the backup `state` scope (`packages/wiring/src/backup/scopes.ts`, `WAL_STORES`).
+
+## Known limits
+
+- The contract has no retype or entity-retire call, so the backend cannot remove an entity row whose type the schema dropped (renamed or merged types leave orphan rows; handled in `world-service`).
+- `close` and `retire` do not store the closer's `sourceRef` or author (no column), so `changes()` reports the fact's own provenance.
+- Neighbour queries are capped at 200 entities (the result sets `truncated`) and hops at depth 3.
+- Nothing here checks who may read or write: access, authority and proposals are `world-service` rules, so a caller that skips `WorldService` skips them. Only `packages/wiring` composes this package, enforced by the dependency law (`pnpm arch`, `architecture.config.ts`).

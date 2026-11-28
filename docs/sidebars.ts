@@ -310,6 +310,7 @@ const sidebars: SidebarsConfig = {
             ),
             'using/explanation/user-profiles',
             'using/explanation/dreaming',
+            'using/explanation/world-model',
             'using/explanation/sessions-and-history',
             'using/explanation/plugin-commands',
             'using/explanation/wake-privilege',
