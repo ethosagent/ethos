@@ -28,6 +28,12 @@ export const INITIATIVE_READ_TOOLS = Object.freeze([
   'goal_status',
   'read_file',
   'search_files',
+  // World graph reads (local SQLite via a WorldToolPort). Registered in a run only when
+  // `world.enabled` composes a port (packages/wiring/src/initiatives.ts `worldPort`); the audience
+  // rule R6 decides which worlds they see (extensions/world-service/src/access.ts).
+  'world_query',
+  'world_neighbours',
+  'world_history',
 ] as const);
 
 /** Engine tools: always available to a run, regardless of the personality toolset. */
@@ -201,6 +207,14 @@ export const INITIATIVE_NEVER_TOOLS: ReadonlySet<string> = new FrozenSet<string>
   'video_analyze',
   'vision_analyze',
   'think_deeper',
+  // world writes and bulk tools; world_export writes an export artifact
+  'world_assert',
+  'world_propose',
+  'world_close',
+  'world_schema_change',
+  'world_import',
+  'world_build',
+  'world_export',
 ]);
 
 /**

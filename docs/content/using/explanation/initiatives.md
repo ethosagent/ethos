@@ -40,6 +40,8 @@ Each layer is enforced by named code and pinned by a test. No layer is a prompt 
 
 Three decisions follow from the layers. No decision row can come from a tool: only `SQLiteInitiativeStore.recordDecision`, reached through `decideInitiative` in `packages/wiring/src/initiative-decide.ts`, writes one, and only the CLI, the web app and channel taps call it. The digest recipient comes from `delivery.ownerChannel`, never from model output. A run executes as a private, incognito turn.
 
+With `world.enabled: true`, a run can also read the [world graph](./world-model.md) through `world_query`, `world_neighbours` and `world_history`, if the personality's `toolset.yaml` lists them. Each call is free, because it reads local SQLite. An incognito run counts as a shared room, so it sees only `shareable` worlds mounted for the personality. `owner_only` worlds and the personality's private world stay hidden (`resolveAccess` in `extensions/world-service/src/access.ts`, pinned by `initiative-world-reads.test.ts`). The world write tools stay out of every run. With the world model off, nothing changes.
+
 ### What it costs
 
 Nothing until you save an initiative with a budget. `usd_per_day` is then clamped to the smallest of the operator ceilings and the personality's `dailyBudgetUsd` (`clampInitiativeBudgets`, `extensions/constitution/src/index.ts`). Inside a day, `planDay` splits money across windows. The formula and an example are in [Initiative budget and delivery](../reference/initiatives-budget-and-delivery.md#budget-formula). It differs from the flat per-window figure in the original design page.

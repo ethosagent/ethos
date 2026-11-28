@@ -35,4 +35,11 @@ describe('tool call prices', () => {
       expect(toolCallUsd(name), name).toBeGreaterThan(0);
     }
   });
+
+  it('the world reads are local SQLite and free', () => {
+    for (const name of ['world_query', 'world_neighbours', 'world_history']) {
+      expect(INITIATIVE_FREE_READ_TOOLS as readonly string[], name).toContain(name);
+      expect(toolCallUsd(name), name).toBe(0);
+    }
+  });
 });

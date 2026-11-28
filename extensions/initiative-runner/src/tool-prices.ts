@@ -49,6 +49,10 @@ export const INITIATIVE_FREE_READ_TOOLS = Object.freeze([
   'goal_status',
   'read_file',
   'search_files',
+  // World graph reads hit the local SQLite world store; no provider is billed.
+  'world_query',
+  'world_neighbours',
+  'world_history',
 ] as const);
 
 /** USD charged for one call to `toolName`; 0 for a free, ledger or unknown tool. */

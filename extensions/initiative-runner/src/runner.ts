@@ -150,10 +150,21 @@ export interface InitiativeRunner {
   ): Promise<RunReport>;
 }
 
-const READ_ARG_KEYS = ['path', 'url', 'query', 'pattern', 'task_id', 'id'] as const;
+// `text` and `entity` are the world reads' arguments (world_query, world_neighbours/world_history).
+const READ_ARG_KEYS = [
+  'path',
+  'url',
+  'query',
+  'pattern',
+  'task_id',
+  'id',
+  'text',
+  'entity',
+] as const;
 const READ_TOOL_SET: ReadonlySet<string> = new Set(INITIATIVE_READ_TOOLS);
 
-function readRef(toolName: string, args: unknown): string | null {
+/** The ref a run's read leaves in `reads`; pinned by `__tests__/read-ref.test.ts`. */
+export function readRef(toolName: string, args: unknown): string | null {
   if (!READ_TOOL_SET.has(toolName)) return null;
   if (typeof args === 'object' && args !== null) {
     const rec = args as Record<string, unknown>;

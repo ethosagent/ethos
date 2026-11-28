@@ -86,3 +86,30 @@ describe('initiative tool classes (L1)', () => {
     expect(names.indexOf('web_search')).toBeLessThan(names.indexOf('read_file'));
   });
 });
+
+describe('initiative tool classes: world model', () => {
+  const READS = ['world_query', 'world_neighbours', 'world_history'];
+  const WRITES = [
+    'world_assert',
+    'world_propose',
+    'world_close',
+    'world_schema_change',
+    'world_import',
+    'world_build',
+    'world_export',
+  ];
+
+  it('the three world reads are READ tools, free per call', () => {
+    for (const n of READS) {
+      expect(INITIATIVE_READ_TOOLS as readonly string[]).toContain(n);
+      expect(runToolNames(undefined)).toContain(n);
+    }
+  });
+
+  it('every world write (and the export artifact) is NEVER and never a run tool', () => {
+    for (const n of WRITES) {
+      expect(INITIATIVE_NEVER_TOOLS.has(n), n).toBe(true);
+      expect(runToolNames([n])).not.toContain(n);
+    }
+  });
+});

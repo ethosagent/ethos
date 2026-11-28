@@ -100,6 +100,7 @@ The proposal queue costs your attention. That is the point on a shared world, bu
 | Extraction precision is unknown | Why it proposes only and is off by default. |
 | Local shell | A personality with a local shell tool can still edit `worlds/` and `worlds.yaml` directly, like every definition file. The services re-validate on load. |
 | Definition floor | Turns cannot write `worlds.yaml` and cannot read or write `worlds/`. |
+| Initiative runs | A run reads worlds through `world_query`, `world_neighbours` and `world_history`, but as a shared room: `owner_only` worlds and the private world are hidden from it. A finding cites the entity as `world_query: <text>` or `<id>`, not `world:<slug>:<name>`. |
 | No cross-world links | `acme:Ravi` and `private:Ravi` stay separate. |
 | No viewer role | Share snapshots only. |
 | Plugins | A plugin cannot register a world backend in this version. |
