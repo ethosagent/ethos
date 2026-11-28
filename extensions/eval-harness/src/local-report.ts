@@ -91,3 +91,66 @@ export function summarizeRepairs(events: RepairEvent[]): RepairSummary {
     executeWithEmptyArgs: 0,
   };
 }
+
+/** One scored task, as `summarizeEscalations` reads it. */
+export interface EscalationRecord {
+  /** `tier_escalation` events in the task (the assistant record's `escalations`). */
+  escalations: number;
+  score: number;
+  /** The task's summed `estimated_cost_usd`. */
+  costUsd: number;
+}
+
+export interface EscalationSummary {
+  tasks: number;
+  /** Tasks with at least one escalation. */
+  escalatedTasks: number;
+  /** Escalations across all tasks. */
+  escalations: number;
+  /** escalatedTasks / tasks; 0 with no tasks. */
+  escalationRate: number;
+  /** Pass rate among escalated tasks; null when none escalated. */
+  passRateEscalated: number | null;
+  /** Pass rate among tasks that never escalated; null when all did. */
+  passRateNot: number | null;
+  /** Summed cost / passed tasks; null when nothing passed. */
+  costPerPassUsd: number | null;
+}
+
+/**
+ * Fold scored records into the escalation report: how often the model asked
+ * for `deep`, how those tasks fared against the rest, and what a passing task
+ * cost. Compare two runs (as is, and `--tier deep`) by diffing this block.
+ * A task passes at score >= 1, the runner's own threshold.
+ */
+export function summarizeEscalations(records: EscalationRecord[]): EscalationSummary {
+  let escalatedTasks = 0;
+  let escalations = 0;
+  let escalatedPassed = 0;
+  let plainTasks = 0;
+  let plainPassed = 0;
+  let passed = 0;
+  let costUsd = 0;
+  for (const r of records) {
+    const pass = r.score >= 1;
+    costUsd += r.costUsd;
+    if (pass) passed += 1;
+    escalations += r.escalations;
+    if (r.escalations > 0) {
+      escalatedTasks += 1;
+      if (pass) escalatedPassed += 1;
+    } else {
+      plainTasks += 1;
+      if (pass) plainPassed += 1;
+    }
+  }
+  return {
+    tasks: records.length,
+    escalatedTasks,
+    escalations,
+    escalationRate: records.length > 0 ? escalatedTasks / records.length : 0,
+    passRateEscalated: escalatedTasks > 0 ? escalatedPassed / escalatedTasks : null,
+    passRateNot: plainTasks > 0 ? plainPassed / plainTasks : null,
+    costPerPassUsd: passed > 0 ? costUsd / passed : null,
+  };
+}

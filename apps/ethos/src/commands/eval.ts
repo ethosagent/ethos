@@ -4,9 +4,11 @@ import { parseTasksJsonl } from '@ethosagent/batch-runner';
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import {
   aggregateByCategory,
+  type EscalationRecord,
   EvalRunner,
   parseExpectedJsonl,
   type RepairEvent,
+  summarizeEscalations,
   summarizeRepairs,
 } from '@ethosagent/eval-harness';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
@@ -16,7 +18,7 @@ import {
   SkillEvolver,
   skillEvolutionEvolveOptions,
 } from '@ethosagent/skill-evolver';
-import { EthosError } from '@ethosagent/types';
+import { EthosError, type ModelTierName } from '@ethosagent/types';
 import { learningSubmitPort, type UsageMeter, withUsageMeter } from '@ethosagent/wiring';
 import { sayFor, writeJson, writeJsonError } from '../json-output';
 import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
@@ -152,7 +154,9 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
     console.log(
       'Usage: ethos eval run <tasks.jsonl> --expected <expected.jsonl> [options] [--json]',
     );
-    console.log('       ethos eval local [--model <id>] [--dataset evals/local] [--json]');
+    console.log(
+      '       ethos eval local [--model <id>] [--dataset evals/local] [--tier deep] [--json]',
+    );
     console.log('');
     console.log('Options (run):');
     console.log('  --expected, -e   Path to expected outputs JSONL (required)');
@@ -166,6 +170,9 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
     console.log('  --model, -m      Model id to score (default: configured model)');
     console.log('  --dataset, -d    Dataset directory (default: evals/local)');
     console.log('  --concurrency -c Concurrent tasks (default: 3)');
+    console.log(
+      '  --tier           Force every task onto one tier, e.g. deep (the always-deep arm)',
+    );
     return;
   }
 
@@ -413,14 +420,19 @@ async function evolveAfter(
 // tool-call repair rate from §4's `tool.repair` observability events.
 // ---------------------------------------------------------------------------
 
-interface LocalOpts {
+export interface LocalOpts {
   model?: string;
   dataset: string;
   concurrency: number;
+  /** `--tier deep`: force every task onto one tier, the always-deep arm. */
+  tier?: ModelTierName;
 }
 
-function parseLocalArgs(args: string[]): LocalOpts {
+const TIERS: readonly ModelTierName[] = ['trivial', 'default', 'deep', 'dreaming'];
+
+export function parseLocalArgs(args: string[]): LocalOpts {
   let model: string | undefined;
+  let tier: ModelTierName | undefined;
   let dataset = 'evals/local';
   let concurrency = 3;
 
@@ -439,10 +451,61 @@ function parseLocalArgs(args: string[]): LocalOpts {
           action: 'Pass a positive integer, e.g. --concurrency 4.',
         });
       concurrency = n;
+    } else if (arg === '--tier') {
+      const raw = args[++i];
+      const value = TIERS.find((t) => t === raw);
+      if (!value)
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: `--tier must be one of ${TIERS.join(', ')}`,
+          action: 'Pass --tier deep to run every task on the deep model.',
+        });
+      tier = value;
     }
   }
 
-  return { model, dataset, concurrency };
+  return { model, dataset, concurrency, ...(tier ? { tier } : {}) };
+}
+
+/**
+ * Read the assistant rows the runner wrote: per-task scores for the category
+ * report, and score / escalations / summed cost for the escalation report.
+ */
+export function parseScoredRecords(src: string): {
+  results: Array<{ id: string; score: number }>;
+  escalationRecords: EscalationRecord[];
+} {
+  const results: Array<{ id: string; score: number }> = [];
+  const escalationRecords: EscalationRecord[] = [];
+  for (const line of src.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const rec: unknown = JSON.parse(trimmed);
+    if (typeof rec !== 'object' || rec === null) continue;
+    if (!('role' in rec) || rec.role !== 'assistant') continue;
+    if (!('task_id' in rec) || typeof rec.task_id !== 'string') continue;
+    const score = 'score' in rec && typeof rec.score === 'number' ? rec.score : 0;
+    const escalations =
+      'escalations' in rec && typeof rec.escalations === 'number' ? rec.escalations : 0;
+    const usage = 'usage' in rec ? rec.usage : null;
+    const costUsd =
+      typeof usage === 'object' &&
+      usage !== null &&
+      'estimated_cost_usd' in usage &&
+      typeof usage.estimated_cost_usd === 'number'
+        ? usage.estimated_cost_usd
+        : 0;
+    results.push({ id: rec.task_id, score });
+    escalationRecords.push({ escalations, score, costUsd });
+  }
+  return { results, escalationRecords };
+}
+
+/** The `escalation` member of the `ethos eval local --json` document. */
+export function escalationJson(
+  records: EscalationRecord[],
+): ReturnType<typeof summarizeEscalations> {
+  return summarizeEscalations(records);
 }
 
 /** Read the run's `tool.repair` events from the observability store. Degrades
@@ -455,6 +518,26 @@ function readRepairEvents(since: number): { events: RepairEvent[]; available: bo
   } catch {
     return { events: [], available: false };
   }
+}
+
+const pct = (rate: number | null): string => (rate === null ? 'n/a' : `${Math.round(rate * 100)}%`);
+
+function printEscalation(s: ReturnType<typeof summarizeEscalations>, tier?: ModelTierName): void {
+  console.log(
+    `\n${c.bold}Tier escalation${c.reset} ${c.dim}(think_deeper${tier ? ` · all tasks forced to ${tier}` : ''})${c.reset}`,
+  );
+  console.log(
+    `  escalated ${s.escalatedTasks}/${s.tasks} tasks (${pct(s.escalationRate)})  ${c.dim}·${c.reset}  ${s.escalations} escalations`,
+  );
+  console.log(
+    `  pass rate: escalated ${pct(s.passRateEscalated)}  ${c.dim}·${c.reset}  not escalated ${pct(s.passRateNot)}`,
+  );
+  console.log(
+    `  cost per passing task: ${s.costPerPassUsd === null ? 'n/a' : `$${s.costPerPassUsd.toFixed(4)}`}`,
+  );
+  console.log(
+    `  ${c.dim}compare arms: run once as is and once with --tier deep, then diff passed and costPerPassUsd${c.reset}`,
+  );
 }
 
 export async function runEvalLocal(args: string[], config: EthosConfig): Promise<void> {
@@ -518,6 +601,7 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
     outputPath,
     defaultScorer: 'contains',
     storage: getStorage(),
+    ...(opts.tier ? { tierOverride: opts.tier } : {}),
   });
 
   const runStart = Date.now();
@@ -528,17 +612,10 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   bar.finish();
 
   // Per-task scores come from the assistant records the runner wrote.
-  const results: Array<{ id: string; score: number }> = [];
+  let results: Array<{ id: string; score: number }> = [];
+  let escalationRecords: EscalationRecord[] = [];
   try {
-    const outSrc = await readFile(outputPath, 'utf-8');
-    for (const line of outSrc.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const rec = JSON.parse(trimmed) as { task_id?: string; role?: string; score?: number };
-      if (rec.role === 'assistant' && typeof rec.task_id === 'string') {
-        results.push({ id: rec.task_id, score: typeof rec.score === 'number' ? rec.score : 0 });
-      }
-    }
+    ({ results, escalationRecords } = parseScoredRecords(await readFile(outputPath, 'utf-8')));
   } catch {
     // Fall back to no per-category detail; overall stats still print below.
   }
@@ -546,6 +623,7 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   const categories = aggregateByCategory(results);
   const { events, available } = readRepairEvents(runStart);
   const repair = summarizeRepairs(events);
+  const escalation = escalationJson(escalationRecords);
 
   if (json) {
     writeJson({
@@ -565,6 +643,7 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
         repairSuccessRate: repair.repairSuccessRate,
         executeWithEmptyArgs: repair.executeWithEmptyArgs,
       },
+      escalation: { tier: opts.tier ?? null, ...escalation },
       output: outputPath,
     });
     return;
@@ -597,6 +676,8 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   } else {
     console.log(`  ${c.yellow}unavailable — observability store not reachable${c.reset}`);
   }
+
+  printEscalation(escalation, opts.tier);
 
   console.log(`\n${c.bold}Hard invariants${c.reset}`);
   console.log(
