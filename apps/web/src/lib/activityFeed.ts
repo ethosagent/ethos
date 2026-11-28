@@ -450,6 +450,24 @@ export function convertSseEvent(event: SseEvent, ctx: LiveRowContext): ActivityR
         ],
       };
 
+    case 'tier_escalation':
+      // think-deeper-tier-switch — one row per escalation, same words as the trail.
+      return {
+        ...base,
+        key: `tier_escalation:${ctx.sessionId}:${ctx.seq}`,
+        kind: 'notice',
+        label: 'tier_escalation',
+        summary: event.reason
+          ? `Escalated to ${event.to}: ${event.reason}`
+          : `Escalated to ${event.to}`,
+        details: [
+          { key: 'from', kind: 'text', value: event.from },
+          { key: 'to', kind: 'text', value: event.to },
+          { key: 'model', kind: 'text', value: event.model },
+          { key: 'reason', kind: 'text', value: event.reason },
+        ],
+      };
+
     case 'decision': {
       // plan decision-provider-personality §15.1 — the same row vocabulary the
       // trail draws (`decisionRowView`). A `started` and its `settled` share

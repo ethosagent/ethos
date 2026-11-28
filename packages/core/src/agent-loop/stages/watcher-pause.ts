@@ -1,5 +1,6 @@
 import type { AgentEvent } from '@ethosagent/types';
 import { DefaultToolRegistry } from '../../tool-registry';
+import type { TierEscalationRef } from '../tier-escalation';
 import type { HaltDecision } from '../turn-context';
 import { type StreamStepContext, type StreamStepDeps, streamStep } from './stream-step';
 import { persistAbortedToolCalls } from './tool-rejection';
@@ -23,9 +24,14 @@ export async function* replyAfterWatcherPause(
   deps: StreamStepDeps,
   ctx: StreamStepContext,
   halt: HaltDecision,
-  tierEscalationRef: { value?: string },
+  tierEscalationRef: TierEscalationRef,
 ): AsyncGenerator<AgentEvent, WatcherPauseReply> {
   const note = `[The safety watcher paused this turn (rule: ${halt.rule}): ${halt.reason}. No tools are available for the rest of this turn. Reply to the user now: say what was done so far, that the turn was paused, and why.]`;
+  // A `think_deeper` in the batch that tripped the pause must not make this
+  // closing reply run on deep: the turn is over, nothing needs the harder model.
+  // Pinned by `watcher pause` in `__tests__/model-tier.test.ts`.
+  tierEscalationRef.value = undefined;
+  tierEscalationRef.reason = undefined;
   const closing = yield* streamStep(
     { ...deps, tools: new DefaultToolRegistry() },
     { ...ctx, systemPrompt: ctx.systemPrompt ? `${ctx.systemPrompt}\n\n${note}` : note },

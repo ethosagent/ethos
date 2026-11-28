@@ -807,7 +807,6 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
-
     devDependencies:
       '@ethosagent/world-service':
         specifier: workspace:*
@@ -2528,6 +2527,10 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   extensions/tools-todo:
     dependencies:
@@ -2661,6 +2664,24 @@ importers:
         specifier: workspace:*
         version: link:../../packages/storage-fs
 
+  extensions/voice-session:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@ethosagent/voice-text':
+        specifier: workspace:*
+        version: link:../../packages/voice-text
+
+  extensions/watchers:
+    dependencies:
+      '@ethosagent/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/world-service:
     dependencies:
       '@ethosagent/safety-redact':
@@ -2694,24 +2715,6 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
-
-  extensions/voice-session:
-    dependencies:
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@ethosagent/voice-text':
-        specifier: workspace:*
-        version: link:../../packages/voice-text
-
-  extensions/watchers:
-    dependencies:
-      '@ethosagent/logger':
-        specifier: workspace:*
-        version: link:../../packages/logger
-      '@ethosagent/types':
-        specifier: workspace:*
-        version: link:../../packages/types
 
   packages/a2a:
     dependencies:

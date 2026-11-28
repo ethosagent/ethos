@@ -170,10 +170,11 @@ describe('artifact_change delivery', () => {
     store.close();
   });
 
-  // 18 since decision-provider-personality N7a added `decision`; this test
-  // pins only that artifact_change added none.
-  it('adds no AgentEvent variant — the union is still frozen at 18', () => {
-    expect(KNOWN_AGENT_EVENT_TYPES).toHaveLength(18);
+  // 18 since decision-provider-personality N7a added `decision`, 19 since
+  // think-deeper-tier-switch added `tier_escalation`; this test pins only that
+  // artifact_change added none.
+  it('adds no AgentEvent variant — the union is still frozen at 19', () => {
+    expect(KNOWN_AGENT_EVENT_TYPES).toHaveLength(19);
     expect((KNOWN_AGENT_EVENT_TYPES as readonly string[]).some((t) => t.includes('artifact'))).toBe(
       false,
     );

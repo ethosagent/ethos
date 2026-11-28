@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: qualify-a-local-model
 time: "10 min"
-updated: 2026-07-13
+updated: 2026-11-28
 ---
 
 ## Task
@@ -73,6 +73,17 @@ Hard invariants
 - **Repair rate** comes from the `tool.repair` observability events emitted this run. `repaired` args were mechanically recovered; `failed` args could not be — they became an `is_error` tool_result the model can see and retry, never a silent empty-args call.
 - **`execute-with-{}` occurrences must be 0.** This is an invariant, not a bar — a malformed tool call is never executed with `{}`. A non-zero value means a regression.
 - **`tool-calling` parse-clean rate targets ≥ 90%.** The eval harness records the model's text, not per-call parses, so this rate is observed through final-answer correctness rather than a direct per-call count.
+
+### 4. Compare tier escalation against always-deep
+
+The report ends with a tier escalation block: the share of tasks where the model called `think_deeper`, the pass rate of escalated and non-escalated tasks, and the cost per passing task. To judge whether escalating pays, run the suite twice and compare:
+
+```bash
+ethos eval local --json > escalating.json
+ethos eval local --json --tier deep > always-deep.json
+```
+
+`--tier deep` runs every task on the deep model. Diff `passed` and `escalation.costPerPassUsd` between the two files. The escalating run should pass within about one point of always-deep at well under its cost per passing task.
 
 ## Verify
 

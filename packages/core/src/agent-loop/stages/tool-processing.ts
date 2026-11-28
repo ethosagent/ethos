@@ -32,6 +32,7 @@ import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
 import { drainSteerEntries, persistSteer, type SteerVision, steerContentBlocks } from '../steer';
+import { recordEscalation, type TierEscalationRef } from '../tier-escalation';
 import { toolCostFields } from '../tool-cost';
 import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
@@ -49,7 +50,12 @@ import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
 import type { CompletedToolCall, UsageSink } from './stream-step';
-import { emitToolRejection, rejectAbortedCall, validateRepairedArgs } from './tool-rejection';
+import {
+  emitToolRejection,
+  rejectAbortedCall,
+  rejectOverCapEscalation,
+  validateRepairedArgs,
+} from './tool-rejection';
 import { answerToolSearch, recordDirectLoads } from './tool-search';
 import type { TurnUsageAccumulator } from './turn-finalizer';
 
@@ -77,6 +83,8 @@ export interface ToolProcessingDeps {
     turnId: string;
   }) => void;
   sessionCosts: Map<string, number>;
+  /** Successful `think_deeper` escalations per sessionKey — see `checkEscalationCap`. */
+  sessionEscalations: Map<string, number>;
   turnUsage?: TurnUsageAccumulator; // for a tool-reported cost_usd — ../tool-cost
   storage?: Storage;
   dataDir?: string;
@@ -132,7 +140,7 @@ export interface ToolProcessingContext {
   dryRunState: { callCount: number; cap: number; capped: number; plan: DryRunToolPlan[] };
 
   // Tier escalation ref
-  tierEscalationRef: { value?: string };
+  tierEscalationRef: TierEscalationRef;
 
   // Steer
   steerSink?: SteerSink;
@@ -333,6 +341,18 @@ export async function* processTools(
         args: tc.args,
         rejected: deps.safety.injection.downgradeRejectionMessage,
       });
+      continue;
+    }
+
+    const overCap = yield* rejectOverCapEscalation(
+      observe,
+      tc,
+      ctx.tierEscalationRef,
+      deps.sessionEscalations,
+      ctx.sessionKey,
+    );
+    if (overCap) {
+      prepped.push(overCap);
       continue;
     }
 
@@ -599,7 +619,8 @@ export async function* processTools(
   // business (`stream-step.ts`); the tool's job is only to ask.
   for (const r of execResults) {
     if (r.name === 'think_deeper' && r.result.ok) {
-      ctx.tierEscalationRef.value = 'deep';
+      const args = prepped.find((p) => p.toolCallId === r.toolCallId)?.args;
+      recordEscalation(ctx.tierEscalationRef, deps.sessionEscalations, ctx.sessionKey, args);
       break;
     }
   }

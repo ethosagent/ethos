@@ -901,6 +901,8 @@ export function App({
     };
 
     const onUsage = (inputTokens: number, outputTokens: number, estimatedCostUsd: number) => {
+      // The escalated call has finished: drop its status-bar note (only that one).
+      setStatusMsg((prev) => (prev.startsWith('Escalated to ') ? '' : prev));
       setUsage((prev) => ({
         inputTokens: prev.inputTokens + inputTokens,
         outputTokens: prev.outputTokens + outputTokens,
@@ -954,6 +956,16 @@ export function App({
       setCurrentModel(resolvedModel);
     };
 
+    // think-deeper-tier-switch — the next call runs on the deep model: a
+    // status-bar note for that one call, cleared by the next `usage`.
+    const onTierEscalation = (escalation: { to: string; reason: string }) => {
+      const note = escalation.reason
+        ? `Escalated to ${escalation.to}: ${escalation.reason}`
+        : `Escalated to ${escalation.to}`;
+      setStatusMsg(note);
+      pushTimeline('info', note);
+    };
+
     bridge.on('text_delta', onTextDelta);
     bridge.on('thinking_delta', onThinkingDelta);
     bridge.on('done', onDone);
@@ -966,6 +978,7 @@ export function App({
     bridge.on('queued', onQueued);
     bridge.on('idle', onIdle);
     bridge.on('run_start', onRunStart);
+    bridge.on('tier_escalation', onTierEscalation);
 
     return () => {
       bridge.off('text_delta', onTextDelta);
@@ -980,6 +993,7 @@ export function App({
       bridge.off('queued', onQueued);
       bridge.off('idle', onIdle);
       bridge.off('run_start', onRunStart);
+      bridge.off('tier_escalation', onTierEscalation);
     };
   }, [bridge]);
 

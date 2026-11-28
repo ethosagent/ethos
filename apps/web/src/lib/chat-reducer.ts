@@ -474,6 +474,7 @@ const TURN_ADVANCING_EVENTS = new Set<SseEventType>([
   'tool_progress',
   'tool.approval_required',
   'decision',
+  'tier_escalation',
   // A halt mints a turn (`ensureTurn`) for its trail row, so a stopped turn
   // must not see one.
   'halt',
@@ -842,6 +843,14 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       // A1 — an early safety stop joins the turn's trail as a finding row
       // (`⚠ stopped early · budget · tool_calls`). A normal `done` follows,
       // so nothing else about the turn moves here.
+      const turn = ensureTurn(state.currentTurn, now);
+      const trail = applyTrailEvent(state.trail, turn.id, event) ?? state.trail;
+      return { ...state, currentTurn: turn, trail, lastStreamEventAt: now };
+    }
+
+    case 'tier_escalation': {
+      // think-deeper-tier-switch — the next call runs on a different tier's
+      // model; the trail row says so and why.
       const turn = ensureTurn(state.currentTurn, now);
       const trail = applyTrailEvent(state.trail, turn.id, event) ?? state.trail;
       return { ...state, currentTurn: turn, trail, lastStreamEventAt: now };

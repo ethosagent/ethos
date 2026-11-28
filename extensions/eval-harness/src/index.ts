@@ -24,8 +24,11 @@ export {
   aggregateByCategory,
   type CategoryStat,
   categoryOf,
+  type EscalationRecord,
+  type EscalationSummary,
   type RepairEvent,
   type RepairSummary,
+  summarizeEscalations,
   summarizeRepairs,
 } from './local-report';
 export { EvalRunner, parseExpectedJsonl } from './runner';

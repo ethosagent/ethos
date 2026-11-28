@@ -905,6 +905,8 @@
       "CategoryStat": "type",
       "DecisionCalibrationInput": "type",
       "DecisionCalibrationReport": "type",
+      "EscalationRecord": "type",
+      "EscalationSummary": "type",
       "EvalExpected": "type",
       "EvalRunOptions": "type",
       "EvalRunner": "value",
@@ -930,6 +932,7 @@
       "parseExpectedJsonl": "value",
       "regexScorer": "value",
       "runDecisionCalibration": "value",
+      "summarizeEscalations": "value",
       "summarizeRepairs": "value",
       "toolCalledScorer": "value"
     }
@@ -5736,6 +5739,8 @@
       "TextCardPayloadSchema": "value",
       "TextDeltaEventSchema": "value",
       "ThinkingDeltaEventSchema": "value",
+      "TierEscalationEvent": "type",
+      "TierEscalationEventSchema": "value",
       "ToolApprovalRequiredEventSchema": "value",
       "ToolCall": "type",
       "ToolCallSchema": "value",

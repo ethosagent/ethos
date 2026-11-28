@@ -3,7 +3,7 @@ import { KNOWN_AGENT_EVENT_TYPES } from '../agent-event';
 
 describe('AgentEvent drift gate', () => {
   // Changing this list requires two maintainers + consumer audit per ARCHITECTURE.md §VII.
-  it('has exactly the frozen set of 18 event types', () => {
+  it('has exactly the frozen set of 19 event types', () => {
     const expected = [
       'text_delta',
       'thinking_delta',
@@ -24,8 +24,10 @@ describe('AgentEvent drift gate', () => {
       'notification_received',
       // decision-provider-personality N7a (§15.2) — §VI Substantive, "Agent event union".
       'decision',
+      // think-deeper-tier-switch Task 2.1 — §VI Substantive, "Agent event union".
+      'tier_escalation',
     ];
     expect([...KNOWN_AGENT_EVENT_TYPES]).toEqual(expected);
-    expect(KNOWN_AGENT_EVENT_TYPES).toHaveLength(18);
+    expect(KNOWN_AGENT_EVENT_TYPES).toHaveLength(19);
   });
 });

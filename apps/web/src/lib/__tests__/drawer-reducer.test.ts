@@ -22,6 +22,30 @@ describe('drawer-reducer', () => {
   const initial: DrawerStreamState = emptyDrawerState('s1');
   const NOW = 1_700_000_000_000;
 
+  it('tier_escalation joins the open turn as a notice row, like the chat reducer', () => {
+    const escalation = {
+      type: 'tier_escalation' as const,
+      from: 'default' as const,
+      to: 'deep' as const,
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    };
+    let s = applyEvent(initial, runStart, NOW);
+    s = applyEvent(s, escalation, NOW);
+    const turnId = s.turns[0]?.turnId ?? '';
+    const row = s.trail[turnId]?.[0];
+    expect(row?.kind).toBe('notice');
+    if (row?.kind !== 'notice') throw new Error('expected a notice');
+    expect(row.word).toBe('escalated to deep');
+    expect(row.subject).toBe('race condition');
+
+    let chat: ChatState = initialChatState;
+    chat = applyChatEvent(chat, runStart, NOW);
+    chat = applyChatEvent(chat, escalation, NOW);
+    const chatRow = chat.trail[chat.currentTurn?.id ?? '']?.[0];
+    expect(chatRow).toMatchObject({ kind: 'notice', word: row.word, subject: row.subject });
+  });
+
   const runStart = {
     type: 'run_start' as const,
     provider: 'anthropic',

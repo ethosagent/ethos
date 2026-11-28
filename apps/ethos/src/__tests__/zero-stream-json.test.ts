@@ -96,6 +96,26 @@ describe('encodeZeroEvent', () => {
     expect(decision('settled')).toBeNull();
   });
 
+  it('passes tier_escalation through with the reason redacted (think-deeper-tier-switch)', () => {
+    const line = encodeZeroEvent({
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+      traceId: 't1',
+    });
+    expect(line).toEqual({
+      v: 1,
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+      traceId: 't1',
+    });
+  });
+
   it('obeys the audience gate', () => {
     const progress = (audience: string) =>
       ev({ type: 'tool_progress', toolName: 't', message: 'm', audience });

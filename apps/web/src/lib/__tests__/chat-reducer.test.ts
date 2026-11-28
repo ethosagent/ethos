@@ -2183,6 +2183,51 @@ describe('applyEvent — halt (A1)', () => {
   });
 });
 
+// think-deeper-tier-switch Task 2.3 — `Escalated to deep: <reason>` is a trail row.
+describe('applyEvent — tier_escalation', () => {
+  const escalation = {
+    type: 'tier_escalation' as const,
+    from: 'default' as const,
+    to: 'deep' as const,
+    model: 'claude-opus-5',
+    reason: 'race condition',
+  };
+
+  it('joins the turn trail as a neutral notice naming the tier and the reason', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'text_delta', text: 'working' }, NOW);
+    s = applyEvent(s, escalation, NOW);
+    const entries = liveTrail(s);
+    expect(entries).toHaveLength(1);
+    const notice = entries[0];
+    if (notice?.kind !== 'notice') throw new Error('expected a notice');
+    expect(notice.tone).toBe('neutral');
+    expect(notice.word).toBe('escalated to deep');
+    expect(notice.subject).toBe('race condition');
+    expect(notice.detail).toBe('claude-opus-5');
+  });
+
+  it('falls back to the model when the reason is empty', () => {
+    const s = applyEvent(initialChatState, { ...escalation, reason: '' }, NOW);
+    const notice = liveTrail(s)[0];
+    if (notice?.kind !== 'notice') throw new Error('expected a notice');
+    expect(notice.subject).toBe('claude-opus-5');
+  });
+
+  it('is turn state: a stopped turn does not see one', () => {
+    let s: ChatState = applyAction(initialChatState, {
+      type: 'submit-user-message',
+      id: 'u1',
+      text: 'go',
+      timestamp: 1,
+    });
+    s = applyEvent(s, { type: 'text_delta', text: 'x' }, NOW);
+    s = applyAction(s, { type: 'abort-turn' });
+    const stopped = s;
+    expect(applyEvent(s, escalation, NOW)).toBe(stopped);
+  });
+});
+
 describe('applyEvent — error keeps code and trace (A3)', () => {
   it('carries code and the run_start traceId onto state.error', () => {
     let s: ChatState = initialChatState;

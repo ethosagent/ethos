@@ -322,6 +322,21 @@ export function applyTrailEvent(
         subject: event.summary,
       });
     }
+    case 'tier_escalation': {
+      // think-deeper-tier-switch — `escalated to deep · <reason>`: a neutral
+      // notice row (the model changed on purpose, nothing went wrong). The
+      // reason is already cleaned by core (`escalationReason`); a model that
+      // gave none leaves the subject as the model that answers.
+      const seq = trail[turnId]?.length ?? 0;
+      return appendTrailEntry(trail, turnId, {
+        kind: 'notice',
+        id: `${turnId}-escalation-${seq}`,
+        tone: 'neutral',
+        word: `escalated to ${event.to}`,
+        subject: event.reason || event.model,
+        detail: event.model,
+      });
+    }
     case 'decision':
       return applyDecision(trail, turnId, event);
     default:

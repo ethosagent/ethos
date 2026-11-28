@@ -273,7 +273,10 @@ describe('Orchestrator guardrails', () => {
     // ../providers/metered-provider.ts.
     // Bumped 1128 -> 1130 (incognito-sessions D5): the `RunOptions.incognito`
     // field and its one-line doc. The logic lives in stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1130);
+    // Bumped 1130 -> 1133 (think-deeper-tier-switch P3): the per-session
+    // escalation Map, its reset beside `sessionCosts`, the ref's type import and
+    // the deps pass-through. The logic lives in agent-loop/tier-escalation.ts.
+    expect(lineCount).toBeLessThanOrEqual(1133);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -414,7 +417,11 @@ describe('Orchestrator guardrails', () => {
       // and on the return-direct exit (two lines and a blank). One ctx field
       // (`TurnSetup.charges`), one type import. The logic lives in
       // agent-loop/usage-charges.ts.
-      if (lineCount > 882) {
+      // Bumped 882 -> 903 (think-deeper-tier-switch P2/P3): the over-cap guard
+      // call, the escalation setter call and the `sessionEscalations` dep, with
+      // their imports. The logic lives in agent-loop/tier-escalation.ts and
+      // stages/tool-rejection.ts.
+      if (lineCount > 903) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

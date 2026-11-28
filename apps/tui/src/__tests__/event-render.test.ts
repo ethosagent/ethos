@@ -167,6 +167,28 @@ describe('TUI event rendering', () => {
     }
   });
 
+  it('shows a status-bar note for an escalated call and clears it on the next usage (think-deeper-tier-switch)', async () => {
+    const { bridge, instance, lastFrame } = setup();
+    try {
+      await act(async () => {
+        bridge.emit('tier_escalation', {
+          from: 'default',
+          to: 'deep',
+          model: 'claude-opus-5',
+          reason: 'race condition',
+        });
+      });
+      expect(lastFrame()).toContain('Escalated to deep: race condition');
+
+      await act(async () => {
+        bridge.emit('usage', 10, 5, 0.01, {});
+      });
+      expect(lastFrame()).not.toContain('Escalated to deep');
+    } finally {
+      instance.unmount();
+    }
+  });
+
   it('prefers the trailing error argument for a failed tool (C2)', async () => {
     const { bridge, stdin, instance, allFrames } = setup();
     try {

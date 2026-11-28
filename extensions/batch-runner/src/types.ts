@@ -38,6 +38,8 @@ export interface AtroposRecord {
   score?: number;
   scorer?: string;
   skill_files_used?: string[];
+  /** think-deeper-tier-switch — `tier_escalation` events in this task's run. Additive; schema stays `1.0`. */
+  escalations?: number;
 }
 
 export interface CheckpointState {

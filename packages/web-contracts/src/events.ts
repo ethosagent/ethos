@@ -382,6 +382,23 @@ export const SessionDecisionSchema = z.object({
 });
 export type SessionDecision = z.infer<typeof SessionDecisionSchema>;
 
+/**
+ * think-deeper-tier-switch Task 2.2/2.3 — a `think_deeper` escalation took
+ * effect: the next call is served by a different model. A zod mirror of the
+ * `tier_escalation` `AgentEvent` (@ethosagent/types); the two change together
+ * (`__tests__/tier-escalation-event.test.ts` pins the key sets equal).
+ * `from`/`to` mirror `ModelTierName`. Never reaches a channel.
+ */
+export const TierEscalationEventSchema = z.object({
+  type: z.literal('tier_escalation'),
+  from: z.enum(['trivial', 'default', 'deep', 'dreaming']),
+  to: z.enum(['trivial', 'default', 'deep', 'dreaming']),
+  model: z.string(),
+  reason: z.string(),
+  traceId: z.string().optional(),
+});
+export type TierEscalationEvent = z.infer<typeof TierEscalationEventSchema>;
+
 // B1 — the FIRST frame of every `/sse/sessions/:id` stream. Carries the
 // `x-request-id` of the SSE request itself. The same id is on the response's
 // `x-request-id` header, but `EventSource` gives browser clients no way to
@@ -430,6 +447,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   DryRunSummaryEventSchema,
   RunStartEventSchema,
   DecisionEventSchema,
+  TierEscalationEventSchema,
   StreamMetaEventSchema,
   ProtocolUpgradeRequiredEventSchema,
 ]);
@@ -512,4 +530,6 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventT
   'memory.captured',
   'dry_run_summary',
   'decision',
+  // think-deeper-tier-switch — admitted with the `convertSseEvent` case that renders it.
+  'tier_escalation',
 ]);

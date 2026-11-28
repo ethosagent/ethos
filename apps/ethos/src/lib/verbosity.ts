@@ -43,6 +43,7 @@ export interface RenderedLine {
     | 'debug'
     | 'run_start'
     | 'decision'
+    | 'tier_escalation'
     | 'halt';
 }
 
@@ -194,6 +195,17 @@ export function projectEvent(
     case 'context_meta':
       // Not surfaced at any verbosity in the line projection; `context_meta` is
       // internal.
+      break;
+    case 'tier_escalation':
+      // think-deeper-tier-switch — one dim line when the next call runs on the
+      // deep model: `default` and up, hidden in `quiet` (returned above). The
+      // reason is already cleaned by core (`escalationReason`).
+      out.push({
+        text: event.reason
+          ? `Escalated to ${event.to}: ${event.reason}`
+          : `Escalated to ${event.to}`,
+        kind: 'tier_escalation',
+      });
       break;
     case 'decision': {
       // plan decision-provider-personality §15.6 — one line per SETTLED

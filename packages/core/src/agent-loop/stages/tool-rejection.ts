@@ -1,6 +1,7 @@
 import type { AgentEvent, SessionStore } from '@ethosagent/types';
 import { ABORTED_TOOL_RESULT } from '../../tool-registry';
 import { coerceArgsToSchema, describeRepairedArgsFailure } from '../schema-coerce';
+import { escalationCapMessage, type TierEscalationRef } from '../tier-escalation';
 import type { WatcherTap } from '../turn-context';
 import type { CompletedToolCall } from './stream-step';
 
@@ -86,6 +87,27 @@ export function* rejectAbortedCall(
   yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, ABORTED_TOOL_RESULT);
   const args = tc.args ?? {};
   return { toolCallId: tc.toolCallId, name: tc.toolName, args, rejected: ABORTED_TOOL_RESULT };
+}
+
+// A `think_deeper` over its per-turn or per-session cap (`checkEscalationCap`,
+// ../tier-escalation.ts) is refused BEFORE it runs: the model gets an is_error
+// result and carries on. Returns the Prepped `{ rejected }` entry, or
+// `undefined` when the call is not capped. Not a hook denial, so it never feeds
+// `updateDenialStreak`. Pinned by `escalation caps` in __tests__/model-tier.test.ts.
+export function* rejectOverCapEscalation(
+  observe: WatcherTap['observe'],
+  tc: CompletedToolCall,
+  ref: TierEscalationRef,
+  sessionEscalations: ReadonlyMap<string, number>,
+  sessionKey: string,
+): Generator<
+  AgentEvent,
+  { toolCallId: string; name: string; args: unknown; rejected: string } | undefined
+> {
+  const rejected = escalationCapMessage(tc.toolName, ref, sessionEscalations, sessionKey);
+  if (rejected === undefined) return undefined;
+  yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, rejected);
+  return { toolCallId: tc.toolCallId, name: tc.toolName, args: tc.args ?? {}, rejected };
 }
 
 // The turn was aborted after the response's tool_use blocks streamed but before

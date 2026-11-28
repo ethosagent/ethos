@@ -139,7 +139,11 @@ export class EvalRunner {
 
     let text = '';
     let skillFilesUsed: string[] = [];
-    let usage: AtroposUsage | null = null;
+    // Summed across the task's LLM calls: a multi-call task (tools, an
+    // escalation) used to report only its last call.
+    const total: AtroposUsage = { input_tokens: 0, output_tokens: 0, estimated_cost_usd: 0 };
+    let sawUsage = false;
+    let escalations = 0;
     let errorMsg: string | undefined;
 
     try {
@@ -147,6 +151,7 @@ export class EvalRunner {
       for await (const event of this.loop.run(task.prompt, {
         sessionKey,
         personalityId: task.personalityId,
+        ...(this.options.tierOverride ? { tierOverride: this.options.tierOverride } : {}),
       })) {
         switch (event.type) {
           case 'text_delta':
@@ -163,11 +168,16 @@ export class EvalRunner {
             }
             break;
           case 'usage':
-            usage = {
-              input_tokens: event.inputTokens,
-              output_tokens: event.outputTokens,
-              estimated_cost_usd: event.estimatedCostUsd,
-            };
+            sawUsage = true;
+            total.input_tokens += event.inputTokens;
+            total.output_tokens += event.outputTokens;
+            total.estimated_cost_usd += event.estimatedCostUsd;
+            break;
+          case 'tier_escalation':
+            escalations += 1;
+            break;
+          default:
+            // Forward-compat: unknown AgentEvent variants are a no-op.
             break;
         }
       }
@@ -191,10 +201,11 @@ export class EvalRunner {
       turn: 0,
       role: 'assistant',
       content: text,
-      usage,
+      usage: sawUsage ? total : null,
       score,
       scorer: scorerName,
       skill_files_used: skillFilesUsed,
+      escalations,
       ...(errorMsg ? { error: errorMsg } : {}),
     });
 

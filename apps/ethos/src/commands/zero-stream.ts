@@ -76,6 +76,15 @@ export type ZeroStreamLine =
       count?: number;
       message: string;
     }
+  | {
+      v: 1;
+      type: 'tier_escalation';
+      from: Ev<'tier_escalation'>['from'];
+      to: Ev<'tier_escalation'>['to'];
+      model: string;
+      reason: string;
+      traceId?: string;
+    }
   | { v: 1; type: 'error'; code: string; error: string }
   | {
       v: 1;
@@ -172,6 +181,18 @@ export function encodeZeroEvent(event: AgentEvent): ZeroStreamLine | null {
         ...(event.toolName !== undefined ? { toolName: event.toolName } : {}),
         ...(event.count !== undefined ? { count: event.count } : {}),
         message: event.message,
+      };
+    case 'tier_escalation':
+      // think-deeper-tier-switch — the reason is model text: redacted like an
+      // error string. Additive line type, so `v` stays 1.
+      return {
+        v: 1,
+        type: 'tier_escalation',
+        from: event.from,
+        to: event.to,
+        model: event.model,
+        reason: redactString(event.reason),
+        ...(event.traceId !== undefined ? { traceId: event.traceId } : {}),
       };
     case 'error':
       return { v: 1, type: 'error', code: event.code, error: redactString(event.error) };

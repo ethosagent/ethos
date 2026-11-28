@@ -151,6 +151,36 @@ describe('ChatService', () => {
     unsubscribe();
   });
 
+  it('forwards tier_escalation to the SSE stream before the escalated reply', async () => {
+    const service = makeService([
+      {
+        type: 'tier_escalation',
+        from: 'default',
+        to: 'deep',
+        model: 'claude-opus-5',
+        reason: 'race condition',
+      },
+      { type: 'text_delta', text: 'deep answer' },
+      { type: 'done', text: 'deep answer', turnCount: 1 },
+    ]);
+    const events: SseEvent[] = [];
+    const result = await service.send({ clientId: 'tab-1', text: 'hi' });
+    const unsubscribe = service.subscribe(result.sessionId, 0, (b) => {
+      events.push(b.event);
+    });
+
+    await waitForEvent(events, (e) => e.some((x) => x.type === 'done'));
+
+    expect(events.find((e) => e.type === 'tier_escalation')).toEqual({
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    });
+    unsubscribe();
+  });
+
   it('forwards the tool_progress audience instead of stamping user (ux-feedback C5)', async () => {
     const service = makeService([
       { type: 'tool_progress', toolName: 'bash', message: 'internal warn', audience: 'internal' },

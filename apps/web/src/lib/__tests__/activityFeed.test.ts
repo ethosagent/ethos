@@ -163,6 +163,16 @@ const HANDLED: Array<[string, SseEvent]> = [
       toolCallId: 'tc1',
     },
   ],
+  [
+    'tier_escalation',
+    {
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    },
+  ],
 ];
 
 // Per-token / per-connection plumbing. Surfacing these would bury every real
@@ -569,6 +579,34 @@ describe('groupMatchesFilter', () => {
     expect(errorGroup && groupMatchesFilter(errorGroup, 'errors')).toBe(true);
     expect(cronGroup && groupMatchesFilter(cronGroup, 'cron')).toBe(true);
     expect(cronGroup && groupMatchesFilter(cronGroup, 'tools')).toBe(false);
+  });
+});
+
+// think-deeper-tier-switch Task 2.3 — one feed row per escalation.
+describe('convertSseEvent — tier_escalation', () => {
+  it('summarises the escalation with tier and reason', () => {
+    const row = live({
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    });
+    expect(row.summary).toBe('Escalated to deep: race condition');
+    expect(row.label).toBe('tier_escalation');
+    expect(row.kind).toBe('notice');
+    expect(row.details.map((d) => d.key)).toEqual(['from', 'to', 'model', 'reason']);
+  });
+
+  it('drops the colon when the reason is empty', () => {
+    const row = live({
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: '',
+    });
+    expect(row.summary).toBe('Escalated to deep');
   });
 });
 

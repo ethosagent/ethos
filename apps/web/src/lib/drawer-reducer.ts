@@ -116,12 +116,14 @@ export function applyEvent(
     case 'tool_progress':
     case 'tool.approval_required':
     case 'halt':
+    case 'tier_escalation':
     case 'decision': {
       // `tool_end` resolves its call wherever it lives — including in a turn
       // that has already closed — so it never opens one. A `decision` never
       // opens one either: it joins the open turn, or — settling after `done`
       // (plan decision-provider-personality §15.3, PD17) — the turn holding
-      // its call or trace (`applyTrailEvent`). The other three join the open
+      // its call or trace (`applyTrailEvent`). The other four (`tier_escalation`
+      // included, like the chat reducer) join the open
       // turn, minting one when a reconnect delivered them before any
       // `run_start` rather than dropping the call on the floor.
       const open = openTurnOf(prev);

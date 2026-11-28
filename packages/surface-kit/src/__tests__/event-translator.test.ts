@@ -115,6 +115,24 @@ describe('decision events (plan decision-provider-personality §15.4)', () => {
   });
 });
 
+describe('tier_escalation events (think-deeper-tier-switch)', () => {
+  it('ignores them entirely: no text, no tool state, not stopped', () => {
+    const t = createEventTranslator();
+    t.push({ type: 'text_delta', text: 'answer' });
+    t.push({
+      type: 'tier_escalation',
+      from: 'default',
+      to: 'deep',
+      model: 'claude-opus-5',
+      reason: 'race condition',
+    });
+    expect(t.text).toBe('answer');
+    expect(t.tools.size).toBe(0);
+    expect(t.stopped).toBe(false);
+    expect(t.error).toBeNull();
+  });
+});
+
 describe('shouldSurfaceProgress', () => {
   it('surfaces only user-audience progress', () => {
     expect(

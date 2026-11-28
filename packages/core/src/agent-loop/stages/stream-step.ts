@@ -29,6 +29,7 @@ import {
 import { routeTurnModel } from '../model-route';
 import { rejectCutOffToolCalls } from '../output-cap';
 import { isContextOverflowError } from '../overflow';
+import type { TierEscalationRef } from '../tier-escalation';
 import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
@@ -212,7 +213,7 @@ export function turnToolDefinitions(
 export async function* streamStep(
   deps: StreamStepDeps,
   ctx: StreamStepContext,
-  pendingTierEscalation: { value?: string },
+  pendingTierEscalation: TierEscalationRef,
 ): AsyncGenerator<AgentEvent, StreamStepResult> {
   // Compute tool definitions once for hooks, LLM call, and dump store — so
   // observability measures exactly what was sent.
@@ -308,8 +309,10 @@ export async function* streamStep(
   let iterProviderEntry = ctx.providerEntry;
   let iterEffort = ctx.effort;
   if (pendingTierEscalation.value) {
-    const tier = pendingTierEscalation.value as ModelTierName;
+    const tier: ModelTierName = pendingTierEscalation.value;
+    const escalationReasonText = pendingTierEscalation.reason ?? '';
     pendingTierEscalation.value = undefined;
+    pendingTierEscalation.reason = undefined;
     const escalated = resolveTurnModel({
       personality: ctx.personality,
       role: tier,
@@ -326,7 +329,7 @@ export async function* streamStep(
     const route = escalated.ok
       ? routeTurnModel(deps.llm, escalated, deps.modelResolution)
       : undefined;
-    if (route?.ok) {
+    if (escalated.ok && route?.ok) {
       iterModelOverride = route.modelOverride;
       iterProviderEntry = route.providerEntry;
       // The escalated alias's effort, or none — never the turn's alias's effort
@@ -337,8 +340,28 @@ export async function* streamStep(
         from: ctx.activeTier,
         to: tier,
         reason: 'tool_escalation',
+        ...(escalationReasonText ? { detail: escalationReasonText } : {}),
         personalityId: ctx.personality.id,
       });
+      // Tell the user only when what serves the call really changes: the
+      // resolved model, or the provider entry it is scoped to (on a chain a
+      // non-primary entry's own model carries no `modelOverride`). The model
+      // named is the resolved one (`escalated.model`), not the override.
+      // Pinned by `tier_escalation event` in `__tests__/model-tier.test.ts`.
+      const servedAfter = escalated.model;
+      const servedBefore = ctx.effectiveModel;
+      const changed =
+        servedAfter !== servedBefore || route.providerEntry?.key !== ctx.providerEntry?.key;
+      if (changed) {
+        yield {
+          type: 'tier_escalation',
+          from: ctx.activeTier,
+          to: tier,
+          model: servedAfter,
+          reason: escalationReasonText,
+          ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+        };
+      }
     }
   }
 
