@@ -161,6 +161,7 @@
     "@ethosagent/voice-text": "workspace:*",
     "@ethosagent/watchers": "workspace:*",
     "@ethosagent/worker-router": "workspace:*",
+    "@ethosagent/world-service": "workspace:*",
     "@ethosagent/world-sqlite": "workspace:*"
   },
   "devDependencies": {

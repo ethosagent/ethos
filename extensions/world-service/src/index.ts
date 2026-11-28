@@ -51,6 +51,13 @@ export {
   type WorldConfigServiceOptions,
   type WriteMeta,
 } from './config-service';
+export {
+  splitBudget,
+  WORLD_BUDGET_FLOOR,
+  WORLD_CONTEXT_HEADING,
+  WorldContextInjector,
+  type WorldContextInjectorOptions,
+} from './context-injector';
 export { isSafeSlug, parseWorldId, privateWorldId, sharedWorldId, worldSlug } from './ids';
 export { createWorldToolPort, type WorldToolPort } from './port';
 export {
