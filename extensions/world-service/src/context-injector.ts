@@ -150,12 +150,13 @@ export class WorldContextInjector implements ContextInjector {
     for (const world of await service.visible(caller)) {
       const found = new Map<string, TaggedEntity>();
       const seed = new Map<string, AttributeFact>();
-      for (const text of terms) {
-        const r = await service.query(caller, world.id, {
-          kind: 'entities',
-          text,
-          limit: MATCHES_PER_TERM,
-        });
+      // Independent reads; merged in term order so the result is deterministic.
+      const results = await Promise.all(
+        terms.map((text) =>
+          service.query(caller, world.id, { kind: 'entities', text, limit: MATCHES_PER_TERM }),
+        ),
+      );
+      for (const r of results) {
         for (const e of r.entities) if (!found.has(e.id)) found.set(e.id, e);
         for (const a of r.attributes) seed.set(a.id, a);
       }
@@ -202,9 +203,10 @@ export class WorldContextInjector implements ContextInjector {
       for (const a of f.attributes) attrs.set(a.id, a);
       for (const e of f.edges) edges.set(e.id, e);
     };
-    for (const e of entities) {
-      take(await this.opts.service.neighbours(caller, world.id, e.id, this.opts.hops));
-    }
+    const hoods = await Promise.all(
+      entities.map((e) => this.opts.service.neighbours(caller, world.id, e.id, this.opts.hops)),
+    );
+    for (const f of hoods) take(f);
 
     const name = (id: string): string => names.get(id) ?? id;
     const lines: Line[] = [
