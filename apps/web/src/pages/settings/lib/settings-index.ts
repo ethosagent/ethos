@@ -415,6 +415,14 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       label: "Show 'remembered' notices",
     },
   ]),
+  ...group('memory', 'world', [
+    { key: 'world.enabled', label: 'World', saves: 'self', stateBacked: true },
+    { key: 'world.contextMaxChars', label: 'Context characters', saves: 'self', stateBacked: true },
+    { key: 'world.contextHops', label: 'Context hops', saves: 'self', stateBacked: true },
+    { key: 'world.extraction', label: 'Extraction', saves: 'self', stateBacked: true },
+    { key: 'world.proposals.cap', label: 'Proposal cap', saves: 'self', stateBacked: true },
+    { key: 'world.proposals.ttlDays', label: 'Proposal TTL', saves: 'self', stateBacked: true },
+  ]),
   ...group('chat', 'display', [
     {
       key: null,

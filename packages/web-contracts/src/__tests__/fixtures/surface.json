@@ -360,6 +360,7 @@
     "WorldProposalStatusSchema",
     "WorldProposalWireSchema",
     "WorldSchemaWireSchema",
+    "WorldSnapshotWireSchema",
     "WorldSummarySchema",
     "WorldTreeGroupSchema",
     "WorldsBuildPreviewInputSchema",
@@ -505,8 +506,8 @@
       "namePersonality": "4810a2a6d80821dfa4de6ad1e24a498af01fa78e9e2c45c3e86008e45c400988"
     },
     "config": {
-      "get": "abfe9dfa393deca4ce111be4420d7635790228a14a2b2990180e85733064e6a5",
-      "update": "571fea9d3d3e6dddb14a2498aa2eb4e92ed8a972f696b9f11753c89e432722c3"
+      "get": "622b47f01859c8c747f1c4f021fdb94c7f7ea4b08f70c6e22b9b220c787e2a48",
+      "update": "1bb1245c2598501a73c38ba4a3773a64c78bc20aa6f138c8a33f087351525e70"
     },
     "debug": {
       "chat": "e5425dec33917445ead78aca61fe1f98f67517b00e9987ccc15b3528f60fbfed"
@@ -894,7 +895,7 @@
       "export": "aee60896b3659ca8ac8f193ff22af49df539c9b83dc2df783c309be36650fed8",
       "import": "065c5fec82b34dc5273c8ba815f8fb866354b4a9c93d97cd8336523805486d0b",
       "buildPreview": "d05c74412121142e08854aba59f2ce31a0e307129bad3ac57c0a9a132a371cd7",
-      "shareCreate": "86a496bc1007328f32759ac98f5d0d30dc7488f8c7a665d7b364b24b8d1c0c4c",
+      "shareCreate": "de6a01027f680423ab4bb034f07624126635e27b13cdffaf70653a6404eb3d9a",
       "linkify": "4cdea3b3f763a9a865b8cef1ef046e952ab8f0f7ada5820d7e847749dfb5f973"
     }
   },
@@ -1238,6 +1239,7 @@
     "WorldProposalStatusSchema": "a49ca04a1f94d5afe1cce9e597934114601ac1fbdc7b9a88a33e7c12236d57d7",
     "WorldProposalWireSchema": "4368ce3241ca0ab6ee630de9491d50c9fdf7340309a8bdafb62d9b2664fc5112",
     "WorldSchemaWireSchema": "e2eacbb8e7c83fd0bf0af80190d97497cb6ce97ad07a50714001b6cf1c4a099e",
+    "WorldSnapshotWireSchema": "597487fa13dd13036787b8366a6cf6c5f9e750aa69635d2e00c79728c385f075",
     "WorldSummarySchema": "38bc3cfe4880a398a065400c9e9d6e44b86ba1a52364d26cbc8fddff5d5fe52c",
     "WorldTreeGroupSchema": "8841c263949bd4992ada3f757b8a15c58b8f46f2cfca90f5ab61749480ab0a61",
     "WorldsBuildPreviewInputSchema": "c1eb1fcd0fbab0e303b0d4b6c543ba3ec66523b8a2cd5aec2e9f5700bdf26f1e",
@@ -1278,11 +1280,13 @@
     "WorldsSchemaOutputSchema": "beaebbd26931a8764964497a3cb6475008ba0ebaee202f4976027583a4179a3e",
     "WorldsSchemaSaveInputSchema": "9fc5cea35c00b25045341145f5f8e61be9867fc7dee085d4ab06c5d077a320c1",
     "WorldsSchemaSaveOutputSchema": "005ba49c3d7632518b8b338834ecff1dde9d6711a926415a51666232ed32f83e",
-    "WorldsShareCreateInputSchema": "caff498ba59f7cb89a0495bf57d2671c23b5ec1fc62c725ad62553b3e8b24046",
+    "WorldsShareCreateInputSchema": "eebe6e04ee2e481b0a6aa056b03669eb047aa843c65e82d9158a617295493c26",
     "WorldsShareCreateOutputSchema": "5e3273242b77743a1282ac97bfdecb62bfe2439fbe3e5482af2c2a415c712079",
     "WorldsTreeInputSchema": "9bc99e96c6d60ea3f84ba14b84ba239a3e9da465a2267d1341688cbf88819cf6",
     "WorldsTreeOutputSchema": "465edf85323513db2a336032b771041339069ad5844884dc71ca6ee3d3f97ace"
   },
   "skippedSchemas": [],
-  "skippedProcedures": ["apiKeys.create#input"]
+  "skippedProcedures": [
+    "apiKeys.create#input"
+  ]
 }

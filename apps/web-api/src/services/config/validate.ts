@@ -178,6 +178,27 @@ export function validateSettingsPatch(patch: ConfigUpdateInput): void {
     checkInt('memoryApproval.cap', patch.memoryApproval.cap, 1);
     checkInt('memoryApproval.ttlDays', patch.memoryApproval.ttlDays, 1);
   }
+  if (patch.world) {
+    const w = patch.world;
+    checkInt('world.contextMaxChars', w.contextMaxChars, 0, 8000);
+    if (
+      w.contextHops !== undefined &&
+      w.contextHops !== null &&
+      w.contextHops !== 1 &&
+      w.contextHops !== 2
+    ) {
+      invalidValue('world.contextHops', 'must be 1 or 2');
+    }
+    if (
+      w.extraction !== undefined &&
+      w.extraction !== null &&
+      !['off', 'propose'].includes(w.extraction)
+    ) {
+      invalidValue('world.extraction', "must be 'off' or 'propose'");
+    }
+    checkInt('world.proposals.cap', w.proposalsCap, 1, 100_000);
+    checkInt('world.proposals.ttlDays', w.proposalsTtlDays, 1, 3650);
+  }
   if (patch.memoryConsolidation) {
     const m = patch.memoryConsolidation;
     checkPositive('memoryConsolidation.halfLifeDays', m.halfLifeDays);

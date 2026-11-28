@@ -119,6 +119,13 @@ export function configGetFixture(): ConfigGetData {
     voiceFiller: { enabled: true, afterMs: null, text: null, tickIntervalMs: null },
     memoryVault: { path: null, agentDir: null, prefetch: [], exclude: [] },
     memoryApproval: { mode: 'off', cap: 200, ttlDays: 30 },
+    world: {
+      enabled: false,
+      contextMaxChars: 2400,
+      contextHops: 2,
+      extraction: 'off',
+      proposals: { cap: 500, ttlDays: 30 },
+    },
     memoryConsolidation: {
       halfLifeDays: 30,
       threshold: 0.05,

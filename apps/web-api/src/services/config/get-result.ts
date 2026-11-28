@@ -129,6 +129,13 @@ export interface ConfigGetResult {
     cap: number;
     ttlDays: number;
   };
+  world: {
+    enabled: boolean;
+    contextMaxChars: number;
+    contextHops: 1 | 2;
+    extraction: 'off' | 'propose';
+    proposals: { cap: number; ttlDays: number };
+  };
   memoryConsolidation: {
     halfLifeDays: number;
     threshold: number;

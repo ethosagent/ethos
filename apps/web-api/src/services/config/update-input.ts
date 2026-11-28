@@ -195,6 +195,14 @@ export interface ConfigUpdateInput {
     cap?: number | null;
     ttlDays?: number | null;
   };
+  world?: {
+    enabled?: boolean | null;
+    contextMaxChars?: number | null;
+    contextHops?: 1 | 2 | null;
+    extraction?: 'off' | 'propose' | null;
+    proposalsCap?: number | null;
+    proposalsTtlDays?: number | null;
+  };
   memoryConsolidation?: {
     halfLifeDays?: number | null;
     threshold?: number | null;

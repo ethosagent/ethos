@@ -333,6 +333,14 @@ const ConfigGetOutput = z.object({
     /** `memoryApproval.ttlDays` — pending-candidate TTL; default 30. */
     ttlDays: z.number(),
   }),
+  /** World model (`world.*`), defaults applied (plan world-model 4.6). */
+  world: z.object({
+    enabled: z.boolean(),
+    contextMaxChars: z.number(),
+    contextHops: z.union([z.literal(1), z.literal(2)]),
+    extraction: z.enum(['off', 'propose']),
+    proposals: z.object({ cap: z.number(), ttlDays: z.number() }),
+  }),
   /** Decay tuning + silent-flush tunables (`memoryConsolidation.*`). The
    *  `enabled` flag is the sibling `memoryConsolidationEnabled` field above. */
   memoryConsolidation: z.object({
