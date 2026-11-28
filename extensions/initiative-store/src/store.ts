@@ -593,17 +593,13 @@ export class SQLiteInitiativeStore implements InitiativeStore {
   reserveAndOpenWindow(w: WindowReservationRequest): WindowReservationResult {
     return this.write(() => {
       const id = this.nextId('windows', 'W-');
-      const refused = reserveWindow(
-        this.db,
-        { ...w },
-        {
-          windowId: id,
-          initiativeCap: this.capFor(w.initiativeId),
-          nowMs: this.now(),
-          holder: `pid:${this.processId}`,
-          isPidAlive: this.isPidAlive,
-        },
-      );
+      const refused = reserveWindow(this.db, w, {
+        windowId: id,
+        initiativeCap: this.capFor(w.initiativeId),
+        nowMs: this.now(),
+        holder: `pid:${this.processId}`,
+        isPidAlive: this.isPidAlive,
+      });
       if (refused) return refused;
       this.db
         .prepare(
@@ -616,7 +612,7 @@ export class SQLiteInitiativeStore implements InitiativeStore {
 
   /** A running window renews its reservation to now + `ttlMs` (reservations.ts `touchWindow`). */
   touchReservation(windowId: string, ttlMs: number): void {
-    this.write(() => touchWindow(this.db, windowId, this.now(), ttlMs));
+    touchWindow(this.db, windowId, this.now(), ttlMs); // one statement: atomic without BEGIN IMMEDIATE
   }
 
   /**

@@ -19,58 +19,69 @@ import type {
 
 const EPSILON = 1e-9;
 
+/** `spent` and `held` are `[sql, ...params]`; each sql returns one row `{ n }`. */
 interface Scope {
   scope: ReservationScope;
   cap: number | undefined;
-  spent: string;
-  reserved: string;
-  args: unknown[];
-  /** Exploration spend is lifetime, not per day: its queries take no day argument. */
-  perDay?: false;
+  spent: [string, ...unknown[]];
+  held: [string, ...unknown[]];
 }
 
 function scopes(
   r: WindowReservationRequest,
   initiativeCap: number,
   exploration: { id: string; budget_usd: number } | undefined,
+  day: string,
+  at: string,
 ): Scope[] {
   const spentFrom = `SELECT COALESCE(SUM(w.spent_usd), 0) AS n FROM windows w
     LEFT JOIN initiatives i ON i.id = w.initiative_id WHERE substr(w.started, 1, 10) = ?`;
-  const reservedFrom = `SELECT COALESCE(SUM(reserved_usd), 0) AS n FROM window_reservations
+  const heldFrom = `SELECT COALESCE(SUM(reserved_usd), 0) AS n FROM window_reservations
     WHERE day = ? AND expires_at > ?`;
+  const dayScope = (
+    scope: ReservationScope,
+    cap: number | undefined,
+    spentWhere: string,
+    heldWhere: string,
+    arg: unknown[],
+  ): Scope => ({
+    scope,
+    cap,
+    spent: [`${spentFrom}${spentWhere}`, day, ...arg],
+    held: [`${heldFrom}${heldWhere}`, day, at, ...arg],
+  });
   return [
-    {
-      scope: 'initiative',
-      cap: initiativeCap,
-      spent: `${spentFrom} AND w.initiative_id = ?`,
-      reserved: `${reservedFrom} AND initiative_id = ?`,
-      args: [r.initiativeId],
-    },
-    {
-      scope: 'personality',
-      cap: r.caps.personalityUsd,
-      spent: `${spentFrom} AND i.personality_id = ?`,
-      reserved: `${reservedFrom} AND personality_id = ?`,
-      args: [r.personalityId],
-    },
-    { scope: 'global', cap: r.caps.globalUsd, spent: spentFrom, reserved: reservedFrom, args: [] },
-    {
-      scope: 'pool',
-      cap: r.origin === 'agent' ? r.caps.poolUsd : undefined,
-      spent: `${spentFrom} AND i.origin = 'agent'`,
-      reserved: `${reservedFrom} AND pool = 1`,
-      args: [],
-    },
+    dayScope('initiative', initiativeCap, ' AND w.initiative_id = ?', ' AND initiative_id = ?', [
+      r.initiativeId,
+    ]),
+    dayScope(
+      'personality',
+      r.caps.personalityUsd,
+      ' AND i.personality_id = ?',
+      ' AND personality_id = ?',
+      [r.personalityId],
+    ),
+    dayScope('global', r.caps.globalUsd, '', '', []),
+    dayScope(
+      'pool',
+      r.origin === 'agent' ? r.caps.poolUsd : undefined,
+      " AND i.origin = 'agent'",
+      ' AND pool = 1',
+      [],
+    ),
     // An exploring window also draws on its exploration's own budget, which two processes share.
-    // A brief window spends the reserve kept for it, not the exploration's budget, so it has no row id here.
+    // Its spend is lifetime, not per day. A brief window spends the reserve kept for it, not the
+    // exploration's budget, so it passes no exploration here.
     {
       scope: 'exploration',
       cap: exploration?.budget_usd,
-      spent: 'SELECT spent_usd AS n FROM explorations WHERE id = ?',
-      reserved: `SELECT COALESCE(SUM(reserved_usd), 0) AS n FROM window_reservations
-        WHERE expires_at > ? AND exploration_id = ?`,
-      args: [exploration?.id],
-      perDay: false,
+      spent: ['SELECT spent_usd AS n FROM explorations WHERE id = ?', exploration?.id],
+      held: [
+        `SELECT COALESCE(SUM(reserved_usd), 0) AS n FROM window_reservations
+          WHERE expires_at > ? AND exploration_id = ?`,
+        at,
+        exploration?.id,
+      ],
     },
   ];
 }
@@ -83,22 +94,13 @@ const HOLDER_PID = /^pid:(\d+)$/;
  * 'a hold whose process is gone is pruned'.
  */
 function pruneDeadHolders(db: Database.Database, isPidAlive: (pid: number) => boolean): void {
-  const rows = db.prepare('SELECT window_id, holder FROM window_reservations').all() as Array<{
-    window_id: string;
+  const holders = db.prepare('SELECT DISTINCT holder FROM window_reservations').all() as Array<{
     holder: string;
   }>;
-  const gone = db.prepare('DELETE FROM window_reservations WHERE window_id = ?');
-  const dead = new Map<number, boolean>();
-  for (const row of rows) {
-    const m = HOLDER_PID.exec(row.holder);
-    if (!m?.[1]) continue;
-    const pid = Number(m[1]);
-    let isDead = dead.get(pid);
-    if (isDead === undefined) {
-      isDead = !isPidAlive(pid);
-      dead.set(pid, isDead);
-    }
-    if (isDead) gone.run(row.window_id);
+  const drop = db.prepare('DELETE FROM window_reservations WHERE holder = ?');
+  for (const { holder } of holders) {
+    const pid = HOLDER_PID.exec(holder)?.[1];
+    if (pid !== undefined && !isPidAlive(Number(pid))) drop.run(holder);
   }
 }
 
@@ -126,18 +128,10 @@ export function reserveWindow(
             .prepare('SELECT id, budget_usd FROM explorations WHERE id = ?')
             .get(r.explorationId) as { id: string; budget_usd: number } | undefined)
         : undefined;
-    for (const s of scopes(r, input.initiativeCap, exploration)) {
+    for (const s of scopes(r, input.initiativeCap, exploration, day, at)) {
       if (s.cap === undefined) continue;
-      const spent = db
-        .prepare(s.spent)
-        .get(...(s.perDay === false ? s.args : [day, ...s.args])) as {
-        n: number;
-      };
-      const held = db
-        .prepare(s.reserved)
-        .get(...(s.perDay === false ? [at, ...s.args] : [day, at, ...s.args])) as {
-        n: number;
-      };
+      const spent = db.prepare(s.spent[0]).get(...s.spent.slice(1)) as { n: number };
+      const held = db.prepare(s.held[0]).get(...s.held.slice(1)) as { n: number };
       const left = s.cap - spent.n - held.n;
       if (left + EPSILON < r.reserveUsd)
         return { ok: false, scope: s.scope, leftUsd: Math.max(0, left) };
