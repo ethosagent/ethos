@@ -1,0 +1,3 @@
+{"type":"entity","name":"John_Smith","entityType":"person","observations":["Speaks fluent Spanish","Graduated in 2019"]}
+{"type":"entity","name":"Anthropic","entityType":"organization","observations":["AI safety company"]}
+{"type":"relation","from":"John_Smith","to":"Anthropic","relationType":"works_at"}
