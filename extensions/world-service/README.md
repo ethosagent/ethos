@@ -60,7 +60,6 @@ Guarantees and what pins them:
 - A turn with no known audience is treated as shared (fail closed).
 - The private world is `owner_only`, so a shared turn does not see it either.
 - Mount `world:` is the slug (`acme`), not `world:acme`.
-- Limitation: `WorldGraphProvider` cannot retire or retype an entity, so renaming or merging an entity type re-asserts the entities under the new type and moves their attributes and edges, but the old entity rows remain in the backend under a type the schema no longer lists.
 - `undoLast` is refused after a rename or merge (facts were rewritten); apply the inverse change instead.
 - Fact lookup: `closeFact`, `promoteToUser` and `ownerClose` find the fact with `WorldGraphProvider.getFact` (any state, so a closed fact is refused as closed, not missing), never `export`; pinned by `write-routing.test.ts` 'closeFact, promoteToUser and ownerClose look a fact up with getFact, never export'.
 - Limitations: each fact is asserted on its own, and an imported bundle carries live facts only (`FactInput` has no `validTo`).
@@ -69,6 +68,7 @@ Guarantees and what pins them:
 
 Written down because nothing enforces the opposite:
 
+- Renaming or merging an entity type re-asserts the entities under the new type, moves their attributes and edges, then retires the old entity rows (source `schema:v<n>`), so no read returns one under the removed type (`schema-service.test.ts`, `entity rename leaves no entity…`; `packages/wiring/src/__tests__/world-schema-migrate-sqlite.test.ts` against SQLite).
 - Consent to save a first build is behavioural. `world_build save` cannot see the user's yes; on a shared world it only creates proposals, on the private world it writes `agent` facts the user can retire.
 - Extraction precision is unknown, which is why it only proposes and is off by default.
 - A personality with a local shell tool can still edit `worlds/` and `worlds.yaml`; `WorldSchemaService.load` and `WorldConfigService` re-validate on load.

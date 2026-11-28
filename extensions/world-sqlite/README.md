@@ -40,7 +40,7 @@ Guarantees and what pins them, all in `src/__tests__/graph-store.test.ts`:
 
 ## Known limits
 
-- The contract has no retype or entity-retire call, so the backend cannot remove an entity row whose type the schema dropped (renamed or merged types leave orphan rows; handled in `world-service`).
+- `retire` also takes an entity id: it sets `entities.retired_at`, `retired_by` and `retired_source_ref` once (the `entities_no_rewrite` trigger), and the entity leaves `query`, text search, `neighbours` (a retired centre has no neighbourhood) and edge-query endpoints. `changes` reports it as `retired`. `getFact` still returns attributes and edges only (`facts.test.ts`, `retire of an entity id hides the entity…`; `graph-store.test.ts`, `R3 entity retirer columns are set once…`).
 - A fact that arrived through `import` already closed or retired has no closer columns, so `changes()` falls back to the fact's own `sourceRef` and author for it (`facts.test.ts`, `a fact imported already closed…`). `export`/`import` bundles do not carry the closer, so a round trip drops it.
 - Neighbour queries are capped at 200 entities (the result sets `truncated`) and hops at depth 3.
 - Nothing here checks who may read or write: access, authority and proposals are `world-service` rules, so a caller that skips `WorldService` skips them. Only `packages/wiring` composes this package, enforced by the dependency law (`pnpm arch`, `architecture.config.ts`).

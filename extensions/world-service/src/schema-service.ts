@@ -40,12 +40,11 @@ import type { SQLiteWorldServiceStore } from './service-store';
 //     schema-service.test.ts 'R14 invalid hand edit keeps the last good version'.
 //   - rename and merge re-assert live facts under the new name with their
 //     original dates: 'rename retires and re-asserts with the same valid_from'.
-//
-// LIMITATION (no enforcer): WorldGraphProvider has no way to retire or retype
-// an ENTITY (`retire` takes attributes and edges only). A rename or merge of
-// an entity type re-asserts each entity under the new type and moves its
-// attributes and edges, but the old entity rows stay in the backend, orphaned
-// under a type the schema no longer lists.
+//   - rename and merge of an ENTITY type retire the old entity rows (retire
+//     accepts an entity id), so no read returns one under the removed type:
+//     schema-service.test.ts 'entity rename leaves no entity under the removed
+//     type ...' and 'entity merge leaves no entity ...' (fake), and the
+//     SQLite pin packages/wiring/src/__tests__/world-schema-migrate-sqlite.test.ts.
 // ---------------------------------------------------------------------------
 
 /** Shared world: `<dataDir>/worlds/<slug>/schema.yaml`. Private: `<dataDir>/worlds/.private/<pid>/schema.yaml`
@@ -570,6 +569,8 @@ export class WorldSchemaService {
           toId: idMap.get(e.toId) ?? e.toId,
         });
       }
+      // Last: the old rows leave every read under the removed type.
+      for (const e of found.entities) await expectOk(provider.retire(world, e.id, src, e.author));
     }
   }
 }

@@ -476,6 +476,9 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
   /**
    * Sets retired_at once (the Ethos-clock "this was wrong") and stores the
    * retirer in retired_by / retired_source_ref. See `close` for the guard.
+   * `factId` may also be an ENTITY id: the entity is then hidden from every
+   * read (KNOWN_SQL, FTS, neighbours). Pinned by facts.test.ts 'retire of an
+   * entity id hides the entity ...'.
    */
   async retire(
     world: WorldId,
@@ -501,7 +504,7 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     world: WorldId,
     factId: string,
   ): {
-    table: 'attributes' | 'edges';
+    table: 'attributes' | 'edges' | 'entities';
     valid_from: string | null;
     valid_to: string | null;
     retired_at: string | null;
@@ -514,7 +517,10 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
         | undefined;
       if (row) return { table, ...row };
     }
-    return null;
+    const ent = this.db
+      .prepare('SELECT retired_at FROM entities WHERE world = ? AND id = ?')
+      .get(world, factId) as { retired_at: string | null } | undefined;
+    return ent ? { table: 'entities', valid_from: null, valid_to: null, ...ent } : null;
   }
 
   /** Primary-key lookup in `attributes`, then `edges`; any state, scoped to `world`. */
@@ -708,6 +714,17 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     slice?: TimeSlice,
   ): Promise<Subgraph> {
     const depth = Math.min(Math.max(0, Math.floor(hops)), this.capabilities().maxHops);
+    // A centre that is unknown or retired in the slice has no neighbourhood.
+    if (this.entitiesByIds(world, [entityId], slice).length === 0) {
+      return {
+        centre: entityId,
+        hops: depth,
+        entities: [],
+        attributes: [],
+        edges: [],
+        truncated: false,
+      };
+    }
     const [sql, sliceParams] = this.sliceClause(slice);
     const walk = walkNeighbours(this.db, world, entityId, depth, sql, sliceParams);
     const visible = this.entitiesByIds(
@@ -887,6 +904,10 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     };
     add(`SELECT recorded_at AS at, 'entity' AS kind, id AS fact_id, source_ref, author, 0 AS rank, rowid AS rid
          FROM entities WHERE world = ? AND recorded_at >= ?`);
+    add(`SELECT retired_at AS at, 'retired' AS kind, id AS fact_id,
+           COALESCE(retired_source_ref, source_ref) AS source_ref, COALESCE(retired_by, author) AS author,
+           3 AS rank, rowid AS rid
+         FROM entities WHERE world = ? AND retired_at IS NOT NULL AND retired_at >= ?`);
     for (const t of ['attributes', 'edges']) {
       add(`SELECT recorded_at AS at, 'opened' AS kind, id AS fact_id, source_ref, author, 1 AS rank, rowid AS rid
            FROM ${t} WHERE world = ? AND recorded_at >= ?`);

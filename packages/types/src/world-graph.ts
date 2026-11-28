@@ -210,6 +210,11 @@ export interface WorldGraphProvider {
     sourceRef: string,
     author: FactAuthor,
   ): Promise<WriteResult>;
+  /**
+   * Sets retired_at once (the Ethos-clock "this was wrong"). `factId` is an
+   * attribute, an edge or an entity id; a retired entity leaves query, search
+   * and neighbours. `not_found` for an unknown id, `closed` if already retired.
+   */
   retire(
     world: WorldId,
     factId: string,

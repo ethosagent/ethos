@@ -106,6 +106,64 @@ describe('WorldSchemaService', () => {
     expect(schema?.edges.expert_in?.from).toEqual(['Human']);
   });
 
+  it('entity rename leaves no entity under the removed type in query, text search or neighbours', async () => {
+    const ravi = h.provider.seedEntity(W, 'Person', 'Ravi');
+    const go = h.provider.seedEntity(W, 'Skill', 'Go');
+    h.provider.seedAttribute(W, ravi.id, 'email', 'r@acme.test', { validFrom: '2024-01-01' });
+    h.provider.seedEdge(W, 'expert_in', ravi.id, go.id, { validFrom: '2025-06-01' });
+    const r = await h.service.apply(
+      W,
+      { op: 'rename_type', kind: 'entity', from: 'Person', to: 'Human' },
+      ME,
+      'naming',
+    );
+    expect(r).toEqual({ ok: true, version: 2 });
+
+    const byType = await h.provider.query(W, { kind: 'entities', types: ['Person'], limit: 50 });
+    expect(byType.entities).toEqual([]);
+    const byText = await h.provider.query(W, { kind: 'entities', text: 'Ravi', limit: 50 });
+    expect(byText.entities.map((e) => e.type)).toEqual(['Human']);
+    const human = byText.entities[0];
+    expect(byText.attributes).toMatchObject([{ entityId: human?.id, key: 'email' }]);
+    const around = await h.provider.neighbours(W, human?.id as string, 1);
+    expect(around.entities.map((e) => e.type).sort()).toEqual(['Human', 'Skill']);
+    expect(around.edges).toHaveLength(1);
+    const oldAround = await h.provider.neighbours(W, ravi.id, 1);
+    expect(oldAround.entities).toEqual([]);
+    // The old row is retired by the schema change, with the entity's own author.
+    expect(h.provider.all(W).entities.find((e) => e.id === ravi.id)?.retiredAt).not.toBeNull();
+    expect(h.provider.closures).toContainEqual(
+      expect.objectContaining({
+        kind: 'retired',
+        factId: ravi.id,
+        sourceRef: 'schema:v2',
+        author: 'user',
+      }),
+    );
+  });
+
+  it('entity merge leaves no entity under the merged-away type in query, text search or neighbours', async () => {
+    const go = h.provider.seedEntity(W, 'Skill', 'Go');
+    const ravi = h.provider.seedEntity(W, 'Person', 'Ravi');
+    h.provider.seedEdge(W, 'expert_in', ravi.id, go.id, { validFrom: '2025-06-01' });
+    const r = await h.service.apply(
+      W,
+      { op: 'merge_types', kind: 'entity', from: 'Skill', into: 'Team' },
+      ME,
+      'fewer types',
+    );
+    expect(r).toEqual({ ok: true, version: 2 });
+
+    const byType = await h.provider.query(W, { kind: 'entities', types: ['Skill'], limit: 50 });
+    expect(byType.entities).toEqual([]);
+    const byText = await h.provider.query(W, { kind: 'entities', text: 'Go', limit: 50 });
+    expect(byText.entities.map((e) => e.type)).toEqual(['Team']);
+    const around = await h.provider.neighbours(W, ravi.id, 1);
+    expect(around.entities.map((e) => e.type).sort()).toEqual(['Person', 'Team']);
+    expect((await h.provider.neighbours(W, go.id, 1)).entities).toEqual([]);
+    expect(h.provider.all(W).entities.find((e) => e.id === go.id)?.retiredAt).not.toBeNull();
+  });
+
   it('rename of an attribute keeps its valid_from', async () => {
     const t = h.provider.seedEntity(W, 'Team', 'Payments');
     h.provider.seedAttribute(W, t.id, 'mission', 'move money', { validFrom: '2025-01-01' });

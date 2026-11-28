@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS entities (
   aliases TEXT NOT NULL DEFAULT '[]',
   recorded_at TEXT NOT NULL, retired_at TEXT, merged_into TEXT,
   source_ref TEXT NOT NULL,
-  author TEXT NOT NULL CHECK (author IN ${AUTHORS})
+  author TEXT NOT NULL CHECK (author IN ${AUTHORS}),
+  retired_by TEXT CHECK (retired_by IS NULL OR retired_by IN ${AUTHORS}), retired_source_ref TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_entities_world_type ON entities(world, type);
 
@@ -95,7 +96,8 @@ WHEN NOT EXISTS (SELECT 1 FROM purge_tokens p WHERE p.world = OLD.world
   AND (p.entity_id IS NULL OR p.entity_id = OLD.entity_id))
 BEGIN SELECT RAISE(ABORT, 'facts are closed, never deleted'); END;
 
--- Entities: only aliases (append), merged_into and retired_at (once) may change.
+-- Entities: only aliases (append), merged_into and retired_at (once) may change;
+-- retired_by / retired_source_ref only in the UPDATE that first sets retired_at.
 CREATE TRIGGER IF NOT EXISTS entities_no_rewrite BEFORE UPDATE ON entities
 WHEN NEW.id IS NOT OLD.id OR NEW.world IS NOT OLD.world
   OR NEW.type IS NOT OLD.type OR NEW.name IS NOT OLD.name
@@ -103,6 +105,8 @@ WHEN NEW.id IS NOT OLD.id OR NEW.world IS NOT OLD.world
   OR NEW.author IS NOT OLD.author
   OR (OLD.merged_into IS NOT NULL AND NEW.merged_into IS NOT OLD.merged_into)
   OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+  OR ((NEW.retired_by IS NOT OLD.retired_by OR NEW.retired_source_ref IS NOT OLD.retired_source_ref)
+      AND NOT (OLD.retired_at IS NULL AND NEW.retired_at IS NOT NULL))
   OR NEW.aliases IS NOT OLD.aliases AND (
     length(NEW.aliases) < length(OLD.aliases)
     OR substr(NEW.aliases, 1, length(OLD.aliases) - 1) IS NOT substr(OLD.aliases, 1, length(OLD.aliases) - 1)

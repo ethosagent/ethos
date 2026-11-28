@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type Database from '@ethosagent/sqlite';
 import type { FactInput, WorldSchema } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteWorldGraphProvider, worldGraphDbPath } from '../index';
@@ -32,6 +33,8 @@ describe('SQLiteWorldGraphProvider — facts', () => {
     sourceRef: 'test',
     author: 'user',
   });
+
+  const rawDb = (): Database.Database => (store as unknown as { db: Database.Database }).db;
 
   async function addEntity(type: string, name: string): Promise<string> {
     const r = await store.assert(W, [entity(type, name)]);
@@ -107,6 +110,72 @@ describe('SQLiteWorldGraphProvider — facts', () => {
       (await store.query(W, { kind: 'edges', limit: 10 }, { asOf: d(23), knownAt })).edges.length;
     expect(await at(d(21))).toBe(0);
     expect(await at(d(22))).toBe(1);
+  });
+
+  it('retire of an entity id hides the entity from query, search, neighbours and edge endpoints, and names the retirer', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const billing = await addEntity('Service', 'Billing');
+    const owns = await addEdge('owns', priya, billing);
+    if (!owns.ok) throw new Error(owns.reason);
+    now = new Date(d(10));
+    expect(await store.retire(W, priya, 'schema:v2', 'agent')).toEqual({ ok: true, ids: [priya] });
+
+    const row = rawDb().prepare('SELECT * FROM entities WHERE id = ?').get(priya) as Record<
+      string,
+      unknown
+    >;
+    expect(row).toMatchObject({
+      retired_at: d(10),
+      retired_by: 'agent',
+      retired_source_ref: 'schema:v2',
+    });
+
+    const people = await store.query(W, { kind: 'entities', types: ['Person'], limit: 10 });
+    expect(people.entities).toEqual([]);
+    const byText = await store.query(W, { kind: 'entities', text: 'Priya', limit: 10 });
+    expect(byText.entities).toEqual([]);
+    const edges = await store.query(W, {
+      kind: 'edges',
+      toId: billing,
+      includeClosed: true,
+      limit: 10,
+    });
+    expect(edges.entities.map((e) => e.id)).toEqual([billing]);
+    const around = await store.neighbours(W, priya, 2);
+    expect(around).toMatchObject({ entities: [], edges: [], attributes: [] });
+    // Before it was retired the entity was visible.
+    const earlier = await store.query(
+      W,
+      { kind: 'entities', types: ['Person'], limit: 10 },
+      { knownAt: d(9) },
+    );
+    expect(earlier.entities.map((e) => e.id)).toEqual([priya]);
+
+    expect(await store.retire(W, priya, 'again', 'user')).toMatchObject({
+      ok: false,
+      code: 'closed',
+    });
+    expect(await store.retire(W, 'no-such-id', 'x', 'user')).toMatchObject({
+      ok: false,
+      code: 'not_found',
+    });
+    // getFact stays attributes and edges only.
+    expect(await store.getFact(W, priya)).toBeNull();
+
+    const changes = await store.changes(W, d(1), 50);
+    expect(changes.find((c) => c.kind === 'retired' && c.factId === priya)).toMatchObject({
+      sourceRef: 'schema:v2',
+      author: 'agent',
+      at: d(10),
+    });
+  });
+
+  it('retire of an entity in another world is not_found', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    expect(await store.retire('world:other', priya, 'x', 'user')).toMatchObject({
+      ok: false,
+      code: 'not_found',
+    });
   });
 
   it('retire hides a fact from every slice after retired_at, history keeps it', async () => {

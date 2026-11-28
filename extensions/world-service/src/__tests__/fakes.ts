@@ -102,7 +102,8 @@ const isLive = (f: { retiredAt: string | null; validTo?: string | null }): boole
  * A faithful-enough in-memory WorldGraphProvider: it keeps the real store's
  * rules that the service relies on (assert checks entity and edge types
  * against the stored schema; retire and close refuse an already-ended fact;
- * `retire` takes attributes and edges only, as the real one does).
+ * `retire` also takes an entity id, which hides the entity from query and
+ * neighbours, as the real one does).
  */
 export class FakeWorldGraphProvider implements WorldGraphProvider {
   private readonly worlds = new Map<string, Held>();
@@ -318,7 +319,7 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
     author: FactAuthor = 'user',
   ): Promise<WriteResult> {
     const h = this.held(world);
-    const fact = [...h.attributes, ...h.edges].find((f) => f.id === factId);
+    const fact = [...h.attributes, ...h.edges, ...h.entities].find((f) => f.id === factId);
     if (!fact) return { ok: false, code: 'not_found', reason: factId };
     if (fact.retiredAt !== null) return { ok: false, code: 'closed', reason: 'already retired' };
     fact.retiredAt = this.clock;
@@ -381,8 +382,39 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
     return { entities: [], attributes: [], edges: [], paths: [], truncated: false };
   }
 
-  async neighbours(_world: WorldId, entityId: string, hops: number): Promise<Subgraph> {
-    return { entities: [], attributes: [], edges: [], truncated: false, centre: entityId, hops };
+  /** Live edges in both directions, up to `hops`; a retired or unknown centre has no neighbourhood. */
+  async neighbours(world: WorldId, entityId: string, hops: number): Promise<Subgraph> {
+    const h = this.held(world);
+    const visible = new Map(h.entities.filter((e) => e.retiredAt === null).map((e) => [e.id, e]));
+    const seen = new Set<string>(visible.has(entityId) ? [entityId] : []);
+    const edges = new Set<Edge>();
+    let frontier = [...seen];
+    for (let i = 0; i < hops && frontier.length > 0; i++) {
+      const next: string[] = [];
+      for (const e of h.edges) {
+        if (!isLive(e) || !visible.has(e.fromId) || !visible.has(e.toId)) continue;
+        for (const [a, b] of [
+          [e.fromId, e.toId],
+          [e.toId, e.fromId],
+        ] as const) {
+          if (!frontier.includes(a)) continue;
+          edges.add(e);
+          if (!seen.has(b)) {
+            seen.add(b);
+            next.push(b);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return {
+      entities: [...seen].map((id) => visible.get(id) as Entity),
+      attributes: h.attributes.filter((a) => seen.has(a.entityId) && isLive(a)),
+      edges: [...edges],
+      truncated: false,
+      centre: entityId,
+      hops,
+    };
   }
 
   async history(world: WorldId, entityId: string) {

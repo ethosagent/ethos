@@ -187,6 +187,42 @@ describe('SQLiteWorldGraphProvider — store', () => {
     ).toThrow(/never rewritten/);
   });
 
+  it('R3 entity retirer columns are set once, with the retire, and never rewritten', () => {
+    const db = rawDb(store);
+    insertEntity(db, 'e-a');
+    // Not on a live entity: retirer columns alone are refused.
+    expect(() =>
+      db
+        .prepare(
+          `UPDATE entities SET retired_by = 'agent', retired_source_ref = 'x' WHERE id = 'e-a'`,
+        )
+        .run(),
+    ).toThrow(/never rewritten/);
+    // An author outside the enum is refused.
+    expect(() =>
+      db.prepare(`UPDATE entities SET retired_at = ?, retired_by = 'root' WHERE id = 'e-a'`).run(T),
+    ).toThrow();
+    db.prepare(
+      `UPDATE entities SET retired_at = ?, retired_by = 'agent', retired_source_ref = 'schema:v2' WHERE id = 'e-a'`,
+    ).run(T);
+    expect(() =>
+      db.prepare(`UPDATE entities SET retired_by = 'user' WHERE id = 'e-a'`).run(),
+    ).toThrow(/never rewritten/);
+    expect(() =>
+      db.prepare(`UPDATE entities SET retired_source_ref = 'y' WHERE id = 'e-a'`).run(),
+    ).toThrow(/never rewritten/);
+    // An entity retired without a retirer (an import) never gains one.
+    insertEntity(db, 'e-b');
+    db.prepare(`UPDATE entities SET retired_at = ? WHERE id = 'e-b'`).run(T);
+    expect(() =>
+      db
+        .prepare(
+          `UPDATE entities SET retired_by = 'user', retired_source_ref = 'late' WHERE id = 'e-b'`,
+        )
+        .run(),
+    ).toThrow(/never rewritten/);
+  });
+
   it('R3 attributes get the same triggers, entities allow only alias appends, merge and retire', () => {
     const db = rawDb(store);
     insertEntity(db, 'e-a');
