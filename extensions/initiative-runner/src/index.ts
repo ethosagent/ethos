@@ -5,6 +5,7 @@ export {
   BRIEF_RESERVE_SHARE,
   decideAutonomy,
   type PreparedWindow,
+  partialBrief,
   prepareWindow,
   settleWindow,
   type WindowOutcome,
@@ -31,6 +32,8 @@ export {
   MAX_SELF_STARTED_DEFAULT,
   SELF_START_POOL_USD_DEFAULT,
 } from './config-service';
+export { createKeyedLock, type KeyedLock, totalsRemainingUsd } from './day-caps';
+export { digDeeper } from './dig-deeper';
 export { type GuidanceLevel, mapGuidance, mergeGuidance } from './guidance';
 export {
   INITIATIVE_INDEX_HEADER,

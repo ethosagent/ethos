@@ -1,4 +1,10 @@
-import type { ExplorationRow, InitiativeStore } from '@ethosagent/types';
+import {
+  type BriefRow,
+  EthosError,
+  type ExplorationRow,
+  type FindingRow,
+  type InitiativeStore,
+} from '@ethosagent/types';
 import type { InitiativeFile } from './config-schema';
 
 /** Share of `usd_per_day` a stalled exploration may spend on its partial brief (budget.ts `briefReserveShare`). */
@@ -75,17 +81,13 @@ export function applyAutonomy(
   return out;
 }
 
-type WindowStore = Pick<InitiativeStore, 'get' | 'transitionExploration' | 'extendExploration'>;
+type WindowStore = Pick<InitiativeStore, 'transitionExploration'>;
 
 export interface PreparedWindow {
   exploration: ExplorationRow;
   /** `brief` when the exploration is stalled: the window only hands in a partial brief. */
   kind: 'window' | 'brief';
-  /** True when a "dig deeper" had reopened an exhausted exploration and it was given a new budget. */
-  reopened: boolean;
 }
-
-const DAY_MS = 86_400_000;
 
 function spent(e: ExplorationRow, now: Date, reserveUsd: number): 'budget' | 'days' | null {
   if (e.budgetUsd - e.spentUsd < reserveUsd) return 'budget';
@@ -94,54 +96,84 @@ function spent(e: ExplorationRow, now: Date, reserveUsd: number): 'budget' | 'da
 
 /**
  * What to do with an exploration before its window runs.
- * - stalled: a brief window (partial brief), never a silent stop.
- * - exploring but out of budget or days: with a brief on the ledger, the owner reopened it with
- *   "dig deeper" (the only way briefed -> exploring), so it gets a fresh budget
- *   (`usd_per_exploration`) and deadline (`default_days`); without one it stalled unnoticed, so
- *   it moves to stalled and hands in a partial brief.
+ * - stalled: a brief window (the one window of this stall), never a silent stop.
+ * - exploring but out of budget or days: it stalls and hands in a partial brief.
+ *
+ * The runner never extends an exploration on its own. A "dig deeper" is an owner decision:
+ * `digDeeper` (dig-deeper.ts) records it and extends the budget before any window runs, so an
+ * extended exploration arrives here with money left. A brief on the ledger proves nothing about
+ * the owner's choice and is not read as one.
  */
 export function prepareWindow(
   store: WindowStore,
-  file: InitiativeFile,
   exploration: ExplorationRow,
   now: Date,
   reserveUsd: number,
 ): PreparedWindow {
-  if (exploration.state === 'stalled') return { exploration, kind: 'brief', reopened: false };
-  if (!spent(exploration, now, reserveUsd)) {
-    return { exploration, kind: 'window', reopened: false };
-  }
-  const briefed = (store.get(file.id)?.briefs ?? []).some(
-    (b) => b.explorationId === exploration.id,
-  );
-  if (briefed && file.budget.usd_per_exploration > 0) {
-    const fresh = store.extendExploration(exploration.id, {
-      addBudgetUsd: file.budget.usd_per_exploration,
-      deadline: new Date(now.getTime() + file.timeline.default_days * DAY_MS).toISOString(),
-    });
-    return { exploration: fresh, kind: 'window', reopened: true };
-  }
+  if (exploration.state === 'stalled') return { exploration, kind: 'brief' };
+  if (!spent(exploration, now, reserveUsd)) return { exploration, kind: 'window' };
   store.transitionExploration(exploration.id, 'stalled', 'budget or days used');
-  return { exploration: { ...exploration, state: 'stalled' }, kind: 'brief', reopened: false };
+  return { exploration: { ...exploration, state: 'stalled' }, kind: 'brief' };
 }
 
 export type WindowOutcome = 'briefed' | 'stalled' | 'exploring';
 
+/** The partial brief the runner hands in itself when a brief window ended without one. */
+export function partialBrief(
+  e: ExplorationRow,
+  findings: readonly FindingRow[],
+): Omit<BriefRow, 'id' | 'version'> {
+  const evidence = findings.map((f) => `- ${f.id} (${f.confidence}): ${f.claim} [${f.sourceRef}]`);
+  const money = `${e.spentUsd.toFixed(2)} of ${e.budgetUsd.toFixed(2)} USD spent.`;
+  return {
+    explorationId: e.id,
+    bodyMd: [
+      '## Options',
+      '- The window ended before the question was answered; no options were weighed.',
+      '',
+      '## Evidence',
+      ...(evidence.length > 0 ? evidence : ['- No findings were recorded.']),
+      '',
+      '## Cost',
+      money,
+      '',
+      '## Risk',
+      'Partial: the evidence above is all there is. Written by the runner, not the agent.',
+      '',
+      '## Recommendation',
+      'Dig deeper or park; the question is not answered.',
+    ].join('\n'),
+    recommendedOption: 'dig deeper or park',
+    partial: true,
+  };
+}
+
 /**
- * After a window: a new brief moves the exploration to briefed (from exploring or stalled);
- * otherwise an exploration that used its budget or days stalls, so the next window hands in a
- * partial brief. A day-cap stop does not stall it: that is the day's limit, not the exploration's.
+ * After a window: a brief moves the exploration to briefed (from exploring or stalled);
+ * otherwise an exploration that used its budget or days stalls, so its one brief window runs
+ * next. A day-cap stop does not stall it: that is the day's limit, not the exploration's.
+ *
+ * A stalled exploration's brief must be partial: it stopped for want of budget or days, so a
+ * brief that claims completeness is refused here (throws, nothing moves). The runner always
+ * hands in its own partial brief first (`partialBrief`), so this holds as an assertion.
  */
 export function settleWindow(
   store: Pick<InitiativeStore, 'getExploration' | 'transitionExploration'>,
   explorationId: string,
-  briefSubmitted: boolean,
+  briefs: readonly Pick<BriefRow, 'partial'>[],
   now: Date,
   reserveUsd: number,
 ): WindowOutcome {
   const e = store.getExploration(explorationId);
   if (!e) return 'exploring';
-  if (briefSubmitted && (e.state === 'exploring' || e.state === 'stalled')) {
+  if (briefs.length > 0 && (e.state === 'exploring' || e.state === 'stalled')) {
+    if (e.state === 'stalled' && !briefs.some((b) => b.partial)) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `exploration "${explorationId}" is stalled but its brief is not partial`,
+        action: 'A stalled exploration hands in a partial brief (partial: true).',
+      });
+    }
     store.transitionExploration(explorationId, 'briefed', 'brief submitted');
     return 'briefed';
   }

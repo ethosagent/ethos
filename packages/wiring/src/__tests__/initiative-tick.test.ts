@@ -238,4 +238,60 @@ describe('initiative tick', () => {
     expect((await runtime.tick(T0)).skipped).toBe('disposed');
     expect(llm.calls).toBe(0);
   });
+
+  it('the scan runs once a day for a human initiative when self-start is on', async () => {
+    const { runtime, save, ledger } = setup();
+    writeSettings('product-manager', true);
+    writeFileSync(
+      join(dataDir, 'personalities', 'product-manager', 'initiatives', 'settings.yaml'),
+      'enabled: true\nselfStart: true\n',
+    );
+    await save('product-manager', 'activation');
+    const first = await runtime.tick(T0);
+    expect(first.ran.map((r) => r.kind)).toEqual(['survey', 'scan']);
+    // Same day: no second scan, no survey.
+    expect((await runtime.tick(T1)).ran).toEqual([]);
+    expect(ledger.windows('activation').map((w) => w.kind)).toEqual(['survey', 'scan']);
+    // Next UTC day: a new scan, still no second survey.
+    const tomorrow = new Date('2026-11-29T10:00:00Z');
+    const next = await runtime.tick(tomorrow);
+    expect(next.ran.map((r) => r.kind)).toEqual(['scan']);
+  });
+
+  it('no scan when self-start is off', async () => {
+    const { runtime, save } = setup();
+    await save('product-manager', 'activation');
+    const first = await runtime.tick(T0);
+    expect(first.ran.map((r) => r.kind)).toEqual(['survey']);
+  });
+
+  it('a window runs only in the slot between the previous tick and now (planDay + since/now)', async () => {
+    const { runtime, save, ledger, llm } = setup();
+    await save('product-manager', 'activation');
+    const before = new Date('2026-11-29T05:55:00Z');
+    await runtime.tick(before); // survey; primes the loader's caps; first tick replays nothing
+    const exp = ledger.store.propose({
+      initiativeId: 'activation',
+      ideaId: null,
+      question: 'Does X help?',
+      estimateUsd: 0.5,
+      days: 3650,
+    });
+    ledger.store.transitionExploration(exp.id, 'exploring', 'owner approved');
+    const callsAfterSurvey = llm.calls;
+
+    // 'every 6h' is an interval, counted from the start of the UTC day: its slots are 05:59:59.999,
+    // 11:59:59.999, ... One open exploration gets one window and planDay gives it the day's first
+    // slot, which sits inside (05:55, 06:00].
+    const day2 = new Date('2026-11-29T06:00:00Z');
+    const due = await runtime.tick(day2);
+    expect(due.ran.map((r) => r.kind)).toEqual(['window']);
+    expect(llm.calls).toBe(callsAfterSurvey + 1);
+    expect(ledger.windows('activation').map((w) => w.kind)).toEqual(['survey', 'window']);
+
+    // The slot is behind `since` now; nothing else is due.
+    const later = await runtime.tick(new Date('2026-11-29T06:05:00Z'));
+    expect(later.ran).toEqual([]);
+    expect(llm.calls).toBe(callsAfterSurvey + 1);
+  });
 });

@@ -48,6 +48,30 @@ describe('materialiseDrafts parent subset', () => {
     expect(await h.storage.list(dir)).toEqual([]);
   });
 
+  it('a draft cannot run more often or longer than its parent', async () => {
+    const h = selfStartHarness();
+    await h.seed(h.parentFile());
+    const timeline = (t: string) =>
+      `timeline: { explore_windows: ${t}, window_minutes: 20, default_days: 7, review_on: '2026-12-20' }\n`;
+    const often = await h.scan('growth', [draft('Often topic', timeline('["every 1h"]'))]);
+    expect(often.drafts[0]).toMatchObject({
+      status: 'refused',
+      reason: expect.stringContaining('more windows per day'),
+    });
+    const longer = await h.scan('growth', [
+      draft(
+        'Longer topic',
+        timeline('["every 6h"]').replace('default_days: 7', 'default_days: 30'),
+      ),
+    ]);
+    expect(longer.drafts[0]).toMatchObject({
+      status: 'refused',
+      reason: expect.stringContaining('timeline.default_days'),
+    });
+    const ok = await h.scan('growth', [draft('Calm topic', timeline('["every 12h"]'))]);
+    expect(ok.drafts[0]).toMatchObject({ status: 'materialised' });
+  });
+
   it('what a draft leaves out is inherited from its parent, so it can only narrow', async () => {
     const h = selfStartHarness();
     await h.seed(

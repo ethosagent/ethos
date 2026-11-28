@@ -73,11 +73,8 @@ function fakeStore(opts: { seedIdeas?: string[] } = {}) {
       version: 1,
     }),
     transitionExploration: () => {},
-    extendExploration: (id) => {
-      const e = explorations.find((x) => x.id === id);
-      if (!e) throw new Error('missing');
-      return e;
-    },
+    submitBrief: (b) => ({ ...b, id: 'B-1', version: 1 }),
+    list: () => [],
     getExploration: (id) => explorations.find((e) => e.id === id) ?? null,
     explorations: () => [...explorations],
     ideas: () => [...ideas],
@@ -122,7 +119,7 @@ function proposeTool(propose: ReturnType<typeof fakeStore>['propose']): Tool {
 }
 
 /** One tool call per LLM turn from `calls`, each priced `costUsd`; then plain text. */
-function scriptedLLM(calls: Array<Record<string, unknown>>, costUsd = 0) {
+function scriptedLLM(calls: Array<Record<string, unknown>>, costUsd = 0.001) {
   let n = 0;
   const llm: LLMProvider = {
     name: 'scripted',
@@ -242,6 +239,19 @@ describe('runSurvey', () => {
     expect(calls()).toBe(2);
     // Charged to the day: the window row carries the spend.
     expect(fake.windows[0]?.closed?.spentUsd).toBeCloseTo(1.2, 5);
+  });
+
+  it('an unpriced model stops after the first usage event', async () => {
+    const fake = fakeStore();
+    // costUsd 0 and 'mock-model' has no price row: the cost is unknowable, not zero.
+    const { llm, calls } = scriptedLLM(
+      Array.from({ length: 5 }, (_, i) => ({ question: `q${i}`, estimate_usd: 0.1, days: 1 })),
+      0,
+    );
+    const report = await build(fake, llm, owned).runSurvey(FILE.id);
+    expect(report.endReason).toBe('day');
+    expect(calls()).toBe(1);
+    expect(report.error).toContain('unpriced model');
   });
 
   it('survey also stops on the day cap', async () => {

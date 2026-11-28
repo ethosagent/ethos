@@ -86,7 +86,9 @@ function timesOnDay(schedules: readonly string[], now: Date): string[] {
  * `personalities/<id>/initiatives/.switched-off.json`; a self-started initiative resumes as
  * `active` (paused -> self_started is not an allowed move). Day and window times are UTC days.
  * The operator ceilings `maxUsdPerDay` and `maxUsdPerDayPerPersonality` clamp each initiative's
- * own cap (`createInitiativeLoader`); nothing sums spend across initiatives.
+ * own cap (`createInitiativeLoader`), and the runner sums the day's spend across initiatives at
+ * run start (`totalsRemainingUsd`, pinned by day-caps.test.ts). Runs sharing a cap are serialised
+ * in this process only; a CLI run beside `serve` can still overlap (day-caps.ts `KeyedLock`).
  */
 export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): InitiativeRuntime {
   const runner = createInitiativeRunnerFor(deps);

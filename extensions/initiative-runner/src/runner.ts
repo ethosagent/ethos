@@ -3,6 +3,7 @@ import { estimateCost } from '@ethosagent/pricing';
 import {
   type AgentEvent,
   type AgentSafety,
+  type Constitution,
   EthosError,
   type ExplorationRow,
   type FindingRow,
@@ -16,12 +17,14 @@ import {
   type AutonomyOutcome,
   applyAutonomy,
   BRIEF_RESERVE_SHARE,
+  partialBrief,
   prepareWindow,
   settleWindow,
   type WindowOutcome,
 } from './autonomy';
 import { createWindowGuard } from './budget';
 import type { InitiativeFile } from './config-schema';
+import { createKeyedLock, totalsRemainingUsd } from './day-caps';
 import { briefWindowPrompt, scanPrompt, surveyPrompt, windowPrompt } from './prompts';
 import { createReadOnlyLoop, createReadOnlyLoopParts, readOnlyRunOptions } from './run-loop';
 import {
@@ -50,7 +53,8 @@ export type RunnerStore = Pick<
   | 'budget'
   | 'get'
   | 'transitionExploration'
-  | 'extendExploration'
+  | 'submitBrief'
+  | 'list'
 >;
 
 /** An initiative as the runner needs it: the owner, the validated YAML and the readable source paths. */
@@ -69,12 +73,20 @@ export interface InitiativeRunnerDeps {
     initiativeId: string;
     personalityId: string;
     sourcePaths: readonly string[];
+    /** The exploration of an exploration or brief window; its note and brief tools write only there. */
+    explorationId?: string;
   }): DefaultToolRegistry;
   llm: LLMProvider;
   safety: AgentSafety;
   /** Must resolve the owner's personality. */
   personalities: PersonalityRegistry;
   clock?: () => Date;
+  /**
+   * The constitution, for the operator's day totals (`maxUsdPerDay`, `maxUsdPerDayPerPersonality`),
+   * summed across initiatives at run start (day-caps.ts). Falls back to `selfStart.constitution`;
+   * with neither, no total is enforced.
+   */
+  constitution?: () => Promise<Constitution>;
   model?: string;
   onError?: (err: unknown) => void;
   /**
@@ -105,8 +117,6 @@ export interface RunReport {
   waiting: AutonomyOutcome['waiting'];
   /** Where a window left its exploration; null for a survey. */
   outcome: WindowOutcome | null;
-  /** A "dig deeper" had reopened the exploration and it ran on a new budget. */
-  reopened: boolean;
   /** Scan only: what became of each pending draft after the run (materialised, refused, suggested). */
   drafts: DraftOutcome[];
   error?: string;
@@ -158,6 +168,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         ...(deps.onError ? { onError: deps.onError } : {}),
       })
     : undefined;
+  const locks = createKeyedLock();
+  const readConstitution = deps.constitution ?? deps.selfStart?.constitution;
   const materialise = async (): Promise<DraftOutcome[]> => selfStart?.materialiseDrafts() ?? [];
 
   async function run(input: {
@@ -167,6 +179,31 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
   }): Promise<RunReport> {
     const loaded = await deps.load(input.initiativeId);
     if (!loaded) throw notFound(input.initiativeId);
+    const { file } = loaded;
+    const { initiativeId } = input;
+    // Remaining money is read once and spent only when the window closes, so runs that share a
+    // cap run one at a time in this process: the initiative's own, the agent pool, and (when the
+    // constitution sets a total) the day totals. Cross-process stays a limitation (day-caps.ts).
+    const c = (await readConstitution?.())?.initiatives;
+    const keys = [
+      `i:${initiativeId}`,
+      ...(file.origin === 'agent' ? ['pool'] : []),
+      ...(c?.maxUsdPerDay !== undefined || c?.maxUsdPerDayPerPersonality !== undefined
+        ? ['totals']
+        : []),
+    ];
+    return locks.run(keys, () => runLocked(input, loaded, c));
+  }
+
+  async function runLocked(
+    input: {
+      initiativeId: string;
+      kind: 'survey' | 'window' | 'scan';
+      exploration: ExplorationRow | null;
+    },
+    loaded: LoadedInitiative,
+    constitution: Constitution['initiatives'],
+  ): Promise<RunReport> {
     const { personalityId, file, sourcePaths } = loaded;
     const { initiativeId } = input;
     const idle = selfStart?.pauseIfIdle(initiativeId) ?? null;
@@ -196,7 +233,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
 
     // A stalled exploration gets a brief window; an exhausted one a dig-deeper budget (autonomy.ts).
     const prepared = input.exploration
-      ? prepareWindow(deps.store, file, input.exploration, now(), PER_CALL_RESERVE_USD)
+      ? prepareWindow(deps.store, input.exploration, now(), PER_CALL_RESERVE_USD)
       : null;
     const exploration = prepared?.exploration ?? null;
     const kind: WindowKind = prepared ? prepared.kind : input.kind;
@@ -217,11 +254,22 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       : input.kind === 'scan'
         ? SCAN_CAP_USD
         : SURVEY_CAP_USD;
+    // The operator's day totals across every initiative (day-caps.ts); the YAML clamp is per initiative.
+    const totalsLeft = totalsRemainingUsd({
+      store: deps.store,
+      constitution,
+      personalityId,
+      personalityIds: deps.personalities.list().map((p) => p.id),
+      day,
+    });
     const abort = new AbortController();
     const guard = createWindowGuard(
       {
         // One source: the store's cap (`capFor`, bound by wiring to the clamped `usd_per_day`).
-        dayRemainingUsd: Math.max(0, Math.min(budget.capUsd - budget.spentUsd, poolLeft)),
+        dayRemainingUsd: Math.max(
+          0,
+          Math.min(budget.capUsd - budget.spentUsd, poolLeft, totalsLeft),
+        ),
         explorationRemainingUsd,
         perCallReserveUsd: PER_CALL_RESERVE_USD,
       },
@@ -259,7 +307,12 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
           })
         : surveyPrompt(promptInput);
 
-    const registry = deps.buildRegistry({ initiativeId, personalityId, sourcePaths });
+    const registry = deps.buildRegistry({
+      initiativeId,
+      personalityId,
+      sourcePaths,
+      ...(exploration ? { explorationId: exploration.id } : {}),
+    });
     // The registry layer rejects any tool outside `personality.toolset`, and a personality's own
     // toolset names no `initiative_*` tool. The run sees the owner with exactly the run tools
     // (L1: the read allowlist narrowed by its toolset, plus the ledger tools); nothing is added.
@@ -281,10 +334,15 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       kind,
     });
 
+    // Limitation (no enforcer): only LLM `usage` events are metered. Tools that bill per call
+    // (engine_ask, x_search, search providers) report no cost in `ToolResult`, and the run loop
+    // has no usage recorder seam for them, so their spend is not charged to the window or the
+    // day. A run's tool calls are bounded by the loop's per-turn tool budget, not by dollars.
     const tools = new Set<string>();
     const reads: string[] = [];
     let text = '';
     let error: string | undefined;
+    let unpriced = false;
     try {
       // Drain to exhaustion: `done` is the answer, not the end of the turn. After an
       // abort the loop keeps running to its own end, so nothing is cut mid-write.
@@ -305,13 +363,24 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
           const ref = readRef(e.toolName, e.args);
           if (ref && !reads.includes(ref)) reads.push(ref);
         } else if (e.type === 'usage') {
-          const priced =
-            e.estimatedCostUsd > 0
-              ? e.estimatedCostUsd
-              : estimateCost(pricedModel, {
-                  inputTokens: e.inputTokens,
-                  outputTokens: e.outputTokens,
-                }).costUsd;
+          // A reported cost wins. Otherwise the table prices it, cache buckets included. A model
+          // with no price row is NOT free: its cost is unknowable, so it exhausts the guard
+          // (budget.ts treats a non-finite cost as a stop) rather than running uncapped.
+          let priced = e.estimatedCostUsd;
+          if (!(priced > 0)) {
+            const est = estimateCost(pricedModel, {
+              inputTokens: e.inputTokens,
+              outputTokens: e.outputTokens,
+              ...(e.cacheReadTokens !== undefined ? { cacheReadTokens: e.cacheReadTokens } : {}),
+              ...(e.cacheCreationTokens !== undefined
+                ? { cacheCreationTokens: e.cacheCreationTokens }
+                : {}),
+            });
+            if (est.basis === 'unknown') {
+              priced = Number.NaN;
+              unpriced = true;
+            } else priced = est.costUsd;
+          }
           guard.onUsage(priced);
         } else if (e.type === 'error') {
           error = `${e.code}: ${e.error}`;
@@ -321,6 +390,8 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       deps.onError?.(err);
       error = err instanceof Error ? err.message : String(err);
     }
+    // The abort surfaces as an empty-completion error; the real reason is the missing price.
+    if (unpriced) error = `unpriced model "${pricedModel}": stopped, its cost cannot be capped`;
     // A cap abort ends the run with an empty-completion error event; the cap is the reason.
     const endReason = guard.endReason() ?? (error ? 'error' : 'done');
 
@@ -338,6 +409,19 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
         .filter((x) => !before.explorations.has(x.id)),
       briefs: (deps.store.get(initiativeId)?.briefs ?? []).filter((b) => !before.briefs.has(b.id)),
     };
+    // One brief window per stall: if it ended without a partial brief (a day-cap stop, an error,
+    // or a brief that claimed to be complete), the runner hands in its own from the findings, so
+    // a stalled exploration never stops silently and never waits for a second brief window.
+    if (exploration && kind === 'brief' && !after.briefs.some((b) => b.partial)) {
+      const own = (deps.store.get(initiativeId)?.findings ?? []).filter(
+        (f) => f.explorationId === exploration.id,
+      );
+      after.briefs.push(
+        deps.store.submitBrief(
+          partialBrief(deps.store.getExploration(exploration.id) ?? exploration, own),
+        ),
+      );
+    }
     // Autonomy and stalls are the runner's own moves, applied after the window is closed and
     // charged. They are plain transitions, never decision rows (autonomy.ts).
     const autonomy = applyAutonomy(deps.store, file, after.proposals);
@@ -347,7 +431,7 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       ? settleWindow(
           deps.store,
           exploration.id,
-          after.briefs.some((b) => b.explorationId === exploration.id),
+          after.briefs.filter((b) => b.explorationId === exploration.id),
           now(),
           PER_CALL_RESERVE_USD,
         )
@@ -371,7 +455,6 @@ export function createInitiativeRunner(deps: InitiativeRunnerDeps): InitiativeRu
       started: autonomy.started,
       waiting: autonomy.waiting,
       outcome,
-      reopened: prepared?.reopened ?? false,
       drafts,
       ...(error ? { error } : {}),
     };

@@ -50,9 +50,7 @@ function printReport(report: RunReport, say: Say): void {
     for (const x of report.started) say(`  started ${x.explorationId}: ${x.reason}`);
     for (const x of report.waiting) say(`  waiting ${x.explorationId}: ${x.reason}`);
   } else if (report.outcome) {
-    say(
-      `  exploration ${report.explorationId}: ${report.outcome}${report.reopened ? ' (reopened)' : ''}`,
-    );
+    say(`  exploration ${report.explorationId}: ${report.outcome}`);
   }
   say(`  findings: ${report.findings.length}`);
   for (const f of report.findings) say(`    ${f.id}  ${f.claim} [${f.sourceRef}]`);

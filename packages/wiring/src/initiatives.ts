@@ -68,7 +68,7 @@ import {
  */
 export interface InitiativeToolFactories {
   read: ReadonlyArray<() => Tool[]>;
-  ledger: (port: InitiativeLedgerPort, initiativeId: string) => Tool[];
+  ledger: (port: InitiativeLedgerPort, initiativeId: string, explorationId?: string) => Tool[];
   /** initiative_list/search/get over the read-only recall port, bound to the run's personality. */
   recall: (port: InitiativeRecallPort, personalityId: string) => Tool[];
 }
@@ -146,8 +146,8 @@ export function defaultInitiativeToolFactories(deps: InitiativeToolDeps): Initia
   if (goalStore) read.push(() => createGoalTools(goalStore));
   return {
     read,
-    ledger: (port, initiativeId) => [
-      ...createInitiativeLedgerTools(port, initiativeId),
+    ledger: (port, initiativeId, explorationId) => [
+      ...createInitiativeLedgerTools(port, initiativeId, explorationId),
       createRunClarifyTool(port, initiativeId),
     ],
     recall: (port, personalityId) =>
@@ -180,6 +180,8 @@ export function buildReadOnlyRegistry(input: {
   /** Read side of the store for initiative_list/search/get; absent means a run gets no recall tools. */
   recall?: InitiativeRecallPort;
   initiativeId: string;
+  /** The exploration an exploration window works on; the run's note and brief tools write only to it. */
+  explorationId?: string;
   /** From the validated YAML; the `fs_reach.read` roots for read_file / search_files. */
   sourcePaths: readonly string[];
   factories: InitiativeToolFactories;
@@ -197,9 +199,15 @@ export function buildReadOnlyRegistry(input: {
   const allowed = new Set(runToolNames(input.personality.toolset));
   const run = [
     ...input.factories.read.flatMap((make) => make()),
-    ...input.factories.ledger(input.ledger, input.initiativeId),
+    ...input.factories.ledger(input.ledger, input.initiativeId, input.explorationId),
     ...(input.recall ? input.factories.recall(input.recall, input.personality.id) : []),
   ].filter((tool) => allowed.has(tool.name));
+  // Limitation (L3 / secrets, pinned only for what is below): `allowedRefs` is whatever the
+  // registered read tools DECLARE in `capabilities.secrets`. Any exact ref a read tool declares is
+  // allowed to it, and a glob declared as `prefix/*` matches by prefix only (ScopedSecretsImpl,
+  // packages/core scoped-secrets.ts). Nothing checks that a tool uses a ref only for its own
+  // provider; a read tool that declared a broad ref would hold it. initiative-secrets.test.ts
+  // pins that an undeclared ref is refused, not that a declared one is used appropriately.
   const allowedRefs = [...new Set(run.flatMap((tool) => tool.capabilities.secrets ?? []))];
   const registry = new DefaultToolRegistry(
     readOnlyCapabilityBackends({
@@ -300,6 +308,8 @@ export interface LazyInitiativeStore {
    * run treats as no money (fail closed). No effect when the caller injected its own `capFor`.
    */
   setCap(initiativeId: string, usdPerDay: number): void;
+  /** Binds `usd_per_exploration` (clamped) the same way; a proposal's budget never exceeds it. Unbound = 0. */
+  setExplorationCap(initiativeId: string, usdPerExploration: number): void;
   /** Stores a run's read tools may use besides the ledger; compose fills them when the host has them. */
   readSources: { kanbanStore?: KanbanStore; teamMemory?: MemoryProvider };
   /** A no-op until the db has been opened. */
@@ -320,9 +330,13 @@ export function createLazyInitiativeStore(deps: {
   const path = initiativesDbPath(deps.dataDir);
   const caps = new Map<string, number>();
   const capFor = deps.capFor ?? ((id: string) => caps.get(id) ?? 0);
+  const explorationCaps = new Map<string, number>();
   let opened: SQLiteInitiativeStore | undefined;
   const open = (): SQLiteInitiativeStore => {
-    opened ??= new SQLiteInitiativeStore(path, { capFor });
+    opened ??= new SQLiteInitiativeStore(path, {
+      capFor,
+      explorationCapFor: (id) => explorationCaps.get(id) ?? 0,
+    });
     return opened;
   };
   const ledger: InitiativeLedgerPort = {
@@ -367,6 +381,7 @@ export function createLazyInitiativeStore(deps: {
     ready: async () => opened !== undefined || (await deps.storage.exists(path)),
     windows: (id) => open().windows(id),
     setCap: (id, usd) => void caps.set(id, usd),
+    setExplorationCap: (id, usd) => void explorationCaps.set(id, usd),
     readSources: {},
     close: () => opened?.close(),
   };
@@ -460,7 +475,7 @@ export function createInitiativeRunnerFor(deps: {
     onError: (err) =>
       deps.log?.warn(`initiative run failed: ${err instanceof Error ? err.message : String(err)}`),
     load: createInitiativeLoader(deps),
-    buildRegistry: ({ initiativeId, personalityId, sourcePaths }) => {
+    buildRegistry: ({ initiativeId, personalityId, sourcePaths, explorationId }) => {
       const personality = deps.personalities.get(personalityId);
       if (!personality) throw new Error(`personality "${personalityId}" is not registered`);
       return buildReadOnlyRegistry({
@@ -468,6 +483,7 @@ export function createInitiativeRunnerFor(deps: {
         ledger: store,
         recall: store,
         initiativeId,
+        ...(explorationId ? { explorationId } : {}),
         sourcePaths,
         factories,
         storage: deps.storage,
@@ -516,7 +532,7 @@ export function createInitiativeLoader(deps: {
     }
     const settings = (await loadInitiativeSettings(deps.storage, deps.dataDir, row.personalityId))
       .settings;
-    const { usdPerDay } = clampInitiativeBudgets(
+    const { usdPerDay, usdPerExploration } = clampInitiativeBudgets(
       {
         settings: { dailyBudgetUsd: settings.dailyBudgetUsd },
         initiative: {
@@ -529,6 +545,7 @@ export function createInitiativeLoader(deps: {
     const pool = constitution.initiatives?.selfStartPoolUsdPerDay ?? SELF_START_POOL_USD_DEFAULT;
     const capUsd = parsed.file.origin === 'agent' ? Math.min(usdPerDay, pool) : usdPerDay;
     deps.ledger.setCap(id, capUsd);
+    deps.ledger.setExplorationCap(id, usdPerExploration);
     return {
       personalityId: row.personalityId,
       file: { ...parsed.file, budget: { ...parsed.file.budget, usd_per_day: capUsd } },

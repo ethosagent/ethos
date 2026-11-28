@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { clampInitiativeBudgets } from '@ethosagent/constitution';
+import { nextRunForSchedule } from '@ethosagent/cron';
 import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import {
   assertSafeId,
@@ -79,6 +80,32 @@ function lineDiff(before: string, after: string): string {
  * entries dropped, a mode later in AUTONOMY_MODES (ask < free_under < free), a
  * higher `ask_above_usd` (absent = unbounded) or any larger budget field.
  */
+const WINDOW_PROBE_START = new Date('2026-01-01T00:00:00Z');
+const WINDOWS_PER_DAY_MAX = 1000;
+
+/** How many times these schedules fire in one day (counted from a fixed probe day; capped). */
+function windowsPerDay(schedules: readonly string[]): number {
+  const end = WINDOW_PROBE_START.getTime() + 86_400_000;
+  let n = 0;
+  for (const schedule of schedules) {
+    let cursor = WINDOW_PROBE_START;
+    for (let i = 0; i < WINDOWS_PER_DAY_MAX; i++) {
+      const next = nextRunForSchedule(schedule, cursor);
+      if (next === null || next.getTime() >= end) break;
+      n++;
+      cursor = next;
+    }
+  }
+  return n;
+}
+
+/**
+ * A draft inherits nothing it can loosen: no more excluded paths dropped, no looser autonomy, no
+ * bigger budget, and (timeline) no more windows per day, no longer window and no longer default
+ * run than the parent. Pinned by `__tests__/initiative-draft-no-widen.test.ts`.
+ * Limitation: the windows-per-day count is measured on one probe day, so a cron that fires only
+ * on some weekdays is judged by that day alone.
+ */
 function widening(parent: InitiativeFile, child: InitiativeFile): string | null {
   const missing = parent.exclude.find((e) => !child.exclude.includes(e));
   if (missing !== undefined) return `exclude: the parent's "${missing}" must stay excluded`;
@@ -93,6 +120,13 @@ function widening(parent: InitiativeFile, child: InitiativeFile): string | null 
   for (const k of ['usd_per_day', 'usd_per_exploration', 'max_open_explorations'] as const) {
     if (child.budget[k] > parent.budget[k])
       return `budget.${k}: exceeds the parent's ${parent.budget[k]}`;
+  }
+  const t = (d: InitiativeFile) => d.timeline;
+  if (windowsPerDay(t(child).explore_windows) > windowsPerDay(t(parent).explore_windows)) {
+    return "timeline.explore_windows: more windows per day than the parent's";
+  }
+  for (const k of ['window_minutes', 'default_days'] as const) {
+    if (t(child)[k] > t(parent)[k]) return `timeline.${k}: exceeds the parent's ${t(parent)[k]}`;
   }
   return null;
 }

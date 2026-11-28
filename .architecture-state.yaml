@@ -182,7 +182,7 @@ register_anchors:
     - { path: extensions/initiative-runner/src/tool-gate.ts, line: 10, contains: "export function createInitiativeToolGate" }
 
   G-INIT-CFG:
-    - { path: extensions/initiative-runner/src/config-service.ts, line: 135, contains: "async save(input: SaveInput)" }
+    - { path: extensions/initiative-runner/src/config-service.ts, line: 169, contains: "async save(input: SaveInput)" }
     - { path: extensions/initiative-runner/src/sources.ts, line: 52, contains: "export function checkSources" }
     - { path: packages/types/src/personality-definition.ts, line: 71, contains: "'initiatives/'" }
 

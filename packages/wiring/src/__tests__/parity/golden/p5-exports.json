@@ -1425,6 +1425,7 @@
       "InitiativeSettings": "type",
       "InitiativeSettingsLoad": "type",
       "InitiativeSettingsSchema": "value",
+      "KeyedLock": "type",
       "LoadedInitiative": "type",
       "MAX_SELF_STARTED_DEFAULT": "value",
       "MIN_SELF_START_USD": "value",
@@ -1448,16 +1449,19 @@
       "checkSources": "value",
       "createInitiativeRunner": "value",
       "createInitiativeToolGate": "value",
+      "createKeyedLock": "value",
       "createReadOnlyLoop": "value",
       "createReadOnlyLoopParts": "value",
       "createSelfStart": "value",
       "createWindowGuard": "value",
       "decideAutonomy": "value",
+      "digDeeper": "value",
       "effectiveEnabled": "value",
       "loadInitiativeSettings": "value",
       "mapGuidance": "value",
       "mergeGuidance": "value",
       "parseInitiativeFile": "value",
+      "partialBrief": "value",
       "planDay": "value",
       "prepareWindow": "value",
       "readOnlyCapabilityBackends": "value",
@@ -1465,7 +1469,8 @@
       "readOnlyRunOptions": "value",
       "repoSourcePaths": "value",
       "runToolNames": "value",
-      "settleWindow": "value"
+      "settleWindow": "value",
+      "totalsRemainingUsd": "value"
     }
   },
   "@ethosagent/initiative-store": {

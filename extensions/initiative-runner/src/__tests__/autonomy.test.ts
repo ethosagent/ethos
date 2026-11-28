@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { decideAutonomy } from '../autonomy';
-import { fakeLedger, harness, makeFile, scriptedLLM } from './helpers/fake-ledger';
+import { decideAutonomy, settleWindow } from '../autonomy';
+import { digDeeper } from '../dig-deeper';
+import { fakeLedger, harness, makeFile, NOW, scriptedLLM } from './helpers/fake-ledger';
 
 const propose = (question: string, estimate_usd: number) => ({
   name: 'initiative_propose',
@@ -180,8 +181,9 @@ describe('stalls and partial briefs', () => {
       recommendedOption: 'r',
       partial: true,
     });
-    // The owner's "dig deeper" (recordDecision) moves briefed -> exploring; nothing else.
-    ledger.transitionExploration(exp.id, 'exploring', 'dig_deeper');
+    // The owner's decision path: the decision row, then the fresh budget and deadline.
+    digDeeper(ledger, file, { explorationId: exp.id, decidedBy: 'owner_ui', now: NOW });
+    expect(ledger.decisions).toHaveLength(1);
 
     const scripted = scriptedLLM(
       [
@@ -200,7 +202,6 @@ describe('stalls and partial briefs', () => {
       llm: scripted.llm,
       files: { [file.id]: file },
     }).runWindow(file.id, exp.id);
-    expect(report.reopened).toBe(true);
     expect(report.kind).toBe('window');
     expect(report.endReason).toBe('done');
     const row = ledger.getExploration(exp.id);
@@ -208,5 +209,68 @@ describe('stalls and partial briefs', () => {
     expect(row?.budgetUsd).toBeCloseTo(0.5 + 1, 5);
     expect(row?.deadline).toBe('2026-12-05T10:00:00.000Z');
     expect(row?.state).toBe('exploring');
+  });
+
+  it('the runner never reopens on its own: an exhausted briefed-then-exploring exploration stalls', async () => {
+    const { ledger, file } = setup();
+    const exp = ledger.seedExploration({
+      id: 'EXP-1',
+      initiativeId: file.id,
+      state: 'exploring',
+      budgetUsd: 0.5,
+      spentUsd: 0.5,
+    });
+    // A brief exists, but no owner decision does.
+    ledger.submitBrief({
+      explorationId: exp.id,
+      bodyMd: 'b',
+      recommendedOption: 'r',
+      partial: true,
+    });
+    const report = await harness({
+      ledger,
+      llm: scriptedLLM([[]], 0.01).llm,
+      files: { [file.id]: file },
+    }).runWindow(file.id, exp.id);
+    expect(report.kind).toBe('brief');
+    expect(ledger.getExploration(exp.id)?.budgetUsd).toBe(0.5);
+  });
+
+  it('a brief window that ends without a brief gets a partial brief from the runner', async () => {
+    const { ledger, file } = setup();
+    const exp = ledger.seedExploration({
+      id: 'EXP-1',
+      initiativeId: file.id,
+      state: 'stalled',
+      budgetUsd: 0.5,
+      spentUsd: 0.5,
+    });
+    ledger.addFinding({
+      explorationId: exp.id,
+      claim: 'drop at step 2',
+      sourceRef: 'u',
+      confidence: 0.6,
+    });
+    // The scripted model writes text and never calls initiative_brief (nor sets partial).
+    const report = await harness({
+      ledger,
+      llm: scriptedLLM([[]], 0.01).llm,
+      files: { [file.id]: file },
+    }).runWindow(file.id, exp.id);
+    expect(report.kind).toBe('brief');
+    expect(ledger.briefs).toHaveLength(1);
+    expect(ledger.briefs[0]?.partial).toBe(true);
+    expect(ledger.briefs[0]?.bodyMd).toContain('drop at step 2');
+    expect(report.outcome).toBe('briefed');
+    expect(ledger.getExploration(exp.id)?.state).toBe('briefed');
+  });
+
+  it('a non-partial brief on a stalled exploration is not accepted as the stall brief', () => {
+    const { ledger, file } = setup();
+    const exp = ledger.seedExploration({ id: 'EXP-1', initiativeId: file.id, state: 'stalled' });
+    expect(() => settleWindow(ledger, exp.id, [{ partial: false }], NOW, 0.05)).toThrow(
+      /not partial/,
+    );
+    expect(ledger.getExploration(exp.id)?.state).toBe('stalled');
   });
 });

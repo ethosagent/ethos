@@ -15,7 +15,8 @@ function runnerWithNoInitiatives(): InitiativeRunner {
       getInitiative: refuse,
       getExploration: () => null,
       transitionExploration: refuse,
-      extendExploration: refuse,
+      submitBrief: refuse,
+      list: refuse,
       explorations: refuse,
       ideas: refuse,
       budget: refuse,
@@ -84,7 +85,6 @@ describe('ethos initiatives run', () => {
         started: [],
         waiting: [],
         outcome: null,
-        reopened: false,
         drafts: [],
       }),
       runWindow: async () => {

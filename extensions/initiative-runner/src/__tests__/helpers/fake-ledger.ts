@@ -2,6 +2,7 @@ import { DefaultPersonalityRegistry, DefaultToolRegistry } from '@ethosagent/cor
 import {
   type BriefRow,
   canTransition,
+  type DecisionRow,
   type DraftRow,
   EXPLORATION_TRANSITIONS,
   type ExplorationRow,
@@ -184,6 +185,12 @@ export function fakeLedger() {
       row.budgetUsd = row.spentUsd + e.addBudgetUsd;
       row.deadline = e.deadline;
       return row;
+    },
+    recordDecision(d: Omit<DecisionRow, 'id' | 'at'>): DecisionRow {
+      decisions.push(d);
+      if (d.gate === 'gate2_adopt' && d.verdict === 'dig_deeper')
+        move(d.target, 'exploring', d.verdict);
+      return { ...d, id: `DEC-${decisions.length}`, at: 'now' };
     },
     transitionInitiative(id: string, to: InitiativeState, why: string) {
       const row = initiatives.get(id);
