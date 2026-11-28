@@ -307,7 +307,8 @@ describe('ScopeNav — a member workspace inside a team (D6)', () => {
     expect(hrefs[0]).toBe('/t/marketing/p/cmo/chat');
     expect(hrefs.every((h) => h?.startsWith('/t/marketing/p/cmo/'))).toBe(true);
     expect(hrefs).toContain('/t/marketing/p/cmo/outbox');
-    expect(hrefs).toHaveLength(13);
+    expect(hrefs).toContain('/t/marketing/p/cmo/initiatives');
+    expect(hrefs).toHaveLength(14);
   });
 
   it('keeps the generic `+ New session` picker inside a member workspace', async () => {
@@ -333,7 +334,7 @@ describe('ScopeNav — a member workspace inside a team (D6)', () => {
   it('gives every workspace row a 16px stroke icon, none an emoji', async () => {
     await mount(ScopeNav, '/p/researcher/chat', {});
     const rows = [...container.querySelectorAll('.sidebar-nav-item')];
-    expect(rows).toHaveLength(13);
+    expect(rows).toHaveLength(14);
     for (const r of rows) {
       expect(r.querySelector('svg')).not.toBeNull();
       expect(r.textContent).not.toMatch(/\p{Extended_Pictographic}/u);
