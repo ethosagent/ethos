@@ -230,6 +230,38 @@ describe('TelegramAdapter.postCard', () => {
   });
 });
 
+describe('card button store at startup', () => {
+  beforeEach(resetMocks);
+
+  it('an unreadable card-actions file does not fail start(): buttons fall back to memory-only and it is logged', async () => {
+    const storage = new InMemoryStorage();
+    const realRead = storage.read.bind(storage);
+    storage.read = async (path: string) => {
+      if (path.endsWith('card-actions.jsonl')) throw new Error('EACCES: permission denied');
+      return realRead(path);
+    };
+    const warn = vi.fn();
+    const logger = { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(), child: vi.fn() };
+    logger.child.mockReturnValue(logger);
+    const adapter = new TelegramAdapter({
+      token: '1:fake-token',
+      botKey: 'test-bot',
+      cache: new InMemoryAttachmentCache(),
+      storage,
+      logger,
+    });
+    const inbound: InboundMessage[] = [];
+    adapter.onMessage((m) => inbound.push(m));
+
+    await adapter.start();
+
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('card buttons'))).toBe(true);
+    await adapter.postCard({ chatId: '77', card: recommend() });
+    tap(sentButtons()[0]?.data ?? '');
+    await vi.waitFor(() => expect(inbound).toHaveLength(1));
+  });
+});
+
 describe('rca: callback route', () => {
   beforeEach(resetMocks);
 
@@ -369,6 +401,33 @@ describe('rca: callback route', () => {
     tap(buttons[0]?.data ?? '');
 
     await vi.waitFor(() => expect(inbound).toHaveLength(1));
+  });
+
+  it('a tap whose settle cannot be persisted answers the spinner, sends no turn, and can be retried', async () => {
+    const storage = new InMemoryStorage();
+    const { inbound, buttons } = await postedCard(storage);
+    const realAppend = storage.append.bind(storage);
+    let broken = true;
+    storage.append = async (path: string, data: string) => {
+      if (broken) throw new Error('disk full');
+      return realAppend(path, data);
+    };
+
+    const failed = tap(buttons[0]?.data ?? '', { queryId: 'q-fail' });
+
+    await vi.waitFor(() =>
+      expect(failed).toHaveBeenCalledWith({
+        text: 'Something went wrong — type the request instead.',
+      }),
+    );
+    expect(inbound).toHaveLength(0);
+    expect(mockApi.editMessageText).not.toHaveBeenCalled();
+
+    broken = false;
+    tap(buttons[0]?.data ?? '', { queryId: 'q-retry' });
+
+    await vi.waitFor(() => expect(inbound).toHaveLength(1));
+    expect(inbound[0]?.text).toBe('Break down the tech sector');
   });
 
   it('leaves obx:, approve: and clr: routing unchanged', async () => {

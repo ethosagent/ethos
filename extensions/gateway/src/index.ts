@@ -4012,6 +4012,8 @@ export class Gateway {
 
       // Deliver the reply exactly once. Called at the turn's terminal event,
       // or after the loop when the iterator ends without one.
+      // False once the final answer's own send was refused: held cards then stay held-and-dropped.
+      let answerSent = true;
       const deliverAnswer = async (): Promise<void> => {
         // A data card made before the answer reaches the chat before it.
         await cards?.drain();
@@ -4173,6 +4175,7 @@ export class Gateway {
               },
               { text: reply, parseMode: 'markdown', threadId },
             );
+            if (!delivered) answerSent = false;
           } else {
             // Suppressed by the dedup cache: this exact text already answered
             // THIS inbound message inside the TTL (the key is scoped to it,
@@ -4278,8 +4281,9 @@ export class Gateway {
           // Unconditional, not config-driven: an adapter that cannot draw cards never
           // sees the UI-card tools. A card-capable one keeps `emit_card` (canvas has no
           // channel rendering, so `render_ui` is always excluded).
+          // A review turn has no user waiting on a card, so it keeps neither UI tool.
           toolsetExclude: [
-            ...(isCardCapable(adapter) ? CANVAS_EXCLUDED_TOOLS : CHANNEL_EXCLUDED_TOOLS),
+            ...(isCardCapable(adapter) && !review ? CANVAS_EXCLUDED_TOOLS : CHANNEL_EXCLUDED_TOOLS),
           ],
           // One review hop (D10/D30): `delegate_task` refuses `deliver:'parent'`
           // from inside a review turn by reading this off its ToolContext.
@@ -4388,9 +4392,9 @@ export class Gateway {
       // An iterator that ends without `done` or `error` — AgentLoop always
       // yields one, test fakes need not: deliver what accumulated.
       else await deliverAnswer();
-      // `recommend_actions` goes under the answer (D13). An errored or stopped turn offers no
-      // next step, so its held cards are dropped.
-      if (cards && !signal.aborted && !translator.error) await cards.flushHeld();
+      // `recommend_actions` goes under the answer (D13). An errored or stopped turn, or one whose
+      // answer was not delivered, offers no next step, so its held cards are dropped.
+      if (cards && answerSent && !signal.aborted && !translator.error) await cards.flushHeld();
       if (!review) await this.rooms.notePolicyDigest(sessionKey, message, room);
       completed = true;
     } finally {

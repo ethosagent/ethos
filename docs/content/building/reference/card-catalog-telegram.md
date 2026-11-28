@@ -44,11 +44,13 @@ A `recommend_actions` button sends its `prompt` as the tapper's next message. Th
 
 | Tap | Result |
 |---|---|
-| First tap on a live card | The card is settled, edited in place, and the prompt runs as a user turn from the tapper. In a group it passes mention gating, and normal admission applies. |
+| First tap on a live card | The card is settled, edited in place, and the prompt runs as a user turn from the tapper. In a group it passes mention gating, and normal admission applies (see the limitation below). |
 | Any later tap | Toast `Already chosen.` No turn. |
 | Token older than 48 hours, unknown, or its record deleted | Toast `This button has expired — type the request instead.` The keyboard is stripped. No turn. |
 
-Buttons carry `rca:<token>:<index>`, and the prompts live in `~/.ethos/telegram/<botKey>/card-actions.jsonl`, written through `Storage`. The map survives a gateway restart. Without a `Storage` it is memory-only, and every button reads as expired after a restart. Anyone in a group may tap, because the turn runs as the tapper. The tap rules are pinned by `extensions/platform-telegram/src/__tests__/live-card.test.ts`; the token store by `extensions/platform-telegram/src/__tests__/card-action-store.test.ts`.
+Buttons carry `rca:<token>:<index>`, and the prompts live in `~/.ethos/telegram/<botKey>/card-actions.jsonl`, written through `Storage`. The map survives a gateway restart. Without a `Storage` it is memory-only, and every button reads as expired after a restart. Anyone in a group may tap, because the turn runs as the tapper.
+
+**Limitation.** The adapter settles the card before the gateway decides whether the tapper is admitted. A group member the gateway would not admit still spends the card: its buttons settle and no turn runs. There is no admission pre-check by design (D16). A failed settle write (for example a full disk) answers the tap with `Something went wrong — type the request instead.`, sends no turn, and leaves the card tappable. The tap rules are pinned by `extensions/platform-telegram/src/__tests__/live-card.test.ts`; the token store by `extensions/platform-telegram/src/__tests__/card-action-store.test.ts`.
 
 ## See also {#see-also}
 

@@ -79,14 +79,16 @@ export class CardActionStore {
   private readonly entries = new Map<string, Entry>();
   private loadPromise: Promise<void> | undefined;
   private readonly now: () => number;
+  private readonly onLoadError: ((err: unknown) => void) | undefined;
 
   constructor(
-    private readonly storage: Storage | undefined,
+    private storage: Storage | undefined,
     private readonly baseDir: string,
-    opts: { now?: () => number } = {},
+    opts: { now?: () => number; onLoadError?: (err: unknown) => void } = {},
   ) {
     this.file = join(baseDir, 'card-actions.jsonl');
     this.now = opts.now ?? Date.now;
+    this.onLoadError = opts.onLoadError;
   }
 
   /** A fresh unguessable token. 10 base32 chars (50 bits); `256 % 32 === 0`, so no modulo bias. */
@@ -94,9 +96,16 @@ export class CardActionStore {
     return Array.from(randomBytes(CARD_TOKEN_LENGTH), (b) => BASE32[b % 32]).join('');
   }
 
-  /** Rebuild the map from disk, dropping expired records. Idempotent. */
+  /**
+   * Rebuild the map from disk, dropping expired records. Idempotent, never rejects: a file that
+   * cannot be read or rewritten drops the store to memory-only (the no-Storage limitation, D12)
+   * and is reported through `onLoadError`, so a bad file never fails adapter startup.
+   */
   load(): Promise<void> {
-    this.loadPromise ??= this.loadOnce();
+    this.loadPromise ??= this.loadOnce().catch((err: unknown) => {
+      this.storage = undefined;
+      this.onLoadError?.(err);
+    });
     return this.loadPromise;
   }
 
@@ -164,8 +173,10 @@ export class CardActionStore {
   }
 
   /**
-   * Mark button `index` as the card's one choice. The check and the in-memory mark happen before
-   * any await, so two taps racing in this process cannot both win (D11); the append follows.
+   * Mark button `index` as the card's one choice. After `load()` resolves, the check and the
+   * in-memory mark run with no await between them, so two taps racing in this process cannot both
+   * win (D11); the append follows. A failed append rolls the mark back and rethrows, so the tap
+   * can be retried once storage recovers.
    */
   async settle(token: string, index: number): Promise<CardSettleResult> {
     await this.load();
@@ -183,7 +194,13 @@ export class CardActionStore {
       index,
       settledAt: entry.settledAt,
     };
-    await this.persist(`${JSON.stringify(settle)}\n`);
+    try {
+      await this.persist(`${JSON.stringify(settle)}\n`);
+    } catch (err) {
+      entry.settledIndex = undefined;
+      entry.settledAt = undefined;
+      throw err;
+    }
     return { status: 'settled', record: entry.record };
   }
 

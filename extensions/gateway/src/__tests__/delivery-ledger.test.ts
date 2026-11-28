@@ -212,15 +212,15 @@ describe('Gateway — the four covered reply paths each record an obligation', (
     expect(await store.listPending(['bot-a'])).toHaveLength(0);
   });
 
-  // plan telegram-live-cards D14: the Telegram adapter maps "message is not modified" to
-  // `ok: true` (`edit-not-modified.test.ts`). A final that differs from the last rendered body
-  // but renders to the same platform text therefore confirms its obligation, and the sweep has
-  // nothing to re-send as a second message.
-  it('4c. a terminal edit the platform reports as already-on-screen is confirmed, not re-sent', async () => {
+  // A terminal edit the adapter answers `ok: true` confirms its obligation, so the sweep has
+  // nothing to re-send as a second message. This pins the GATEWAY half only. That Telegram maps
+  // "message is not modified" to `ok: true` (plan telegram-live-cards D14) is proven by
+  // `extensions/platform-telegram/src/__tests__/edit-not-modified.test.ts`, not here.
+  it('4c. a terminal edit the adapter confirms is delivered, not re-sent', async () => {
     const gw = gatewayWith(
       loopYielding([
         { type: 'text_delta', text: 'Hello world' },
-        // Differs from the streamed body by a trailing space only — the Telegram HTML is equal.
+        // Differs from the streamed body by a trailing space only.
         { type: 'done', text: 'Hello world ', turnCount: 1 },
       ]),
       store,

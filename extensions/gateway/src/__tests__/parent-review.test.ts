@@ -66,6 +66,7 @@ interface RunOpts {
   initiator?: string;
   judgeAudience?: boolean;
   untrustedOrigin?: boolean;
+  toolsetExclude?: string[];
 }
 type RunImpl = (
   text: string,
@@ -81,6 +82,7 @@ function scriptedLoop(impl?: RunImpl) {
     initiator?: string;
     judgeAudience?: boolean;
     untrustedOrigin?: boolean;
+    toolsetExclude?: string[];
   }> = [];
   const run = vi.fn((text: string, opts: RunOpts) => {
     calls.push({
@@ -91,6 +93,7 @@ function scriptedLoop(impl?: RunImpl) {
       ...(opts.initiator ? { initiator: opts.initiator } : {}),
       ...(opts.judgeAudience ? { judgeAudience: true } : {}),
       ...(opts.untrustedOrigin ? { untrustedOrigin: true } : {}),
+      ...(opts.toolsetExclude ? { toolsetExclude: opts.toolsetExclude } : {}),
     });
     if (impl) return impl(text, opts);
     return (async function* () {
@@ -233,6 +236,20 @@ describe("parent review — deliver: 'parent'", () => {
     });
     // The reply is a ledger obligation stamped with the row (the replay guard).
     expect(await ledger.hasObligationFor(rows(spool)[0]?.id ?? '')).toBe(true);
+  });
+
+  it('a review turn never sees emit_card, even on a card-capable adapter', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    Object.assign(out.adapter, { postCard: vi.fn().mockResolvedValue({ ok: true }) });
+    const j = job();
+    const s = scriptedLoop();
+    const exec = fakeExecutor();
+    gateway(s.loop, out.adapter, fakeJobStore([j]), spool, { executor: exec.executor });
+    exec.fire(j);
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+
+    expect(s.calls[0]?.toolsetExclude).toEqual(['emit_card', 'render_ui']);
   });
 
   it("the default 'user' keeps the plain notice and admits no review", async () => {

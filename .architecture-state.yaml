@@ -92,7 +92,7 @@ register_anchors:
     - { path: packages/safety/injection/src/wrap.ts, line: 35, contains: "export function wrapUntrusted" }
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 34, contains: "export function resolveDowngradedTools" }
-    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 441, contains: "deps.safety.injection.prelude" }
+    - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 444, contains: "deps.safety.injection.prelude" }
     - { path: packages/core/src/agent-loop.ts, line: 756, contains: "= resolveRunDowngrade(" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 800, contains: "handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }

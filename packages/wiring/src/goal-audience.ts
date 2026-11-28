@@ -6,6 +6,7 @@
 // `web`/`cli`. Pinned by `packages/wiring/src/__tests__/goal-audience.test.ts`.
 
 import { type PrivateChatSet, targetAudience } from '@ethosagent/core';
+import { CHANNEL_EXCLUDED_TOOLS } from '@ethosagent/gateway';
 import type { GoalOrigin, TurnAudience } from '@ethosagent/types';
 
 /**
@@ -28,4 +29,16 @@ export function goalRoomAudience(origin: GoalOrigin, privateChats?: PrivateChatS
   const colon = origin.indexOf(':');
   if (colon <= 0) return 'shared';
   return targetAudience(origin.slice(0, colon), origin.slice(colon + 1), privateChats);
+}
+
+/**
+ * The tools a goal run must not be offered for its origin: the UI card tools when the origin is a
+ * channel (`platform:chatId`). A goal run has no viewer for a card, and a channel origin is what
+ * `surfaceOf` (extensions/tools-ui/src/ui-platform.ts) reads to let `emit_card` through, so a run
+ * site that forwards a channel origin to `AgentLoop.run` passes this as `toolsetExclude`.
+ * `undefined` for `web`, `cli` or no origin. Pinned by `__tests__/goal-audience.test.ts`.
+ */
+export function goalToolsetExclude(origin: GoalOrigin | undefined): string[] | undefined {
+  if (origin === undefined || origin === 'web' || origin === 'cli') return undefined;
+  return origin.indexOf(':') > 0 ? [...CHANNEL_EXCLUDED_TOOLS] : undefined;
 }

@@ -8,7 +8,8 @@
 //    durable answer, and an editable message has no redelivery target after a restart. A failed
 //    post is recorded (`gateway.card_post_failed`) and the answer still lands.
 //  - Dedup is `sha256(canonical envelope)` scoped to the inbound message (D5), with reservation
-//    semantics: `shouldSend` reserves, a failed post `release`s. An identical card answering a
+//    semantics: `reserve` arms the key, `record` commits it once the post lands, a failed post
+//    `release`s it. An identical card answering a
 //    different message still posts.
 //  - Data cards post at `tool_end`; `recommend_actions` is held and posts after the final answer
 //    settles, so its buttons sit under the answer (D13).
@@ -104,7 +105,9 @@ export class TurnCardPoster {
 
   /** Post the held `recommend_actions` cards. Call after the final answer was delivered. */
   async flushHeld(): Promise<void> {
-    for (const card of this.held.splice(0)) this.enqueue(card);
+    const held = this.held.splice(0);
+    // The room can turn silent mid-turn; `onToolEnd` checked it at hold time only.
+    if (!this.opts.silent()) for (const card of held) this.enqueue(card);
     await this.chain;
   }
 
@@ -115,18 +118,24 @@ export class TurnCardPoster {
   private async post(card: CardEnvelope): Promise<void> {
     const { dedup, sessionKey, scope } = this.opts;
     const key = cardDedupKey(card);
-    if (!dedup.shouldSend(sessionKey, key, scope)) return;
+    // An owned reservation, as `OutboundSend.sendThrough` takes one: only this post may commit
+    // or un-arm the key, so a slow post cannot un-arm an identical one that went out after it.
+    const reservation = dedup.reserve(sessionKey, key, scope);
+    if (reservation === undefined) return;
     try {
       const res = await this.opts.adapter.postCard({
         chatId: this.opts.chatId,
         ...(this.opts.threadId ? { threadId: this.opts.threadId } : {}),
         card,
       });
-      if (res.ok) return;
-      dedup.release(sessionKey, key, scope);
+      if (res.ok) {
+        dedup.record(sessionKey, key, scope, reservation);
+        return;
+      }
+      dedup.release(sessionKey, key, scope, reservation);
       this.recordFailure(card, res.error);
     } catch (err) {
-      dedup.release(sessionKey, key, scope);
+      dedup.release(sessionKey, key, scope, reservation);
       this.recordFailure(card, err instanceof Error ? err.message : String(err));
     }
   }

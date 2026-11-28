@@ -7,6 +7,8 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
+import { TurnCardPoster } from '../card-post';
+import { MessageDedupCache } from '../dedup';
 import { Gateway } from '../index';
 
 // ---------------------------------------------------------------------------
@@ -53,7 +55,11 @@ function loopYielding(events: AgentEvent[]) {
   };
 }
 
-function adapterWith(opts: { capable: boolean; postResult?: () => Promise<DeliveryResult> }) {
+function adapterWith(opts: {
+  capable: boolean;
+  postResult?: () => Promise<DeliveryResult>;
+  sendResult?: () => DeliveryResult;
+}) {
   const order: string[] = [];
   const posted: unknown[] = [];
   const adapter = {
@@ -69,7 +75,7 @@ function adapterWith(opts: { capable: boolean; postResult?: () => Promise<Delive
     stop: vi.fn().mockResolvedValue(undefined),
     send: vi.fn(async (_c: string, m: OutboundMessage): Promise<DeliveryResult> => {
       order.push(`send:${m.text}`);
-      return { ok: true, messageId: 'm1' };
+      return opts.sendResult ? opts.sendResult() : { ok: true, messageId: 'm1' };
     }),
     onMessage: vi.fn(),
     health: vi.fn().mockResolvedValue({ ok: true }),
@@ -302,5 +308,75 @@ describe('Gateway tool exclusion per adapter', () => {
     await gatewayWith(loop).handleMessage(msg(), adapterWith({ capable: false }));
 
     expect(loop.run.mock.calls[0]?.[1]?.toolsetExclude).toEqual(['emit_card', 'render_ui']);
+  });
+});
+
+describe('held recommend_actions follow the answer (D13)', () => {
+  it('does not flush when the final answer was not delivered', async () => {
+    const loop = loopYielding([cardEnd(recommendCard), ...answerEvents()]);
+    const adapter = adapterWith({
+      capable: true,
+      sendResult: () => ({ ok: false, error: 'chat not found' }),
+    });
+
+    await gatewayWith(loop).handleMessage(msg(), adapter);
+
+    expect(adapter.order).toEqual(['send:the answer']);
+  });
+
+  it('drops a held card when the turn was stopped', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const loop = {
+      run: vi.fn(async function* () {
+        yield cardEnd(recommendCard);
+        await gate;
+        yield { type: 'text_delta', text: 'partial' } as AgentEvent;
+        yield { type: 'done', text: 'partial', turnCount: 1 } as AgentEvent;
+      }),
+      hooks: { registerVoid: vi.fn().mockReturnValue(() => {}) },
+    };
+    const adapter = adapterWith({ capable: true });
+    const gw = gatewayWith(loop);
+
+    const turn = gw.handleMessage(msg({ messageId: 'first' }), adapter);
+    await vi.waitFor(() => expect(loop.run).toHaveBeenCalled());
+    const stop = gw.handleMessage(msg({ text: '/stop', messageId: 'stop' }), adapter);
+    release();
+    await Promise.all([turn, stop]);
+
+    expect(adapter.order.some((o) => o.startsWith('card:'))).toBe(false);
+  });
+});
+
+describe('TurnCardPoster.flushHeld', () => {
+  it('re-checks the silent-room flag at flush time', async () => {
+    let silent = false;
+    const posted: unknown[] = [];
+    const poster = new TurnCardPoster({
+      adapter: {
+        postCard: async (input: unknown) => {
+          posted.push(input);
+          return { ok: true, messageId: '1' };
+        },
+      } as never,
+      platform: 'telegram',
+      botKey: 'default',
+      chatId: 'c',
+      threadId: undefined,
+      sessionKey: 's',
+      scope: { inboundId: 'i' } as never,
+      dedup: new MessageDedupCache(),
+      observability: undefined,
+      silent: () => silent,
+    });
+    poster.onToolEnd(cardEnd(recommendCard) as never);
+    silent = true;
+
+    await poster.flushHeld();
+
+    expect(posted).toHaveLength(0);
   });
 });

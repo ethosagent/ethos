@@ -735,7 +735,14 @@ export class TelegramAdapter
     this.logger = config.logger?.child({ component: 'telegram' });
 
     const baseDir = join(config.telegramDir ?? 'telegram', this.botKey);
-    this.cardActions = new CardActionStore(config.storage, baseDir);
+    this.cardActions = new CardActionStore(config.storage, baseDir, {
+      onLoadError: (err) =>
+        this.logger?.warn(
+          `[telegram] card buttons are memory-only this run (card-actions.jsonl unreadable): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+    });
 
     // --- Persistence stores (Gap 4) ---
     if (config.storage) {
@@ -1319,7 +1326,12 @@ export class TelegramAdapter
 
       // `recommend_actions` buttons: the tap is a user message (plan telegram-live-cards D9).
       if (data.startsWith(`${CARD_ACTION_PREFIX}:`)) {
-        void this.handleCardTap(event, cq.message?.chat?.type === 'private');
+        void this.handleCardTap(event, cq.message?.chat?.type === 'private').catch((err) => {
+          // handleCardTap answers its own failures; this is the last line if even that threw.
+          this.logger?.warn(
+            `[telegram] card tap failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
         return;
       }
 
@@ -2005,6 +2017,8 @@ export class TelegramAdapter
       );
       return { ok: true, messageId: input.messageTs };
     } catch (err) {
+      // D14: the decision text is already on screen.
+      if (isNotModifiedTelegramError(err)) return { ok: true, messageId: input.messageTs };
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -2210,6 +2224,20 @@ export class TelegramAdapter
    * (D10); the adapter adds no dedup of its own. Pinned by `__tests__/live-card.test.ts`.
    */
   private async handleCardTap(event: CallbackQueryEvent, isDm: boolean): Promise<void> {
+    try {
+      await this.settleCardTap(event, isDm);
+    } catch (err) {
+      this.logger?.warn(
+        `[telegram] card tap failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await event.answer('Something went wrong — type the request instead.');
+    }
+  }
+
+  // Limitation (D16): admission is the gateway's and runs after this. A group member the gateway
+  // will not admit still spends the card here, so the buttons settle and no turn runs. There is
+  // no admission pre-check by design; see docs/content/building/reference/card-catalog-telegram.md.
+  private async settleCardTap(event: CallbackQueryEvent, isDm: boolean): Promise<void> {
     const parsed = parseCardCallback(event.data);
     if (!parsed) {
       await event.answer('Unrecognised button.');

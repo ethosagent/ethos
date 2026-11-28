@@ -142,3 +142,22 @@ describe('TelegramAdapter.editMessage — message is not modified (D14)', () => 
     expect(mockApi.editMessageText).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('TelegramAdapter.updateApprovalCard — message is not modified (D14)', () => {
+  beforeEach(resetMocks);
+
+  it('reports ok:true when the entity-linked decision edit is already on screen', async () => {
+    mockApi.editMessageText.mockRejectedValueOnce(new Error(NOT_MODIFIED));
+    const adapter = await startAdapter();
+
+    const res = await adapter.updateApprovalCard({
+      chatId: '77',
+      messageTs: '500',
+      toolName: 'terminal',
+      decision: 'allow',
+      decidedBy: '200',
+    });
+
+    expect(res).toEqual({ ok: true, messageId: '500' });
+  });
+});
