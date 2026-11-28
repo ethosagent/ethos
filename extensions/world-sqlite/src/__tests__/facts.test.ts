@@ -170,6 +170,15 @@ describe('SQLiteWorldGraphProvider — facts', () => {
     });
   });
 
+  it('close of an entity id is refused with a typed result, not a throw', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const r = await store.close(W, priya, d(5), 'x', 'user');
+    expect(r).toMatchObject({ ok: false, code: 'not_found' });
+    expect(rawDb().prepare('SELECT retired_at FROM entities WHERE id = ?').get(priya)).toEqual({
+      retired_at: null,
+    });
+  });
+
   it('retire of an entity in another world is not_found', async () => {
     const priya = await addEntity('Person', 'Priya');
     expect(await store.retire('world:other', priya, 'x', 'user')).toMatchObject({

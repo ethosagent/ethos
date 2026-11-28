@@ -454,7 +454,9 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     if (!isIso(validTo))
       return { ok: false, code: 'invalid', reason: `'${validTo}' is not a date` };
     const found = this.findFact(world, factId);
-    if (!found) return { ok: false, code: 'not_found', reason: `fact ${factId} not found` };
+    // Entities have no valid_to; they are retired, not closed.
+    if (!found || found.table === 'entities')
+      return { ok: false, code: 'not_found', reason: `fact ${factId} not found` };
     if (found.retired_at !== null) {
       return { ok: false, code: 'closed', reason: `fact ${factId} is retired` };
     }
