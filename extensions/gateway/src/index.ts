@@ -120,6 +120,7 @@ import {
   EMPTY_COMPLETION_CODE,
   EMPTY_REPLY_NOTICE,
   emptyCompletionNotice,
+  GROUP_MIN_EDIT_INTERVAL_MS,
   INCOGNITO_REFUSED_TEXT,
   initiatorFor,
   isClarifySurfaceType,
@@ -3904,7 +3905,9 @@ export class Gateway {
               inboundId: replyScope.inboundId,
               ...(streamDelivery ? { delivery: streamDelivery } : {}),
               ...(bot.replyPrefix ? { prefixBody: prefixReply } : {}),
-              minEditIntervalMs: this.streamingEditIntervalMs,
+              minEditIntervalMs: message.isDm
+                ? this.streamingEditIntervalMs
+                : Math.max(this.streamingEditIntervalMs, GROUP_MIN_EDIT_INTERVAL_MS),
               silentHold: () => roomSilent,
               onFloodDisable: () => {
                 this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);

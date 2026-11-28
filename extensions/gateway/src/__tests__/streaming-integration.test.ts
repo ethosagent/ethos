@@ -92,6 +92,52 @@ function gatewayWith(loop: ReturnType<typeof loopYielding>, extra = {}) {
   });
 }
 
+// plan telegram-live-cards D15 — Telegram allows a group about 20 messages a minute, so a
+// group draft never edits faster than 3 s apart, whatever `streamingEditIntervalMs` says.
+describe('gateway group draft-edit clamp (D15)', () => {
+  // A macro-task gap between events lets each fire-and-forget flush settle, so the throttle (not
+  // coalescing) decides how many edits land.
+  const spacedLoop = (events: AgentEvent[]) => ({
+    run: vi.fn(async function* () {
+      for (const e of events) {
+        await new Promise((r) => setTimeout(r, 5));
+        yield e;
+      }
+    }),
+    hooks: { registerVoid: vi.fn().mockReturnValue(() => {}) },
+  });
+  const deltas: AgentEvent[] = [
+    { type: 'text_delta', text: 'a' },
+    { type: 'text_delta', text: 'b' },
+    { type: 'text_delta', text: 'c' },
+    { type: 'done', text: 'abc', turnCount: 1 },
+  ];
+
+  it('throttles intermediate edits in a group even when the interval is configured to 0', async () => {
+    const gw = gatewayWith(spacedLoop(deltas) as unknown as ReturnType<typeof loopYielding>, {
+      streamingEdits: { dm: true, group: true },
+    });
+    const adapter = editAdapter();
+
+    await gw.handleMessage(msg({ isDm: false, isGroupMention: true }), adapter);
+
+    // First chunk sends; 'ab' and 'abc' are inside the 3 s window, so only finalize() edits.
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+    expect(adapter.edits.map((e) => e.text)).toEqual(['abc']);
+  });
+
+  it('leaves the DM interval alone', async () => {
+    const gw = gatewayWith(spacedLoop(deltas) as unknown as ReturnType<typeof loopYielding>, {
+      streamingEdits: { dm: true, group: true },
+    });
+    const adapter = editAdapter();
+
+    await gw.handleMessage(msg({ isDm: true }), adapter);
+
+    expect(adapter.edits.map((e) => e.text)).toEqual(['ab', 'abc']);
+  });
+});
+
 describe('gateway streaming draft edits (W3.1)', () => {
   it('delivers first chunk via send and the final via editMessage — no duplicate send', async () => {
     const loop = loopYielding([

@@ -87,6 +87,14 @@ export function isClarifySurfaceType(platform: string): platform is ClarifySurfa
 export const CHANNEL_EXCLUDED_TOOLS: readonly string[] = ['emit_card', 'render_ui'];
 
 /**
+ * Floor, in ms, for the gap between draft edits in a GROUP chat, on every platform. Telegram
+ * allows about 20 messages a minute per group, which a 2500 ms cadence exceeds (plan
+ * telegram-live-cards D15). Applied in `Gateway.runTurn`; pinned by the clamp cases in
+ * `__tests__/streaming-integration.test.ts`.
+ */
+export const GROUP_MIN_EDIT_INTERVAL_MS = 3000;
+
+/**
  * §4.6 rung 3 — how often the escalation sweep looks for a question that has
  * been unanswered past `clarifyEscalationDelayMs`. Deliberately much shorter
  * than the rung itself: the poll period is the sweep's error bar, so a 60 s

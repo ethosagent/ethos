@@ -629,6 +629,16 @@ function telegramTokenRejected(err: unknown): Error & { permanent: true } {
   });
 }
 
+/**
+ * Telegram's 400 for an edit whose text and markup equal what is on screen.
+ * The content is already there, so callers treat it as success (plan
+ * telegram-live-cards D14; pinned by `__tests__/edit-not-modified.test.ts`).
+ */
+export function isNotModifiedTelegramError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  return /message is not modified/i.test(message);
+}
+
 /** `{ ok: false }` for a failed Bot API call, marked `permanent` when it is. */
 function telegramFailure(err: unknown): DeliveryResult {
   const error = err instanceof Error ? err.message : String(err);
@@ -1794,9 +1804,14 @@ export class TelegramAdapter
       const updatedIds = await reflowChunks(newChunks, existingIds, {
         edit: async (id, chunk) => {
           const body = useHtml ? markdownToTelegramHtml(chunk) : chunk;
-          await this.bot.api.editMessageText(Number(chatId), Number(id), body, {
-            ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
-          });
+          try {
+            await this.bot.api.editMessageText(Number(chatId), Number(id), body, {
+              ...(useHtml ? { parse_mode: 'HTML' as const } : {}),
+            });
+          } catch (err) {
+            // D14: already on screen is success, not a failed delivery.
+            if (!isNotModifiedTelegramError(err)) throw err;
+          }
           return id;
         },
         append: async (chunk) => {
