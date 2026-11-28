@@ -330,6 +330,33 @@ describe('write routing', () => {
     expect(promoted?.sourceRef).toBe(`promoted:${edge.id}`);
   });
 
+  it('closeFact, promoteToUser and ownerClose look a fact up with getFact, never export', async () => {
+    h.provider.export = async () => {
+      throw new Error('export must not be called to find one fact');
+    };
+    const svc = h.provider.seedEntity(PRIVATE, 'Service', 'billing-svc');
+    const ravi = h.provider.seedEntity(PRIVATE, 'Person', 'Ravi');
+    const toClose = h.provider.seedEdge(PRIVATE, 'owns', ravi.id, svc.id, { author: 'agent' });
+    const toPromote = h.provider.seedEdge(PRIVATE, 'owns', ravi.id, svc.id, { author: 'agent' });
+    const toOwnerClose = h.provider.seedEdge(PRIVATE, 'owns', ravi.id, svc.id, { author: 'agent' });
+
+    const closed = await h.service.closeFact(
+      caller(),
+      'private',
+      toClose.id,
+      '2026-11-01',
+      'chat:5',
+    );
+    expect(closed.applied).toEqual([toClose.id]);
+    const promoted = await h.service.promoteToUser(PRIVATE, toPromote.id, 'owner');
+    expect(promoted.applied).toHaveLength(1);
+    const owner = await h.service.ownerClose(PRIVATE, toOwnerClose.id, '2026-11-02', 'owner');
+    expect(owner.applied).toEqual([toOwnerClose.id]);
+    // A closed fact is still found, so the refusal says "closed", not "not_found".
+    const again = await h.service.ownerClose(PRIVATE, toOwnerClose.id, '2026-11-03', 'owner');
+    expect(again.refused[0]?.reason).toContain('closed');
+  });
+
   it('rejectProposal tombstones, so the same write is not proposed again', async () => {
     const first = await h.service.writeFacts(caller(), 'acme', [ent('Person', 'Ravi')], '');
     const id = first.proposed[0] ?? '';

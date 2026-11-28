@@ -422,6 +422,11 @@ export class FakeWorldGraphProvider implements WorldGraphProvider {
     return rows.sort((a, b) => a.at.localeCompare(b.at)).slice(0, limit);
   }
 
+  async getFact(world: WorldId, factId: string): Promise<AttributeFact | Edge | null> {
+    const h = this.held(world);
+    return [...h.attributes, ...h.edges].find((f) => f.id === factId) ?? null;
+  }
+
   async import(): Promise<ImportReport> {
     return { entities: 0, attributes: 0, edges: 0, skipped: [] };
   }

@@ -56,7 +56,7 @@ The deny list costs no feature. An agent never needs a file tool for the graph: 
 | Change | Why | Gate | Task |
 |---|---|---|---|
 | New contract file `packages/types/src/world-graph.ts` | Pluggable backends need a stable surface; `MemoryProvider` is key/value text and is frozen. | §VI Structural (new contract type): RFC + unanimous maintainers | 0.1, 1.1 |
-| `WorldGraphProvider` on the §VII roster with a method-count gate | Neo4j, Graphiti and Kuzu adapters are written against it. | §VII roster row; O-8. Gate: `packages/types/src/__tests__/world-graph-method-count.test.ts`, `'world-graph method count is 13'` (lands in Task 1.1) | 0.1, 1.1 |
+| `WorldGraphProvider` on the §VII roster with a method-count gate | Neo4j, Graphiti and Kuzu adapters are written against it. | §VII roster row; O-8. Gate: `packages/types/src/__tests__/world-graph-method-count.test.ts`, `'world-graph method count is 14'` (lands in Task 1.1) | 0.1, 1.1 |
 | `'worlds'` in `STATE_DIR_DENY_ENTRIES` | No turn reads or writes `schema.yaml`, `world.yaml`, `graph.db` or `service.db` raw. | Security kernel (`packages/storage-fs`); Law 11 | 2.5 |
 | `'worlds.yaml'` in `PERSONALITY_DEFINITION_ENTRIES` | A personality cannot mount worlds by writing its own sidecar. | Safety module in `packages/types`; Law 7, Law 11 | 2.5 |
 | `UsageSourceKind += 'world_extract'` | Extraction spend shows under its own source. | `packages/types` change (O-6) | 6.2 |
@@ -99,11 +99,11 @@ The conflict between the world tools and S1 is also resolved: Option A, ordinary
 
 **Positive.** A new knowledge shape arrives without widening trust. A backend can only store and query, so a bad or third-party adapter cannot accept proposals or skip the audience rule. The deny list and the definition floor close the two file-tool paths to the graph's configuration.
 
-**Costs.** Two safety-path edits need maintainer review and a documented test. A frozen 13-method contract is harder to change than an unfrozen one (O-8): a fourteenth method needs an amendment. Every tool call takes a hop through `WorldService`.
+**Costs.** Two safety-path edits need maintainer review and a documented test. A frozen 14-method contract is harder to change than an unfrozen one (O-8): a fifteenth method needs an amendment. Every tool call takes a hop through `WorldService`.
 
 **Migration: none required.** With `world.enabled` off no world code runs, and every turn behaves as it does today. No existing module becomes non-compliant.
 
-**Known limits.** The tests named above do not exist yet. The 13-method gate lands with the type in Task 1.1; before then the count is a plan. `world_build` cannot see the user's yes (O-11).
+**Known limits.** The tests named above do not exist yet. The 14-method gate lands with the type in Task 1.1; before then the count is a plan. `world_build` cannot see the user's yes (O-11).
 
 ## Approvals
 

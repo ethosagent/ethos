@@ -1,18 +1,24 @@
-// World graph contract — the 13-method `WorldGraphProvider` plus the fact,
+// World graph contract — the 14-method `WorldGraphProvider` plus the fact,
 // schema and query shapes it speaks.
 //
-// STATUS: this contract is on the ARCHITECTURE.md §VII roster under O-8,
-// pending maintainer approval of the RFC
-// docs/content/building/explanation/world-graph-governance.md.
+// STATUS: PROPOSED. This contract is on the ARCHITECTURE.md §VII roster under
+// O-8, pending maintainer approval of the RFC
+// docs/content/building/explanation/world-graph-governance.md. The freeze
+// below takes effect only on that approval.
 //
-// The contract is FROZEN at thirteen methods. Adding, removing or renaming
+// The contract is FROZEN at fourteen methods. Adding, removing or renaming
 // one requires the drift gate in __tests__/world-graph-method-count.test.ts
-// (test 'world-graph method count is 13') to be updated in the same commit.
+// (test 'world-graph method count is 14') to be updated in the same commit.
 // That test is what enforces the count.
 //
 // Zero dependencies: only `import type` from sibling contract files, and no
 // `node:*` import (pinned by __tests__/world-graph-types.test.ts, test
 // 'no node:* import in world-graph.ts').
+//
+// `getFact` is the by-id read: the attribute or edge with that id in that
+// world in any state (closed and retired included), null when absent or in
+// another world. WorldService uses it so closing or promoting one fact does
+// not read the whole world through `export`.
 //
 // A provider is reached only through WorldService / WorldSchemaService;
 // those, not the backend, enforce proposals, access, authority and conflicts.
@@ -210,6 +216,8 @@ export interface WorldGraphProvider {
     sourceRef: string,
     author: FactAuthor,
   ): Promise<WriteResult>;
+  /** One attribute or edge by id, in any state (closed, retired); null if absent or in another world. */
+  getFact(world: WorldId, factId: string): Promise<AttributeFact | Edge | null>;
   getSchema(world: WorldId): Promise<WorldSchema | null>;
   applySchema(world: WorldId, schema: WorldSchema): Promise<WriteResult>;
   import(world: WorldId, data: GraphBundle): Promise<ImportReport>;

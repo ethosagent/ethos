@@ -664,8 +664,8 @@ frozen_schemas:
   world_graph:
     owner_class: any_two_maintainers
     drift_gate: method_count_test
-    frozen_method_count: 13
-    frozen_methods: [query, neighbours, history, changes, assert, close, retire, getSchema, applySchema, import, export, purge, capabilities]
+    frozen_method_count: 14
+    frozen_methods: [query, neighbours, history, changes, assert, close, retire, getFact, getSchema, applySchema, import, export, purge, capabilities]
 
   pause_lifecycle:
     owner_class: any_two_maintainers

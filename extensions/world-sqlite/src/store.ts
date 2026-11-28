@@ -517,6 +517,18 @@ export class SQLiteWorldGraphProvider implements WorldGraphProvider {
     return null;
   }
 
+  /** Primary-key lookup in `attributes`, then `edges`; any state, scoped to `world`. */
+  async getFact(world: WorldId, factId: string): Promise<AttributeFact | Edge | null> {
+    const attr = this.db
+      .prepare(`SELECT ${ATTRIBUTE_COLS} FROM attributes WHERE world = ? AND id = ?`)
+      .get(world, factId) as AttributeRow | undefined;
+    if (attr) return this.toAttribute(attr);
+    const edge = this.db
+      .prepare(`SELECT ${EDGE_COLS} FROM edges WHERE world = ? AND id = ?`)
+      .get(world, factId) as EdgeRow | undefined;
+    return edge ? this.toEdge(edge) : null;
+  }
+
   async import(world: WorldId, data: GraphBundle): Promise<ImportReport> {
     const report: ImportReport = { entities: 0, attributes: 0, edges: 0, skipped: [] };
     const schema = await this.getSchema(world);

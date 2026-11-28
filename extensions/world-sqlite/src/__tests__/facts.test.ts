@@ -296,6 +296,69 @@ describe('SQLiteWorldGraphProvider — facts', () => {
     expect(facts.attributes.every((a) => a.validTo === null)).toBe(true);
   });
 
+  it('getFact returns a live attribute, a live edge, a closed edge and a retired attribute', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const billing = await addEntity('Service', 'Billing');
+    const attr = await store.assert(W, [
+      {
+        kind: 'attribute',
+        entityId: priya,
+        key: 'location',
+        value: 'Pune',
+        sourceRef: 'test',
+        author: 'user',
+        confidence: 1,
+      },
+      {
+        kind: 'attribute',
+        entityId: priya,
+        key: 'age',
+        value: 30,
+        sourceRef: 'test',
+        author: 'user',
+        confidence: 1,
+      },
+    ]);
+    if (!attr.ok) throw new Error(attr.reason);
+    const [locId, ageId] = attr.ids as [string, string];
+    const live = await addEdge('owns', priya, billing);
+    const closing = await addEdge('owns', priya, billing);
+    if (!live.ok || !closing.ok) throw new Error('edge');
+    await store.close(W, closing.ids[0] as string, d(5), 'handover', 'user');
+    await store.retire(W, ageId, 'oops', 'user');
+
+    expect(await store.getFact(W, locId)).toMatchObject({
+      id: locId,
+      key: 'location',
+      value: 'Pune',
+      validTo: null,
+      retiredAt: null,
+    });
+    expect(await store.getFact(W, live.ids[0] as string)).toMatchObject({
+      id: live.ids[0],
+      type: 'owns',
+      fromId: priya,
+      toId: billing,
+      validTo: null,
+    });
+    expect(await store.getFact(W, closing.ids[0] as string)).toMatchObject({
+      id: closing.ids[0],
+      validTo: d(5),
+    });
+    const retired = await store.getFact(W, ageId);
+    expect(retired).toMatchObject({ id: ageId, key: 'age' });
+    expect(retired?.retiredAt).not.toBeNull();
+  });
+
+  it('getFact is null for an unknown id and for an id from another world', async () => {
+    const priya = await addEntity('Person', 'Priya');
+    const billing = await addEntity('Service', 'Billing');
+    const edge = await addEdge('owns', priya, billing);
+    if (!edge.ok) throw new Error(edge.reason);
+    expect(await store.getFact(W, 'r-missing')).toBeNull();
+    expect(await store.getFact('world:other', edge.ids[0] as string)).toBeNull();
+  });
+
   it('import then export round-trips and skips misfits', async () => {
     const priya = await addEntity('Person', 'Priya');
     const billing = await addEntity('Service', 'Billing');

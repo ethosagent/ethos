@@ -107,7 +107,6 @@ The proposal queue costs your attention. That is the point on a shared world, bu
 | Entity retype | Renaming or merging an entity type leaves the old rows in the store under a type the schema no longer lists, and undo is refused after it. |
 | Purge and share links | Purging a world does not revoke its share links. |
 | Share views | A snapshot link shows the tree or graph, not a single entity. |
-| Lookup cost | Closing or promoting a fact finds it by scanning the world export, which is slow on very large worlds. |
 | Feeds and extraction | `world_extract` usage is not emitted yet; extraction is metered as memory capture. |
 | Ripple | A path is not causation. An edge with an unknown share counts as 1. |
 | CSV | Export prefixes cells starting with `=`, `+`, `-`, `@`, tab or CR with `'` so spreadsheets read them as text; import strips that prefix again. Import through an agent tool is not available; use `ethos world import` or the World page. |

@@ -2,7 +2,7 @@
 //
 // Reads the source of `world-graph.ts`, extracts the body of the
 // `WorldGraphProvider` interface, and asserts the method names are exactly
-// the thirteen contract methods. A PR that adds, removes or renames a method
+// the fourteen contract methods. A PR that adds, removes or renames a method
 // without updating this list fails the gate. Mirrors memory-method-count.test.ts.
 
 import { readFileSync } from 'node:fs';
@@ -19,6 +19,7 @@ const EXPECTED = [
   'assert',
   'close',
   'retire',
+  'getFact',
   'getSchema',
   'applySchema',
   'import',
@@ -84,9 +85,9 @@ function extractMethods(src: string): string[] {
 }
 
 describe('WorldGraphProvider method-count gate', () => {
-  it('world-graph method count is 13', () => {
+  it('world-graph method count is 14', () => {
     const methods = extractMethods(readFileSync(SOURCE, 'utf-8'));
-    expect(methods).toHaveLength(13);
+    expect(methods).toHaveLength(14);
     expect(methods).toEqual(EXPECTED);
   });
 });

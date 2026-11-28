@@ -35,9 +35,6 @@
 //     unique-edge set'.
 //
 // LIMITATIONS (no enforcer, stated):
-//   - `WorldGraphProvider` has no lookup of a fact by id, so `closeFact` and
-//     `promoteToUser` find the fact by reading `export(world)`; the cost grows
-//     with the size of the world.
 //   - Every fact is asserted on its own (one provider call per fact) so a
 //     refusal is reported per fact; the backend's batch atomicity is not used.
 //   - `exportBundle` reads `provider.export` behind the same `visible` check
@@ -624,8 +621,7 @@ export class WorldService {
     world: WorldId,
     factId: string,
   ): Promise<(AttributeFact | Edge) | null> {
-    const bundle = await provider.export(world);
-    return [...bundle.attributes, ...bundle.edges].find((f) => f.id === factId) ?? null;
+    return provider.getFact(world, factId);
   }
 
   async requestSchemaChange(

@@ -10,7 +10,7 @@ Single entry point, `src/index.ts` (the only `exports` key in `package.json` is 
 
 | Export | Kind | One line |
 |---|---|---|
-| `SQLiteWorldGraphProvider` | class | The full 13-method `WorldGraphProvider`, opened on a database path. `dispose()` releases the handle; `close(...)` is the contract's fact-closing method. |
+| `SQLiteWorldGraphProvider` | class | The full 14-method `WorldGraphProvider`, opened on a database path. `dispose()` releases the handle; `close(...)` is the contract's fact-closing method. |
 | `worldGraphDbPath` | function | `<dataDir>/worlds/graph.db`. |
 | `WorldGraphStoreOptions` | interface | Optional clock and `onError` sink. |
 

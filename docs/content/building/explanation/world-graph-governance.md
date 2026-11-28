@@ -1,6 +1,6 @@
 ---
 title: "Why is the world graph a new contract type?"
-description: "RFC for the Structural amendment adding WorldGraphProvider: a typed, time-aware graph contract beside MemoryProvider, with a 13-method drift gate."
+description: "RFC for the Structural amendment adding WorldGraphProvider: a typed, time-aware graph contract beside MemoryProvider, with a 14-method drift gate."
 kind: explanation
 audience: developer
 slug: world-graph-governance
@@ -56,7 +56,7 @@ neither contract imports the other.
 ### What the amendment adds
 
 The contract is `WorldGraphProvider` in `packages/types/src/world-graph.ts`,
-a file with zero imports like every other contract module. Its surface is 13
+a file with zero imports like every other contract module. Its surface is 14
 methods:
 
 ```ts
@@ -69,6 +69,7 @@ export interface WorldGraphProvider {
   assert(world: WorldId, facts: FactInput[]): Promise<WriteResult>;
   close(world: WorldId, factId: string, validTo: string, sourceRef: string, author: FactAuthor): Promise<WriteResult>;
   retire(world: WorldId, factId: string, sourceRef: string, author: FactAuthor): Promise<WriteResult>;
+  getFact(world: WorldId, factId: string): Promise<AttributeFact | Edge | null>;
   getSchema(world: WorldId): Promise<WorldSchema | null>;
   applySchema(world: WorldId, schema: WorldSchema): Promise<WriteResult>;
   import(world: WorldId, data: GraphBundle): Promise<ImportReport>;
@@ -78,7 +79,7 @@ export interface WorldGraphProvider {
 }
 ```
 
-There are four reads, three fact writes, two schema methods and four
+There are five reads (`getFact` among them), three fact writes, two schema methods and four
 lifecycle methods. The first backend is `extensions/world-sqlite`: STRICT
 tables, recursive CTEs for hops and FTS5 for names.
 
@@ -87,13 +88,13 @@ The amendment changes ARCHITECTURE.md in two places:
 | Section | Change |
 |---|---|
 | §VII | A roster row for the World graph contract, owned by any two repository maintainers (the same owner as Memory), bumped by adding, removing or renaming a method on `WorldGraphProvider`, gated by `world-graph-method-count`. |
-| §IX | A `frozen_schemas.world_graph` entry: `frozen_method_count: 13` and the method list. |
+| §IX | A `frozen_schemas.world_graph` entry: `frozen_method_count: 14` and the method list. |
 
 The drift gate is `packages/types/src/__tests__/world-graph-method-count.test.ts`,
-test `'world-graph method count is 13'`. It lands in Task 1.1 with the type,
+test `'world-graph method count is 14'`. It lands in Task 1.1 with the type,
 the way `decision-provider-method-count.test.ts` landed with
-`DecisionProvider`. Until that test exists and passes, the 13-method freeze
-is planned, not a guarantee. After it lands, a fourteenth method fails on
+`DecisionProvider`. Until that test exists and passes, the 14-method freeze
+is planned, not a guarantee. After it lands, a fifteenth method fails on
 both halves: the source and the manifest.
 
 ### What stays above the contract, and why
@@ -181,12 +182,12 @@ slower than the two-maintainer sign-off an additive change gets. The cost
 buys a surface that a third-party adapter can be written against without it
 shifting underneath.
 
-**Thirteen methods is more than the other contracts.** `DecisionProvider` has
+**Fourteen methods is more than the other contracts.** `DecisionProvider` has
 one, `MemoryProvider` five. The graph needs reads over time, three distinct
 write verbs (assert, close, retire) so history is never lost, schema
-handling and bulk transfer. Fewer methods would push those into the service
+handling and bulk transfer. `getFact` (get by id) earned its slot because closing or promoting one fact must not read the whole world through `export`. Fewer methods would push those into the service
 layer, where a backend could not optimise them (a graph database traverses
-hops natively; a recursive CTE is the SQLite answer). The 13-method gate
+hops natively; a recursive CTE is the SQLite answer). The 14-method gate
 makes the growth deliberate.
 
 **Freezing before a second backend exists.** Open decision O-8 puts the

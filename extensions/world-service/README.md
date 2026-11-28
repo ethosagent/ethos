@@ -62,7 +62,8 @@ Guarantees and what pins them:
 - Mount `world:` is the slug (`acme`), not `world:acme`.
 - Limitation: `WorldGraphProvider` cannot retire or retype an entity, so renaming or merging an entity type re-asserts the entities under the new type and moves their attributes and edges, but the old entity rows remain in the backend under a type the schema no longer lists.
 - `undoLast` is refused after a rename or merge (facts were rewritten); apply the inverse change instead.
-- Limitations: `closeFact` and `promoteToUser` find a fact by reading `export(world)` (the contract has no lookup by id), each fact is asserted on its own, and an imported bundle carries live facts only (`FactInput` has no `validTo`).
+- Fact lookup: `closeFact`, `promoteToUser` and `ownerClose` find the fact with `WorldGraphProvider.getFact` (any state, so a closed fact is refused as closed, not missing), never `export`; pinned by `write-routing.test.ts` 'closeFact, promoteToUser and ownerClose look a fact up with getFact, never export'.
+- Limitations: each fact is asserted on its own, and an imported bundle carries live facts only (`FactInput` has no `validTo`).
 
 ## Known limits
 
