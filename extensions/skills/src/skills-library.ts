@@ -1,7 +1,8 @@
 import { join } from 'node:path';
-import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
+import { assertSafeId, BoundaryError, EthosError, type Storage } from '@ethosagent/types';
 import { parseEthosRequires } from './dialects/ethos-namespace';
 import { checkRequirements, parseSkillFrontmatter } from './skill-compat';
+import { SkillHistory } from './skill-history';
 
 // CRUD over the markdown-skill files under ~/.ethos/skills/ (global) and
 // ~/.ethos/personalities/<id>/skills/ (per-personality). Sits alongside
@@ -52,6 +53,12 @@ export interface SkillsLibraryOptions {
    * code. When omitted, the tools gate is skipped (availability unknown).
    */
   availableTools?: () => Set<string>;
+  /**
+   * The single writer of live flat-skill bytes and their history. Built from
+   * `storage` + `dataDir` when omitted. Every write below goes through it, so no
+   * human write leaves the timeline blind.
+   */
+  history?: SkillHistory;
 }
 
 export class SkillsLibrary {
@@ -61,6 +68,7 @@ export class SkillsLibrary {
   private readonly catalogDir: string | null;
   private readonly availableTools: (() => Set<string>) | null;
   private catalogIndex: Map<string, string> | null = null;
+  readonly history: SkillHistory;
 
   constructor(opts: SkillsLibraryOptions) {
     this.storage = opts.storage;
@@ -68,11 +76,41 @@ export class SkillsLibrary {
     this.personalitiesDir = join(opts.dataDir, 'personalities');
     this.catalogDir = opts.catalogDir ?? null;
     this.availableTools = opts.availableTools ?? null;
+    this.history =
+      opts.history ?? new SkillHistory({ storage: opts.storage, dataDir: opts.dataDir });
+  }
+
+  /** Absolute path of a flat skill: global, or the personality's when `personalityId` is given. */
+  skillPath(skillId: string, personalityId?: string): string {
+    assertSafeId(skillId, 'skillId');
+    if (personalityId === undefined) return join(this.skillsDir, `${skillId}.md`);
+    assertSafeId(personalityId, 'personalityId');
+    return join(this.personalitySkillsDir(personalityId), `${skillId}.md`);
   }
 
   /** Absolute path to the directory holding live (global) skills. */
   getSkillsDir(): string {
     return this.skillsDir;
+  }
+
+  /**
+   * What the Skills page shows beside a skill: its lock and how many versions
+   * exist. A file whose name is not a safe skill id (`v1.2 notes.md`) has no
+   * history, so it reports zero instead of failing the whole listing.
+   */
+  async historySummary(
+    skillId: string,
+    personalityId?: string,
+  ): Promise<{ locked: boolean; versionCount: number }> {
+    const dir =
+      personalityId === undefined ? this.skillsDir : this.personalitySkillsDir(personalityId);
+    const dest = join(dir, `${skillId}.md`);
+    try {
+      return await this.history.summary(dest);
+    } catch (err) {
+      if (err instanceof BoundaryError) return { locked: false, versionCount: 0 };
+      throw err;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -106,7 +144,6 @@ export class SkillsLibrary {
 
   async createSkill(id: string, body: string): Promise<SkillRecord> {
     assertSafeId(id, 'skillId');
-    await this.storage.mkdir(this.skillsDir);
     const path = join(this.skillsDir, `${id}.md`);
     if (await this.storage.exists(path)) {
       throw new EthosError({
@@ -115,7 +152,7 @@ export class SkillsLibrary {
         action: 'Pick a different id or open the existing skill to edit it.',
       });
     }
-    await this.storage.write(path, ensureTrailingNewline(body));
+    await this.history.writeHuman(path, ensureTrailingNewline(body), WEB_EDIT);
     const created = await this.readGlobal(`${id}.md`);
     if (!created) throw new Error(`createSkill: failed to read back ${id}`);
     return created;
@@ -125,7 +162,7 @@ export class SkillsLibrary {
     assertSafeId(id, 'skillId');
     const path = join(this.skillsDir, `${id}.md`);
     if (!(await this.storage.exists(path))) throw notFoundGlobal(id);
-    await this.storage.write(path, ensureTrailingNewline(body));
+    await this.history.writeHuman(path, ensureTrailingNewline(body), WEB_EDIT);
     const updated = await this.readGlobal(`${id}.md`);
     if (!updated) throw new Error(`updateSkill: failed to read back ${id}`);
     return updated;
@@ -135,7 +172,7 @@ export class SkillsLibrary {
     assertSafeId(id, 'skillId');
     const path = join(this.skillsDir, `${id}.md`);
     if (!(await this.storage.exists(path))) throw notFoundGlobal(id);
-    await this.storage.remove(path);
+    await this.history.writeHuman(path, null, WEB_EDIT);
   }
 
   // The pending queue that used to live here (`listPending` / `approvePending` /
@@ -180,7 +217,6 @@ export class SkillsLibrary {
     assertSafeId(personalityId, 'personalityId');
     assertSafeId(skillId, 'skillId');
     const dir = this.personalitySkillsDir(personalityId);
-    await this.storage.mkdir(dir);
     const path = join(dir, `${skillId}.md`);
     if (await this.storage.exists(path)) {
       throw new EthosError({
@@ -189,7 +225,7 @@ export class SkillsLibrary {
         action: 'Pick a different id or open the existing skill to edit it.',
       });
     }
-    await this.storage.write(path, ensureTrailingNewline(body));
+    await this.history.writeHuman(path, ensureTrailingNewline(body), WEB_EDIT);
     const created = await this.readPersonalitySkill(dir, `${skillId}.md`);
     if (!created) throw new Error(`createPersonalitySkill: failed to read back ${skillId}`);
     return created;
@@ -205,7 +241,7 @@ export class SkillsLibrary {
     const dir = this.personalitySkillsDir(personalityId);
     const path = join(dir, `${skillId}.md`);
     if (!(await this.storage.exists(path))) throw notFoundPersonality(skillId);
-    await this.storage.write(path, ensureTrailingNewline(body));
+    await this.history.writeHuman(path, ensureTrailingNewline(body), WEB_EDIT);
     const updated = await this.readPersonalitySkill(dir, `${skillId}.md`);
     if (!updated) throw new Error(`updatePersonalitySkill: failed to read back ${skillId}`);
     return updated;
@@ -216,7 +252,7 @@ export class SkillsLibrary {
     assertSafeId(skillId, 'skillId');
     const path = join(this.personalitySkillsDir(personalityId), `${skillId}.md`);
     if (!(await this.storage.exists(path))) throw notFoundPersonality(skillId);
-    await this.storage.remove(path);
+    await this.history.writeHuman(path, null, WEB_EDIT);
   }
 
   /**
@@ -232,7 +268,6 @@ export class SkillsLibrary {
     assertSafeId(personalityId, 'personalityId');
     for (const sid of skillIds) assertSafeId(sid, 'skillId');
     const dir = this.personalitySkillsDir(personalityId);
-    await this.storage.mkdir(dir);
     const imported: PersonalitySkillRecord[] = [];
     for (const skillId of skillIds) {
       const sourceRaw = await this.resolveSkillContent(skillId);
@@ -243,7 +278,10 @@ export class SkillsLibrary {
           action: 'Use listSkills() to see what is available.',
         });
       }
-      await this.storage.write(join(dir, `${skillId}.md`), sourceRaw);
+      await this.history.writeHuman(join(dir, `${skillId}.md`), sourceRaw, {
+        source: 'web-import',
+        actor: 'web',
+      });
       const created = await this.readPersonalitySkill(dir, `${skillId}.md`);
       if (created) imported.push(created);
     }
@@ -402,6 +440,8 @@ export class SkillsLibrary {
     return this.storage.read(systemPath);
   }
 }
+
+const WEB_EDIT = { source: 'web-edit', actor: 'web' } as const;
 
 function ensureTrailingNewline(s: string): string {
   return s.endsWith('\n') ? s : `${s}\n`;

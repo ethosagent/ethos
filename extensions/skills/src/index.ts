@@ -45,6 +45,19 @@ export {
   shouldInject,
 } from './skill-compat';
 export {
+  type AgentWriteMeta,
+  type AgentWriteResult,
+  diffSkillVersions,
+  SKILL_HISTORY_KEEP,
+  SKILL_VERSION_SOURCES,
+  SkillHistory,
+  type SkillHistoryOptions,
+  type SkillVersion,
+  type SkillVersionSource,
+  type SkillWriteMeta,
+  skillHistoryPromotePorts,
+} from './skill-history';
+export {
   type ResolvedSkill,
   SkillsInjector,
   type SkillsInjectorOptions,

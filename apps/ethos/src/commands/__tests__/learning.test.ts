@@ -7,11 +7,13 @@ import { join } from 'node:path';
 import {
   REPLAY_LIMITATIONS,
   type ReplayReport,
+  readCandidate,
   submitCandidate,
   updateCandidate,
   writeReplayRun,
 } from '@ethosagent/learning-inbox';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
+import { SkillHistory } from '@ethosagent/skills';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { createLearningInbox, type LearningInbox } from '@ethosagent/wiring';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -152,6 +154,26 @@ describe('ethos learning approve', () => {
     expect(code).toBe(1);
     expect(plain(err)).toContain(`ethos learning approve ${candidate.id} --override "<reason>"`);
     expect(await storage.exists(join(LIVE, 'cite-sources.md'))).toBe(false);
+  });
+
+  it('a locked skill is refused with the unlock hint, and the candidate keeps waiting', async () => {
+    const candidate = await submit();
+    await new SkillHistory({ storage, dataDir: DATA }).setLock(
+      join(LIVE, 'cite-sources.md'),
+      true,
+      'cli',
+    );
+    const code = await runLearningCommand(
+      ['approve', candidate.id, '--override', 'checked it by hand'],
+      inbox,
+      io,
+    );
+
+    expect(code).toBe(1);
+    expect(plain(err)).toContain('cite-sources is locked');
+    expect(plain(err)).toContain('ethos skills unlock cite-sources');
+    expect(await storage.exists(join(LIVE, 'cite-sources.md'))).toBe(false);
+    expect((await readCandidate(storage, DATA, candidate.id))?.status).toBe('pending_replay');
   });
 
   it('--override "<reason>" promotes it', async () => {

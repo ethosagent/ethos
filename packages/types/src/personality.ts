@@ -685,9 +685,9 @@ export interface PersonalityConfig {
      * both `skill_propose` tools — the fork's and the chat turn's
      * (`packages/wiring/src/compose-tools.ts`) — refuse a `targetFile`
      * (`SkillProposeTarget.evolveExisting`). The nightly drafter only creates.
-     * Absent = rewrites allowed. Pinned by
-     * `apps/ethos/src/commands/__tests__/skill-evolution-keys.test.ts` and, for
-     * the chat turn, `packages/wiring/src/__tests__/chat-skill-propose.test.ts`.
+     * Absent = rewrites allowed. One skill can be locked instead (`ethos skills lock`,
+     * enforced by `SkillHistory.writeAgentAuthored`). Pinned by `apps/ethos/src/commands/__tests__/skill-evolution-keys.test.ts`
+     * and, for the chat turn, `packages/wiring/src/__tests__/chat-skill-propose.test.ts`.
      */
     evolve_existing?: boolean;
     /**

@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 // must exercise the REAL gate, not a stand-in.
 import { vetPromotedSkill } from '../../../skills/src/promotion-vet';
 import { checkSkillFrontmatter } from '../../../skills/src/skill-compat';
+import { SkillHistory, skillHistoryPromotePorts } from '../../../skills/src/skill-history';
 import { readAudit } from '../audit';
 import {
   checkRollback,
@@ -29,6 +30,7 @@ const PERSONALITIES = join(DATA, 'personalities');
 
 let storage: InMemoryStorage;
 let registry: FilePersonalityRegistry;
+let history: SkillHistory;
 let scopes: Record<string, SkillScope | undefined>;
 let clock: number;
 const now = () => {
@@ -44,6 +46,7 @@ function deps(): PromoteDeps {
     skillScope: (pid) => scopes[pid],
     checkSkillFrontmatter,
     vetSkill: vetPromotedSkill,
+    ...skillHistoryPromotePorts(history),
     expressions: registry,
     now,
   };
@@ -89,6 +92,7 @@ beforeEach(async () => {
   scopes = {};
   clock = Date.parse('2026-09-13T00:00:00.000Z');
   registry = new FilePersonalityRegistry(storage, DATA);
+  history = new SkillHistory({ storage, dataDir: DATA, now });
 });
 
 describe('promote — skills', () => {
@@ -167,7 +171,10 @@ describe('promote — skills', () => {
 
     expect(result.ok).toBe(true);
     expect(await storage.read(target)).toBe(content);
-    const names = (await storage.listEntries(skillsDir)).map((e) => e.name);
+    // `.history/` is the skill's version timeline, invisible to loaders.
+    const names = (await storage.listEntries(skillsDir))
+      .map((e) => e.name)
+      .filter((n) => !n.startsWith('.'));
     expect(names).toEqual(['summarise.md']);
   });
 
@@ -288,6 +295,101 @@ describe('rollback — skills', () => {
     expect(result.ok === false && result.code).toBe('live_edited');
     expect(await storage.read(dest)).toBe(`${GOOD_SKILL}\nA human addition.\n`);
     expect((await readCandidate(storage, DATA, c.id))?.status).toBe('promoted');
+  });
+});
+
+describe('skill history and the per-skill lock', () => {
+  it('records a learning row with the candidate id on promote and a learning-rollback row on rollback', async () => {
+    const dest = join(DATA, 'skills', 'cite-sources.md');
+    const c = await submitSkill({ destination: dest, content: GOOD_SKILL });
+    expect((await promote(deps(), c.id, { actor: 'web' })).ok).toBe(true);
+
+    const afterPromote = await history.versions(dest);
+    expect(afterPromote.map((r) => r.source)).toEqual(['learning']);
+    expect(afterPromote[0]).toMatchObject({ candidateId: c.id, actor: 'web' });
+
+    expect((await rollback(deps(), c.id, { actor: 'web' })).ok).toBe(true);
+    const afterRollback = await history.versions(dest);
+    expect(afterRollback.map((r) => r.source)).toEqual(['learning', 'learning-rollback']);
+    expect(afterRollback[1]?.hash).toBeNull();
+  });
+
+  it('a rollback of a rewrite restores the prior bytes as a learning-rollback version', async () => {
+    const target = join(DATA, 'skills', 'summarise.md');
+    const original = '---\nname: summarise\n---\n\nOld.\n';
+    await seed(target, original);
+    const c = await submitSkill({
+      op: 'rewrite',
+      destination: target,
+      content: rewriteOf('summarise', 'New.\n'),
+    });
+    expect((await promote(deps(), c.id)).ok).toBe(true);
+    expect((await rollback(deps(), c.id)).ok).toBe(true);
+    expect(await storage.read(target)).toBe(original);
+    expect((await history.versions(target)).map((r) => r.source)).toEqual([
+      'external',
+      'learning',
+      'learning-rollback',
+    ]);
+  });
+
+  it('refuses a locked destination: code locked, no prior.md or promotion.json, status unchanged', async () => {
+    const target = join(DATA, 'skills', 'summarise.md');
+    const original = '---\nname: summarise\n---\n\nOld.\n';
+    await seed(target, original);
+    await history.setLock(target, true, 'cli');
+    const c = await submitSkill({
+      op: 'rewrite',
+      destination: target,
+      content: rewriteOf('summarise', 'New.\n'),
+    });
+
+    const result = await promote(deps(), c.id);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.code).toBe('locked');
+    expect(result.ok === false && result.reason).toContain('ethos skills unlock summarise');
+    expect(await storage.read(target)).toBe(original);
+    expect(await storage.exists(priorSnapshotPath(DATA, c.id))).toBe(false);
+    expect(await storage.exists(promotionRecordPath(DATA, c.id))).toBe(false);
+    expect((await readCandidate(storage, DATA, c.id))?.status).toBe('pending_replay');
+
+    // Unlock, approve again.
+    await history.setLock(target, false, 'cli');
+    expect((await promote(deps(), c.id)).ok).toBe(true);
+  });
+
+  it('the write-time check is the guarantee: a lock set after the early check still refuses', async () => {
+    const dest = join(DATA, 'skills', 'cite-sources.md');
+    const c = await submitSkill({ destination: dest, content: GOOD_SKILL });
+    await history.setLock(dest, true, 'cli');
+
+    const result = await promote({ ...deps(), isSkillLocked: async () => false }, c.id);
+
+    expect(result.ok === false && result.code).toBe('locked');
+    expect(await storage.exists(dest)).toBe(false);
+    expect(await storage.exists(promotionRecordPath(DATA, c.id))).toBe(false);
+    expect((await readCandidate(storage, DATA, c.id))?.status).toBe('pending_replay');
+  });
+
+  it('the unlock hint names the personality for a personality-scoped skill', async () => {
+    scopes.scout = 'personality';
+    const dest = join(DATA, 'personalities', 'scout', 'skills', 'cite-sources.md');
+    const c = await submitSkill({ destination: dest, content: GOOD_SKILL });
+    await history.setLock(dest, true, 'cli');
+    const result = await promote(deps(), c.id);
+    expect(result.ok === false && result.reason).toContain(
+      'ethos skills unlock cite-sources --personality scout',
+    );
+  });
+
+  it('rollback is a human verb: it still runs on a locked skill', async () => {
+    const dest = join(DATA, 'skills', 'cite-sources.md');
+    const c = await submitSkill({ destination: dest, content: GOOD_SKILL });
+    expect((await promote(deps(), c.id)).ok).toBe(true);
+    await history.setLock(dest, true, 'cli');
+    expect((await rollback(deps(), c.id)).ok).toBe(true);
+    expect(await storage.exists(dest)).toBe(false);
   });
 });
 

@@ -46,4 +46,11 @@ export interface LearningSubmitPort {
   submit(input: SkillCandidateSubmission): Promise<{ id: string }>;
   /** Whether a candidate with this id is already in the inbox, in any status. */
   has(candidateId: string): Promise<boolean>;
+  /**
+   * Whether the skill at `destination` is locked (`SkillHistory.isLocked`). ADVISORY:
+   * `skill_propose` and `SkillEvolver` use it to refuse or skip a rewrite of a locked
+   * skill before a replay is spent. The guarantee is `SkillHistory.writeAgentAuthored`
+   * behind `promote()`, so a port that omits this still cannot change a locked skill.
+   */
+  isLocked?(destination: string): boolean | Promise<boolean>;
 }

@@ -20,14 +20,15 @@ import { os } from './context';
  *
  * `override_required` is 400: the request is missing the reason it needs.
  * The 409s are all "not from this state" — including `live_edited` ("the live
- * file has been edited since") and `stale`, which the UI shows rather than
- * retries.
+ * file has been edited since"), `stale` and `locked` (the skill is locked; unlock
+ * it, then approve again), which the UI shows rather than retries.
  */
 const STATUS: Record<LearningRefusalCode, number> = {
   not_found: 404,
   override_required: 400,
   invalid: 422,
   stale: 409,
+  locked: 409,
   not_promotable: 409,
   not_promoted: 409,
   no_record: 409,

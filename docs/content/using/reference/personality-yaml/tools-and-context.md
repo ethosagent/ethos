@@ -3,7 +3,7 @@ title: "Personality config: MCP, plugins, budget and context fields"
 description: "Personality config fields for MCP, plugins, budget and context."
 kind: reference
 audience: user
-updated: 2026-11-03
+updated: 2026-11-28
 ---
 
 ## Synopsis {#synopsis}
@@ -100,7 +100,7 @@ Source: `skill_evolution` on `PersonalityConfig` in [`packages/types/src/persona
 | `skill_evolution.min_tool_calls` | integer | `5` | Successful tool calls a turn needs before the fork runs (`ImprovementFork.shouldFork`). A turn with fewer does not fork. Fork only. |
 | `skill_evolution.cooldown_minutes` | integer | `60` | Minimum minutes between fork runs for this personality, counted from the start of the previous run whether or not it drafted anything. Held in memory per process, so a restart clears it. Fork only. |
 | `skill_evolution.model` | string | unset | Model id this personality's skill drafting runs on, sent as `modelOverride` to the configured provider: the fork's turn, the nightly skill drafter, and `ethos evolve` / `ethos eval --evolve` for the configured default personality (`skillEvolutionEvolveOptions`, `extensions/skill-evolver/src/evolver.ts`). Must be a model that provider serves; it does not switch provider. Unset = the provider's own model. |
-| `skill_evolution.evolve_existing` | boolean | unset | `false` stops rewrites of existing skills while new skills still draft. `ethos evolve` and `ethos eval --evolve` skip the rewrite branch (`evolveExisting` on `SkillEvolver`), and the fork's `skill_propose` refuses a `targetFile`. The nightly drafter only drafts new skills, so the key does not change it. Unset or `true` = rewrites are drafted. |
+| `skill_evolution.evolve_existing` | boolean | unset | `false` stops rewrites of existing skills while new skills still draft. `ethos evolve` and `ethos eval --evolve` skip the rewrite branch (`evolveExisting` on `SkillEvolver`), and the fork's `skill_propose` refuses a `targetFile`. The nightly drafter only drafts new skills, so the key does not change it. Unset or `true` = rewrites are drafted. To protect one skill instead of the whole personality, [lock it](../../how-to/review-and-lock-skills.md). |
 | `skill_evolution.promotion` | `review` \| `auto` | unset | Whether this personality's skill candidates may promote without a human. Values below. |
 | `skill_evolution.scope` | `shared` \| `personality` | `shared` | Where a promoted skill is written (`liveSkillDir`, `extensions/skill-evolver/src/skill-dir.ts`). Values below. |
 

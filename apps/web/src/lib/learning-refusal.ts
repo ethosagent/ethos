@@ -9,6 +9,7 @@ const TITLES: Record<string, string> = {
   OVERRIDE_REQUIRED: 'Needs a reason — this change has not passed a replay',
   STALE: 'Not applied — the live file changed since this was drafted',
   INVALID: 'Not applied — the proposed file is invalid',
+  LOCKED: 'Not applied — this skill is locked. Unlock it on the Skills page, then approve again',
   NOT_PROMOTABLE: 'Already decided — this candidate is no longer waiting',
   NOT_FOUND: 'Not found — this candidate no longer exists',
   AMBIGUOUS: 'More than one candidate matches',

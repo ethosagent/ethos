@@ -177,5 +177,8 @@ export const PersonalitySkillSchema = z.object({
   body: z.string(),
   /** ISO-8601 mtime. */
   modifiedAt: z.string(),
+  /** A locked skill refuses every agent-authored write; humans can still edit it. */
+  locked: z.boolean(),
+  versionCount: z.number().int().nonnegative(),
 });
 export type PersonalitySkill = z.infer<typeof PersonalitySkillSchema>;

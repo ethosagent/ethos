@@ -16,6 +16,11 @@ import {
 } from '@ethosagent/wiring/security-kernel';
 import { writeJson } from '../json-output';
 import { getStorage, recordInstallScan } from '../wiring';
+import {
+  runSkillsHistoryCommand,
+  SKILLS_HISTORY_USAGE,
+  SKILLS_HISTORY_VERBS,
+} from './skills-history';
 
 const c = {
   reset: '\x1b[0m',
@@ -76,7 +81,20 @@ export async function runSkills(args: string[]): Promise<void> {
     }
 
     default:
+      if (SKILLS_HISTORY_VERBS.includes(sub)) {
+        const code = await runSkillsHistoryCommand(args, {
+          storage: getStorage(),
+          dataDir: ethosDir(),
+          io: { out: (l) => console.log(l), err: (l) => console.error(l) },
+        });
+        if (code !== 0) process.exitCode = code;
+        break;
+      }
       console.log('Usage: ethos skills [install <slug> | list | update [slug] | remove <slug>]');
+      console.log(
+        '       ethos skills <history|diff|restore|lock|unlock> <id> [--personality <pid>]',
+      );
+      for (const line of SKILLS_HISTORY_USAGE) console.log(line);
   }
 }
 

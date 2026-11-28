@@ -23,4 +23,12 @@ export const skillsRouter = {
     await context.skills.delete(input.id);
     return { ok: true as const };
   }),
+
+  history: os.skills.history.handler(({ input, context }) => context.skills.history(input)),
+
+  version: os.skills.version.handler(({ input, context }) => context.skills.version(input)),
+
+  restore: os.skills.restore.handler(({ input, context }) => context.skills.restore(input)),
+
+  setLock: os.skills.setLock.handler(({ input, context }) => context.skills.setLock(input)),
 };

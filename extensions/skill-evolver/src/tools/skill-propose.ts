@@ -127,6 +127,14 @@ export function createSkillProposeTool(opts: SkillProposeToolOptions): Tool<Skil
       const dir = liveSkillDir(opts.dataDir, target.personalityId, target.scope);
       const destination = join(dir, targetName ? `${targetName}.md` : `${id}.md`);
 
+      if (targetName && (await opts.learning.isLocked?.(destination))) {
+        return {
+          ok: false,
+          error: `The skill "${targetName}" is locked, so it cannot be rewritten. Omit targetFile to propose a new skill.`,
+          code: 'not_available',
+        };
+      }
+
       let targetCaseIds: string[] = [];
       try {
         targetCaseIds = (await opts.targetCaseIds?.(ctx, target.personalityId)) ?? [];

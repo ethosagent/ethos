@@ -136,6 +136,10 @@ export class SkillEvolver {
 
     const rewriteCandidates = evolveExisting ? plan.rewriteCandidates : [];
     for (const candidate of rewriteCandidates) {
+      if (await learning.isLocked?.(join(liveDir, candidate.fileName))) {
+        skipped.push({ kind: 'rewrite', target: candidate.fileName, reason: 'locked' });
+        continue;
+      }
       const prompt = renderRewritePrompt(candidate);
       const raw = await callLLM(llm, prompt, this.options.model);
       const parsed = parseRewriteResponse(raw);

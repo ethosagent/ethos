@@ -26,8 +26,39 @@ export const SkillSchema = z.object({
   readonly: z.boolean(),
   /** Gap 11 — non-null when the skill failed an `ethos.requires` gate at load time. */
   unavailableReason: z.string().nullable().optional(),
+  /** A locked skill refuses every agent-authored write; humans can still edit it. */
+  locked: z.boolean(),
+  /** Versions recorded for this skill (`SkillHistory`); 0 for a read-only system skill. */
+  versionCount: z.number().int().nonnegative(),
 });
 export type Skill = z.infer<typeof SkillSchema>;
+
+/** How a version of a flat skill came to be. Mirrors `SKILL_VERSION_SOURCES` in `@ethosagent/skills`. */
+export const SkillVersionSourceSchema = z.enum([
+  'learning',
+  'learning-rollback',
+  'web-edit',
+  'web-import',
+  'restore',
+  'external',
+]);
+export type SkillVersionSource = z.infer<typeof SkillVersionSourceSchema>;
+
+/** One row of a skill's timeline. `hash: null` is a tombstone (the skill was deleted). */
+export const SkillVersionSchema = z.object({
+  versionId: z.string(),
+  /** ISO-8601. */
+  at: z.string(),
+  source: SkillVersionSourceSchema,
+  actor: z.string(),
+  hash: z.string().nullable(),
+  note: z.string().optional(),
+  /** The learning candidate behind a `learning` version. */
+  candidateId: z.string().optional(),
+  /** The version a `restore` brought back. */
+  restoredFrom: z.string().optional(),
+});
+export type SkillVersion = z.infer<typeof SkillVersionSchema>;
 
 /**
  * A skill candidate waiting in the learning inbox, in the shape the Evolver

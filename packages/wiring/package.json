@@ -29,6 +29,10 @@
       "import": "./src/keyless-probe.ts",
       "types": "./src/keyless-probe.ts"
     },
+    "./skill-history": {
+      "import": "./src/skill-history.ts",
+      "types": "./src/skill-history.ts"
+    },
     "./nodes": {
       "import": "./src/nodes.ts",
       "types": "./src/nodes.ts"

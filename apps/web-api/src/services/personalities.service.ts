@@ -18,7 +18,7 @@ import {
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
 import { draftExpressionUpdate, draftSoulSplit } from '@ethosagent/skill-evolver';
-import type { PersonalitySkillRecord, SkillsInjector, SkillsLibrary } from '@ethosagent/skills';
+import type { SkillsInjector, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
 import {
   EthosError,
@@ -56,6 +56,7 @@ import {
   type LearningService,
   learningRefusalError,
 } from './learning.service';
+import { wirePersonalitySkill } from './personality-skill-wire';
 
 /** Latest Personality-Judge alignment, mapped from `.judge-history/state.json`. */
 interface JudgeWire {
@@ -854,7 +855,11 @@ export class PersonalitiesService {
   async skillsList(personalityId: string): Promise<{ skills: PersonalitySkill[] }> {
     this.requirePersonality(personalityId);
     const records = await this.opts.library.listPersonalitySkills(personalityId);
-    return { skills: records.map(toWirePersonalitySkill) };
+    return {
+      skills: await Promise.all(
+        records.map((r) => wirePersonalitySkill(this.opts.library, personalityId, r)),
+      ),
+    };
   }
 
   async skillsGet(personalityId: string, skillId: string): Promise<{ skill: PersonalitySkill }> {
@@ -867,7 +872,7 @@ export class PersonalitiesService {
         action: 'Use personalities.skillsList to see installed skills.',
       });
     }
-    return { skill: toWirePersonalitySkill(skill) };
+    return { skill: await wirePersonalitySkill(this.opts.library, personalityId, skill) };
   }
 
   async skillsCreate(
@@ -877,7 +882,7 @@ export class PersonalitiesService {
   ): Promise<{ skill: PersonalitySkill }> {
     this.requirePersonality(personalityId);
     const skill = await this.opts.library.createPersonalitySkill(personalityId, skillId, body);
-    return { skill: toWirePersonalitySkill(skill) };
+    return { skill: await wirePersonalitySkill(this.opts.library, personalityId, skill) };
   }
 
   async skillsUpdate(
@@ -887,7 +892,7 @@ export class PersonalitiesService {
   ): Promise<{ skill: PersonalitySkill }> {
     this.requirePersonality(personalityId);
     const skill = await this.opts.library.updatePersonalitySkill(personalityId, skillId, body);
-    return { skill: toWirePersonalitySkill(skill) };
+    return { skill: await wirePersonalitySkill(this.opts.library, personalityId, skill) };
   }
 
   async skillsDelete(personalityId: string, skillId: string): Promise<void> {
@@ -901,7 +906,11 @@ export class PersonalitiesService {
   ): Promise<{ imported: PersonalitySkill[] }> {
     this.requirePersonality(personalityId);
     const records = await this.opts.library.importGlobalIntoPersonality(personalityId, skillIds);
-    return { imported: records.map(toWirePersonalitySkill) };
+    return {
+      imported: await Promise.all(
+        records.map((r) => wirePersonalitySkill(this.opts.library, personalityId, r)),
+      ),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -1329,16 +1338,6 @@ export class PersonalitiesService {
       });
     }
   }
-}
-
-function toWirePersonalitySkill(record: PersonalitySkillRecord): PersonalitySkill {
-  return {
-    id: record.id,
-    name: record.name,
-    description: record.description,
-    body: record.body,
-    modifiedAt: record.modifiedAt,
-  };
 }
 
 /** No vault wired (tests, onboarding): every key reads as absent. */
