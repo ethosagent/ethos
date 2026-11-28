@@ -1,4 +1,5 @@
 import { dirname, join } from 'node:path';
+import { resolveWorld } from '@ethosagent/config';
 import {
   createSpokenStyleInjector,
   type DefaultToolRegistry,
@@ -10,6 +11,7 @@ import {
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
+import type { RouteFactFn } from '@ethosagent/memory-capture';
 import type { PendingNotify, PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import {
@@ -111,6 +113,7 @@ import type {
   TurnAuditor,
   UsageSourceKind,
 } from '@ethosagent/types';
+import { WorldCaptureRouter } from '@ethosagent/world-service';
 import { createAmendmentIntake } from './amendments';
 import type { InfrastructureResult } from './build-infrastructure';
 import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
@@ -695,6 +698,8 @@ export interface ComposeToolsResult {
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
+  /** `routeFact` for `MemoryCaptureRunner`; present only when `world.enabled` and `world.extraction: 'propose'`. */
+  worldCapture?: RouteFactFn;
   /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
   executionPostureFor: ExecutionRouting['resolvePosture'];
   /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
@@ -2209,6 +2214,7 @@ export async function composeAllTools(
   // DisposerStack. The tools get a port (never a provider) and reach the model only for a
   // personality whose toolset.yaml lists them (build-agent-loop.ts `worldTools` exclude).
   // -------------------------------------------------------------------------
+  let worldCapture: RouteFactFn | undefined;
   if (config.world?.enabled === true) {
     const worldRuntime = createWorldRuntime({
       dataDir,
@@ -2232,6 +2238,17 @@ export async function composeAllTools(
       tools.register(tool);
     }
     injectors.push(worldRuntime.injector());
+    // Extraction (plan world-model 6.2): the router over THIS runtime, never a second one. It is
+    // handed out only when `world.extraction` is 'propose'; build-agent-loop.ts passes it to the
+    // capture runner as `routeFact`. Pinned by __tests__/world-extraction-wiring.test.ts.
+    if (resolveWorld({ world: config.world }).extraction === 'propose') {
+      const router = new WorldCaptureRouter({
+        service: worldRuntime.service,
+        schema: worldRuntime.schema,
+        onError: (e) => log.warn(`world: ${e instanceof Error ? e.message : String(e)}`),
+      });
+      worldCapture = (fact, job) => router.route(fact, job);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -2345,6 +2362,7 @@ export async function composeAllTools(
     turnAuditors: grounding.turnAuditors,
     resolveDockerBackend: routing.resolveDockerBackend,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
+    ...(worldCapture ? { worldCapture } : {}),
     executionPostureFor: routing.resolvePosture,
     executionRouteFor: routing.exec,
   };

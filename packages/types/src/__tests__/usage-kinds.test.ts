@@ -20,6 +20,7 @@ const EXPECTED: Record<UsageSourceKind, 'turn_utility' | 'background' | 'operato
   completion_verifier: 'turn_utility',
   title: 'turn_utility',
   memory_capture: 'background',
+  world_extract: 'background',
   memory_consolidation: 'background',
   improvement_fork: 'background',
   learning_replay: 'background',

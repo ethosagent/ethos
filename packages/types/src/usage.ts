@@ -26,6 +26,7 @@ export type UsageSourceKind =
   | 'title'
   // background
   | 'memory_capture'
+  | 'world_extract'
   | 'memory_consolidation'
   | 'improvement_fork'
   | 'learning_replay'
@@ -50,6 +51,7 @@ const SOURCE_CLASS: Readonly<Record<UsageSourceKind, UsageSourceClass>> = {
   completion_verifier: 'turn_utility',
   title: 'turn_utility',
   memory_capture: 'background',
+  world_extract: 'background',
   memory_consolidation: 'background',
   improvement_fork: 'background',
   learning_replay: 'background',

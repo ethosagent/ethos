@@ -1958,6 +1958,13 @@ export async function buildAgentLoop(
       // own tools contradict. Absent when `grounding.enabled: false`, so an
       // opted-out deployment's capture path is byte-identical to today's.
       ...(toolsResult.memoryConsult ? { grounding: toolsResult.memoryConsult } : {}),
+      // World extraction (plan world-model 6.2): graph-shaped facts of the SAME extraction call
+      // become pending world proposals. Present only for `world.enabled` + `extraction: 'propose'`
+      // (compose-tools.ts `worldCapture`), so otherwise capture is unchanged. No second LLM call
+      // is made (pinned by __tests__/world-extraction-wiring.test.ts 'no second LLM call per
+      // turn'), so the call stays metered as `memory_capture` below; `world_extract`
+      // (packages/types/src/usage.ts) is reserved for a future dedicated pass and is not emitted.
+      ...(toolsResult.worldCapture ? { routeFact: toolsResult.worldCapture } : {}),
       config: {
         ...(captureConfig.maxPerHour !== undefined ? { maxPerHour: captureConfig.maxPerHour } : {}),
         ...(captureConfig.maxPerDay !== undefined ? { maxPerDay: captureConfig.maxPerDay } : {}),
