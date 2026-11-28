@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
+import type { PersonalityConfig } from '@ethosagent/types';
 import { CONSTITUTION_INITIATIVES_KEYS } from '@ethosagent/types';
 import {
   CONSTITUTION_INITIATIVES_FIELD_KEYS,
@@ -38,6 +39,14 @@ const SETTINGS = {
   standingGuidance: [],
 };
 
+const FULL_BLOCK = {
+  enabled: true,
+  maxUsdPerDay: null,
+  maxUsdPerDayPerPersonality: null,
+  selfStartPoolUsdPerDay: 0.5,
+  maxSelfStarted: 2,
+};
+
 const CONSTITUTION_FIXTURE = `# operator ceiling
 budget:
   maxUsdPerSession: 5   # keep this comment
@@ -68,7 +77,7 @@ describe('initiatives RPC', () => {
       sessionStore: sessions,
       memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
-      personalities: makeStubPersonalityRegistry(),
+      personalities: makeStubPersonalityRegistry([{ id: 'pm', name: 'PM' } as PersonalityConfig]),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
       apiKeys,
       initiativeEnablement: { reload },
@@ -127,7 +136,7 @@ describe('initiatives RPC', () => {
     ['initiatives/settingsSave', { personalityId: 'pm', settings: SETTINGS }],
     ['initiatives/decide', { target: 'EXP-0001', gate: 'gate1_explore', verdict: 'approve' }],
     ['constitution/initiatives', undefined],
-    ['constitution/initiativesSave', { initiatives: { enabled: true } }],
+    ['constitution/initiativesSave', { initiatives: FULL_BLOCK }],
   ];
 
   it('initiatives and constitution are not SCOPE_MAP namespaces', () => {
@@ -223,6 +232,26 @@ describe('initiatives RPC', () => {
     });
   });
 
+  it('settings save for an unknown personality is not found and creates no directory', async () => {
+    const res = await call(
+      'initiatives/settingsSave',
+      { personalityId: 'ghost', settings: SETTINGS },
+      as(),
+    );
+    expect(res.status).toBe(404);
+    expect(existsSync(join(dataDir, 'personalities', 'ghost'))).toBe(false);
+  });
+
+  it('constitution save with a partial body is 400 and writes nothing', async () => {
+    const res = await call(
+      'constitution/initiativesSave',
+      { initiatives: { enabled: true } },
+      as(),
+    );
+    expect(res.status).toBe(400);
+    expect(existsSync(join(dataDir, 'constitution.yaml'))).toBe(false);
+  });
+
   it('unknown key is 400', async () => {
     const settings = await call(
       'initiatives/settingsSave',
@@ -232,7 +261,7 @@ describe('initiatives RPC', () => {
     expect(settings.status).toBe(400);
     const constitution = await call(
       'constitution/initiativesSave',
-      { initiatives: { allowWrites: true } },
+      { initiatives: { ...FULL_BLOCK, allowWrites: true } },
       as(),
     );
     expect(constitution.status).toBe(400);
@@ -243,7 +272,7 @@ describe('initiatives RPC', () => {
     for (const root of ['~/.ssh', '~/.ssh/keys', '~']) {
       const res = await call(
         'constitution/initiativesSave',
-        { initiatives: { readableRoots: [root] } },
+        { initiatives: { ...FULL_BLOCK, readableRoots: [root] } },
         as(),
       );
       expect(res.status).toBe(400);
@@ -256,7 +285,9 @@ describe('initiatives RPC', () => {
     await writeFile(path, CONSTITUTION_FIXTURE);
     const res = await call(
       'constitution/initiativesSave',
-      { initiatives: { enabled: false, maxUsdPerDay: 10, readableRoots: ['~/code'] } },
+      {
+        initiatives: { ...FULL_BLOCK, enabled: false, maxUsdPerDay: 10, readableRoots: ['~/code'] },
+      },
       as(),
     );
     expect(res.status).toBe(200);
@@ -269,18 +300,20 @@ describe('initiatives RPC', () => {
     expect(reload).toHaveBeenCalled(); // the kill switch is read through enablement too
     const read = await body(await call('constitution/initiatives', undefined, as()));
     expect(read).toEqual({
-      initiatives: { enabled: false, maxUsdPerDay: 10, readableRoots: ['~/code'] },
+      initiatives: {
+        enabled: false,
+        maxUsdPerDay: 10,
+        selfStartPoolUsdPerDay: 0.5,
+        maxSelfStarted: 2,
+        readableRoots: ['~/code'],
+      },
     });
   });
 
   it('constitution save refuses a constitution that does not parse', async () => {
     const path = join(dataDir, 'constitution.yaml');
     await writeFile(path, 'budget: [unclosed\n');
-    const res = await call(
-      'constitution/initiativesSave',
-      { initiatives: { enabled: true } },
-      as(),
-    );
+    const res = await call('constitution/initiativesSave', { initiatives: FULL_BLOCK }, as());
     expect(res.status).toBe(400);
     expect(await readFile(path, 'utf8')).toBe('budget: [unclosed\n');
   });

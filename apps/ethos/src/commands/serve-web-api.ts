@@ -78,6 +78,8 @@ export interface BuildServeWebApiOptions {
   /** The loop's self-amendment service (`CreateAgentLoopResult.amendments`).
    *  The web holds only its reads (`AmendmentReader`, D30). */
   amendments: import('@ethosagent/web-api').AmendmentReader;
+  /** The loop's `initiativeEnablement`: a settings save reloads it so a toggle applies at once. */
+  initiativeEnablement?: Pick<import('@ethosagent/wiring').InitiativeEnablement, 'reload'>;
   jobStore: import('@ethosagent/types').JobStore | undefined;
   jobRunners: import('@ethosagent/types').JobRunnerRegistry | undefined;
   jobControl: import('@ethosagent/wiring').CreateAgentLoopResult['jobControl'] | undefined;

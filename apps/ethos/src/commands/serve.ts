@@ -523,6 +523,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'] | undefined;
   // No `| undefined`: definite assignment makes a branch that forgets it a compile error.
   let memoryBundle: import('@ethosagent/wiring').MemoryBundle;
+  let initiativeEnablement: BuildServeWebApiOptions['initiativeEnablement'];
   // The loop's self-amendment service, read-only on the web (D30). Definite
   // assignment, like `memoryBundle`: every branch builds a loop that has one.
   let amendments: import('@ethosagent/wiring').CreateAgentLoopResult['amendments'];
@@ -829,6 +830,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     onMemoryCaptured = result.onMemoryCaptured;
     runCallCaptureFromLoop = result.runCallCapture;
     goals = result.goals;
+    initiativeEnablement = result.initiativeRuntime.enablement;
     memoryBundle = result.memoryBundle;
     amendments = result.amendments;
     jobStore = result.jobStore;
@@ -907,6 +909,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     onMemoryCaptured = result.onMemoryCaptured;
     runCallCaptureFromLoop = result.runCallCapture;
     goals = result.goals;
+    initiativeEnablement = result.initiativeRuntime.enablement;
     memoryBundle = result.memoryBundle;
     amendments = result.amendments;
     jobStore = result.jobStore;
@@ -1421,6 +1424,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     cronTriggers,
     goals,
     memoryBundle,
+    ...(initiativeEnablement ? { initiativeEnablement } : {}),
     amendments,
     jobStore,
     jobRunners,
@@ -2097,6 +2101,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     cronTriggers,
     goals,
     memoryBundle,
+    initiativeEnablement,
     amendments,
     jobStore,
     jobRunners,
@@ -2145,6 +2150,8 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // The loop's memory surfaces (F04): editor, Timeline, restore and approve
     // all on the backend the agent reads — the vault under `memory: vault`.
     memoryBundle,
+    // A settings save reloads the loop's initiative enablement, so a toggle applies at once.
+    ...(initiativeEnablement ? { initiativeEnablement } : {}),
     // Self-amendments, read-only (D30): `amendments.list | get` only.
     amendments,
     identityMap,

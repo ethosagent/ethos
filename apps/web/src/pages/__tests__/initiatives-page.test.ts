@@ -4,6 +4,7 @@
 // Task 6.4), driven in jsdom with createElement the way `outbox-pane.test.ts` is.
 // The root vitest glob only runs `*.test.ts`, so this is not a .tsx test.
 
+import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import {
   INITIATIVE_FILE_FIELD_KEYS,
   type InitiativeFileWire,
@@ -221,7 +222,12 @@ describe('Initiatives page', () => {
     await click('[data-filter="agent"]');
     expect(ids()).toEqual(['INI-2']);
     // The agent-started badge is its own token, not the human one.
-    expect(q('[data-initiative-id="INI-2"] [data-origin-badge="agent"]')).not.toBeNull();
+    const badge = q('[data-initiative-id="INI-2"] [data-origin-badge="agent"]');
+    expect(badge).not.toBeNull();
+    // ...and never a personality identity hue (DESIGN.md: accents belong to personalities).
+    const hue = (badge as HTMLElement).style.getPropertyValue('--initiative-agent');
+    expect(hue).toBe('var(--text-secondary)');
+    expect(Object.values(DEFAULT_TOKENS.accents)).not.toContain(hue);
 
     await click('[data-filter="paused"]');
     expect(ids()).toEqual(['INI-3']);

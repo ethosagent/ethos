@@ -55,6 +55,7 @@
     "ClarifyResolvedEventSchema",
     "CodeCardPayloadSchema",
     "ConstitutionInitiativesOutputSchema",
+    "ConstitutionInitiativesSaveBlockSchema",
     "ConstitutionInitiativesSaveInputSchema",
     "ConstitutionInitiativesSaveOutputSchema",
     "ConstitutionInitiativesSchema",
@@ -849,13 +850,13 @@
       "activity": "89162f6672d5e893f4d9a100dba65ea07f774e51e37accfcf0218d0812767606",
       "exploringNow": "756cbfeaafe7ea87eb4509a00cd2911f7232a0151cd069e1375af57de1a0a742",
       "decide": "d072559f44db72d7037cfc3fdba0df205f81e48356e473fc492b3adfb8877bb4",
-      "settings": "34f6638548545fe8cc7e3a51d3142e52920906e19b22fa38649f5fcd80d43a60",
-      "settingsSave": "c1dbd40915f44cf90b2c5c29d886a215cf950e0a635ab84fe84888daca0d278d",
+      "settings": "5686a079e432a9f70f2f924c3dbc3879ad1bb4103f864d99d0d8f140fac96f6f",
+      "settingsSave": "f0080159f8ecfcd6f1fa222a34caa65d928f735032aca4fc4f9467117db9cc1d",
       "metrics": "1243d68ca5e4624fb472780fa77ad8be3882d94c2f2f96367f769947aa6ad418"
     },
     "constitution": {
       "initiatives": "63316c24930d2bce6eeba37f392d4fe4755b44c8ece6d22442cdd68828ce71f2",
-      "initiativesSave": "ae212ce705ddcb06312e2c0b65feccc126da0d71f8a33bfd20f4c5a0cee0a213"
+      "initiativesSave": "4141438ac7601e7b39eab6b854d83bc5377fe93026f338f5731f69d65c09b318"
     }
   },
   "schemaShapes": {
@@ -908,7 +909,8 @@
     "ClarifyResolvedEventSchema": "d7596abafeab8ea04d0fb8a5ab5ef48d0d85973fe28aef01591baef5391365ba",
     "CodeCardPayloadSchema": "57d88281bb9c36c3d7fe2f97cab2854e4ce247c491ada34f1c4de347b2f4c2ad",
     "ConstitutionInitiativesOutputSchema": "df1d73f81cda6e9e9463001353df2d0d8c9c6bc5e1b2ed31ca33f30db1c2519f",
-    "ConstitutionInitiativesSaveInputSchema": "df1d73f81cda6e9e9463001353df2d0d8c9c6bc5e1b2ed31ca33f30db1c2519f",
+    "ConstitutionInitiativesSaveBlockSchema": "0302ebe751f4c86deff4b2e0d227ccfe33cdd4ba3ad0190cdef701ec8a136ecd",
+    "ConstitutionInitiativesSaveInputSchema": "fbd8e60f3c88a509a2e2b06f0ecbe5bc0eee922a0a3f17ace933ad223058c3dc",
     "ConstitutionInitiativesSaveOutputSchema": "b21b3d6f3eb31df220d20e135ced971d1c22384c4d04fa8ea765d8bbe00b71a8",
     "ConstitutionInitiativesSchema": "aa09b66892d2bf3345dc8c4a3f0a97a59dc6716025822d2c3f2f31776003fdc5",
     "ContextMetaEventSchema": "bd9946113260dc5dd91a1dd051038588d9880011e3a95e4cdfda6c11d9c737e7",
@@ -974,14 +976,14 @@
     "InitiativeMetricsInputSchema": "8ff7674b9ed13cf24306dbc3ddbb014b0e2abbd79bbcd34c5e0d8a64d332e49e",
     "InitiativeMetricsOutputSchema": "65ddd28d5ff45ffa1bfd62aa9dc5ce5f39f8bb5bbb7225af56de07e82ef5799d",
     "InitiativeOriginSchema": "09e057bb8da55113e40b687ee1e30c198dc58e0963c8b643b7941644dc682777",
-    "InitiativeSettingsWireSchema": "f4c021f7c8352c523c277084e9684b8a88bab432fde7d0c3b89d9050ea874646",
+    "InitiativeSettingsWireSchema": "da649473e7a2be9a560296b44a60b81fd9be1b31aab69edd69485a314e08443d",
     "InitiativeStateSchema": "9f2b1e0bc5dc8ae5b9c4657f1d0b0852d4318ed3effc01e82efaf99beabb64c3",
     "InitiativeSummarySchema": "7cdc161d480f983d69e45a585a182d5b952a9bbc11416eb61b36f3d4dcdfd9ff",
     "InitiativeWindowViewSchema": "83ddde96c400e0b2e4acb21cb9e8d37a27067f14a0ef200e4c1dbb5dc833b521",
     "InitiativesSettingsInputSchema": "4270e9e5fb3d5b481ab20305aed2da307167c0d2db05da0a64af38009b42f83e",
-    "InitiativesSettingsOutputSchema": "3b0c77a58a1c2887d0b4cb28f33b7e7f3f207392ec396dbcf7ad1e8bb3fd8cae",
-    "InitiativesSettingsSaveInputSchema": "352a0e974defb5ef8f6203c92959f7c3c4c5846be6d73c671fe1adfff67fa14a",
-    "InitiativesSettingsSaveOutputSchema": "f6434bd1dbe6f3175315826e1d028cdf12a95cbd92ec1544c45f064542dccb89",
+    "InitiativesSettingsOutputSchema": "78e93cb7c563b9c5f2a8e5fcded43ded75aad8753878cbfa069566fc1296aedb",
+    "InitiativesSettingsSaveInputSchema": "91c67b51969497b9705378e1158034337735c69bab3c9c3f218cf3e400d2056b",
+    "InitiativesSettingsSaveOutputSchema": "0ebff55fdfae6726e26b0f4330024b3575ca518bec13099b96d1e22d5a04fe21",
     "ItemListCardPayloadSchema": "e03fb7ad6c75e60a9754d6a53b949f47b6f9409ca14cdcafbc9291b771546ea0",
     "JobStatusSchema": "1fa416ebb3d5b30d8e2671a2011b753a9f74796911ae1666a9e767c3b4bddebf",
     "JobSteerSchema": "5a2f33837272f9e263d9a78070479f2061f79e91acbae55dd54745e6f5acf59c",

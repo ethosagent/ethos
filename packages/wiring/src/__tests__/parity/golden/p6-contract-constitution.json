@@ -64,12 +64,26 @@
               "type": "integer"
             },
             "maxUsdPerDay": {
-              "minimum": 0,
-              "type": "number"
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "maxUsdPerDayPerPersonality": {
-              "minimum": 0,
-              "type": "number"
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "readableRoots": {
               "items": {
@@ -83,6 +97,13 @@
               "type": "number"
             }
           },
+          "required": [
+            "enabled",
+            "maxUsdPerDay",
+            "maxUsdPerDayPerPersonality",
+            "selfStartPoolUsdPerDay",
+            "maxSelfStarted"
+          ],
           "type": "object"
         }
       },

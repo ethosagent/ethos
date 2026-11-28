@@ -13,7 +13,10 @@
 // section hides itself when that refusal comes back (`isNonOwnerError`,
 // pinned by `initiatives-section.test.ts` 'hidden for non-owner').
 
-import type { ConstitutionInitiatives } from '@ethosagent/web-contracts';
+import type {
+  ConstitutionInitiatives,
+  ConstitutionInitiativesSaveBlock,
+} from '@ethosagent/web-contracts';
 import { Alert, App as AntApp, Button, Input, InputNumber, Switch, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { useConstitutionInitiativesSave } from '../../../features/initiative-settings/api/mutations';
@@ -45,21 +48,15 @@ function toDraft(c: ConstitutionInitiatives): Draft {
   };
 }
 
-/** The full strict block. A key the owner never set and left at its default stays absent. */
-function toBlock(d: Draft, stored: ConstitutionInitiatives): ConstitutionInitiatives {
+/** The full save body: every key but `readableRoots` is required; no ceiling is `null`. */
+function toBlock(d: Draft, stored: ConstitutionInitiatives): ConstitutionInitiativesSaveBlock {
   const roots = d.readableRoots.map((r) => r.trim()).filter(Boolean);
   return {
-    ...(stored.enabled !== undefined || !d.enabled ? { enabled: d.enabled } : {}),
-    ...(d.maxUsdPerDay !== null ? { maxUsdPerDay: d.maxUsdPerDay } : {}),
-    ...(d.maxUsdPerDayPerPersonality !== null
-      ? { maxUsdPerDayPerPersonality: d.maxUsdPerDayPerPersonality }
-      : {}),
-    ...(stored.selfStartPoolUsdPerDay !== undefined || d.selfStartPoolUsdPerDay !== DEFAULT_POOL_USD
-      ? { selfStartPoolUsdPerDay: d.selfStartPoolUsdPerDay }
-      : {}),
-    ...(stored.maxSelfStarted !== undefined || d.maxSelfStarted !== DEFAULT_MAX_SELF_STARTED
-      ? { maxSelfStarted: d.maxSelfStarted }
-      : {}),
+    enabled: d.enabled,
+    maxUsdPerDay: d.maxUsdPerDay,
+    maxUsdPerDayPerPersonality: d.maxUsdPerDayPerPersonality,
+    selfStartPoolUsdPerDay: d.selfStartPoolUsdPerDay,
+    maxSelfStarted: d.maxSelfStarted,
     ...(stored.readableRoots !== undefined || roots.length > 0 ? { readableRoots: roots } : {}),
   };
 }

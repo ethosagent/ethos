@@ -353,13 +353,14 @@ export class InitiativeConfigService implements InitiativeConfigPort {
         ? ['paused']
         : op === 'resume'
           ? ['active']
-          : doc.state === 'active'
+          : row.state === 'active'
             ? ['review', 'ended']
             : ['ended'];
-    let from: InitiativeState = doc.state;
+    // The ledger row is the lifecycle authority: keep/stop change only the row, not the file.
+    let from: InitiativeState = row.state;
     for (const to of hops) {
       if (!canTransition(INITIATIVE_TRANSITIONS, from, to)) {
-        return refuse(`cannot ${op} an initiative that is ${doc.state}`);
+        return refuse(`cannot ${op} an initiative that is ${row.state}`);
       }
       from = to;
     }
@@ -379,6 +380,8 @@ export class InitiativeConfigService implements InitiativeConfigPort {
 
   /** `nextSurveyAt`: the next explore-window slot after now (slots.ts, the tick's own helper). */
   private nextSurvey(doc: InitiativeFile): { nextSurveyAt?: string } {
+    // A paused, ended or stopped initiative is not surveyed, so there is no next slot to promise.
+    if (doc.state === 'paused' || doc.state === 'ended' || doc.state === 'stopped') return {};
     const at = nextSlotAfter(doc.timeline.explore_windows, new Date(this.now()));
     return at === null ? {} : { nextSurveyAt: at };
   }

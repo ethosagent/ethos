@@ -1,3 +1,4 @@
+import { CONSTITUTION_INITIATIVES_KEYS } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { contract } from '../router';
 import {
@@ -16,7 +17,7 @@ const settings = {
   selfStart: false,
   dailyBudgetUsd: 3,
   defaultAutonomy: { mode: 'free_under', askAboveUsd: 1 },
-  delivery: { ownerChannel: 'telegram', digestTime: '08:00' },
+  delivery: { ownerChannel: 'telegram:12345', digestTime: '08:00' },
   standingGuidance: [],
 };
 const block = {
@@ -60,6 +61,28 @@ describe('initiatives contract', () => {
     ).toBe(false);
   });
 
+  it('delivery refuses a bare platform and a malformed digest time', () => {
+    const d = (ownerChannel: string, digestTime: string) =>
+      InitiativeSettingsWireSchema.safeParse({
+        ...settings,
+        delivery: { ownerChannel, digestTime },
+      }).success;
+    expect(d('telegram:12345', '08:00')).toBe(true);
+    expect(d('telegram', '08:00')).toBe(false);
+    expect(d('telegram:12345', '8am')).toBe(false);
+  });
+
+  it('constitution save requires every key but readableRoots (ceilings may be null)', () => {
+    const ok = (b: unknown) =>
+      ConstitutionInitiativesSaveInputSchema.safeParse({ initiatives: b }).success;
+    const { readableRoots: _r, ...noRoots } = block;
+    expect(ok(noRoots)).toBe(true);
+    expect(ok({ ...noRoots, maxUsdPerDay: null })).toBe(true);
+    expect(ok({ enabled: true })).toBe(false);
+    const { maxUsdPerDay: _m, ...noCeiling } = noRoots;
+    expect(ok(noCeiling)).toBe(false);
+  });
+
   it('constitution save example parses; unknown key and ~/.ssh fail', () => {
     expect(ConstitutionInitiativesSaveInputSchema.safeParse({ initiatives: block }).success).toBe(
       true,
@@ -78,9 +101,16 @@ describe('initiatives contract', () => {
     '/Users/me/.ssh',
     '$HOME/.ssh',
     '/home/me/.ssh/',
+    '~/.SSH',
+    '/Users/me/.Ssh/keys',
+    '~',
+    '/',
+    '/Users',
+    '/home/',
+    '~/code/..',
   ])('readableRoots refuses %s', (root) => {
     const r = ConstitutionInitiativesSaveInputSchema.safeParse({
-      initiatives: { readableRoots: [root] },
+      initiatives: { ...block, readableRoots: [root] },
     });
     expect(r.success).toBe(false);
     expect(JSON.stringify(r.error?.issues)).toContain('readableRoots refuses ~/.ssh');
@@ -133,6 +163,12 @@ describe('field key lists', () => {
       'delivery.digestTime',
       'standingGuidance',
     ]);
+  });
+
+  it('constitution field keys equal CONSTITUTION_INITIATIVES_KEYS from @ethosagent/types', () => {
+    expect([...CONSTITUTION_INITIATIVES_FIELD_KEYS].sort()).toEqual(
+      [...CONSTITUTION_INITIATIVES_KEYS].sort(),
+    );
   });
 
   it('constitution initiatives keys match Config surfaces', () => {

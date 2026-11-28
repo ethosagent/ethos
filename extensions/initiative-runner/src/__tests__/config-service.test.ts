@@ -122,7 +122,8 @@ describe('InitiativeConfigService.save', () => {
     // now = 1s after the epoch; 'every 2h' slots sit on the UTC day's even hours.
     expect(r).toMatchObject({ ok: true, nextSurveyAt: '1970-01-01T02:00:00.000Z' });
     const paused = await save(svc, ID, { op: 'pause' });
-    expect(paused).toMatchObject({ ok: true, nextSurveyAt: '1970-01-01T02:00:00.000Z' });
+    expect(paused).toMatchObject({ ok: true });
+    expect(paused).not.toHaveProperty('nextSurveyAt');
   });
 
   it('creates the file, the row and the first version, then schedules', async () => {
@@ -275,6 +276,14 @@ describe('InitiativeConfigService.save', () => {
       { op: 'update', confirmedBy: 'runner' },
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('pause after stop is refused cleanly (the ledger row, not the file, decides)', async () => {
+    const { svc, store } = setup();
+    await save(svc, draft());
+    const row = store.rows.get('grow-signups');
+    if (row) store.rows.set('grow-signups', { ...row, state: 'stopped' });
+    expect(await save(svc, ID, { op: 'pause' })).toMatchObject({ ok: false });
   });
 
   it('pause, resume and end move state with a new version; bad moves are refused', async () => {

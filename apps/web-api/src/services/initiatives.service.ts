@@ -9,6 +9,7 @@ import {
 } from '@ethosagent/types';
 import type {
   ConstitutionInitiatives,
+  ConstitutionInitiativesSaveBlock,
   ExploringNowOutputSchema,
   InitiativeActivityOutputSchema,
   InitiativeDecideInput,
@@ -353,6 +354,14 @@ export class InitiativesService {
   settingsSave(input: { personalityId: string; settings: InitiativeSettingsWire }) {
     return this.serial(async () => {
       assertSafeId(input.personalityId, 'personality');
+      // No directory is created for a personality that does not exist.
+      if (this.opts.personalities.get(input.personalityId) === undefined) {
+        throw new EthosError({
+          code: 'FILE_NOT_FOUND',
+          cause: `Personality "${input.personalityId}" does not exist.`,
+          action: 'Pick an existing personality, then save again.',
+        });
+      }
       const { storage, dataDir } = this.opts;
       const valid = validateInitiativeSettings(input.settings);
       if (!valid.ok) throw invalid(valid.error);
@@ -376,10 +385,17 @@ export class InitiativesService {
     return { initiatives: c.initiatives ?? {} };
   }
 
-  constitutionSave(input: { initiatives: ConstitutionInitiatives }) {
+  constitutionSave(input: { initiatives: ConstitutionInitiativesSaveBlock }) {
     return this.serial(async () => {
       const { storage, dataDir } = this.opts;
-      const valid = validateConstitutionInitiatives(input.initiatives, dataDir);
+      // The wire body says "no ceiling" with null; the stored block says it by omission.
+      const { maxUsdPerDay, maxUsdPerDayPerPersonality, ...rest } = input.initiatives;
+      const block: ConstitutionInitiatives = {
+        ...rest,
+        ...(maxUsdPerDay !== null ? { maxUsdPerDay } : {}),
+        ...(maxUsdPerDayPerPersonality !== null ? { maxUsdPerDayPerPersonality } : {}),
+      };
+      const valid = validateConstitutionInitiatives(block, dataDir);
       if (!valid.ok) throw invalid(valid.error);
       const path = join(dataDir, 'constitution.yaml');
       const next = renderConstitutionWithInitiatives(await storage.read(path), valid.block);

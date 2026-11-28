@@ -266,7 +266,7 @@ export interface InitiativeConfigPort {
     op: 'create' | 'update' | 'pause' | 'resume' | 'end';
     draft: unknown;
     sessionId: string;
-    confirmedBy: 'owner_chat' | 'owner_ui' | 'runner';
+    confirmedBy: 'owner_chat' | 'owner_ui' | 'owner_cli' | 'runner';
   }): Promise<
     | {
         ok: true;

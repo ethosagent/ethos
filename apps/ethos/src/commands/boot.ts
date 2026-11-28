@@ -103,6 +103,7 @@ import {
   takeGatewayLockOrExit,
 } from '../lib/gateway-inbound-durability';
 import { scrubExpiredIncognito } from '../lib/incognito-retention';
+import { bindInitiativeHostFor } from '../lib/initiative-wiring';
 import { openShareLinks } from '../lib/open-share-links';
 import {
   createOutboxApprovalSurface,
@@ -754,6 +755,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     cronScheduler: scheduler,
     cronTriggers,
     goals: shared.goals,
+    initiativeEnablement: shared.initiativeRuntime.enablement,
     memoryBundle: shared.memoryBundle,
     amendments: shared.amendments,
     jobStore: shared.jobStore,
@@ -993,6 +995,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // records `lastError`. This used to be a second, shorter copy that did
   // neither.
   cronDeliverFn = createCronDeliver({ gateway, speaksFor: buildChannelSpeakers(cfg) });
+  const wireInitiative = bindInitiativeHostFor(gateway, cfg, adapters); // Task 6.5
   watcherDeliverFn = async (target, text) => {
     await gateway.sendTo(target.platform, target.chatId, text);
   };
@@ -1160,6 +1163,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         outboxCardAdapters.set(bot.botKey, cardAdapter);
         wireOutboxCardAdapters(outboxSurface, [cardAdapter]);
       }
+      wireInitiative(adaptersSlice);
     } catch (err) {
       await undo();
       throw err;

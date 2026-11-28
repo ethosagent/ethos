@@ -33,7 +33,7 @@ const YAML_DRAFT = {
     default_days: 14,
     review_on: '2026-12-20',
   },
-  delivery: { owner_channel: 'telegram', digest_time: '09:00' },
+  delivery: { owner_channel: 'telegram:1', digest_time: '09:00' },
 };
 
 let dir: string;
@@ -135,6 +135,50 @@ describe('ethos initiatives (manage)', () => {
     expect((await port?.file('grow'))?.state).toBe('paused');
     await run(['resume', 'grow']);
     expect(port?.store.getInitiative('grow')?.state).toBe('active');
+  });
+
+  it('pause and resume are confirmed as owner_cli', async () => {
+    await seed();
+    const save = vi.spyOn(port?.config as NonNullable<typeof port>['config'], 'save');
+    await run(['pause', 'grow']);
+    await run(['resume', 'grow']);
+    expect(save.mock.calls.map(([i]) => i.confirmedBy)).toEqual(['owner_cli', 'owner_cli']);
+  });
+
+  it('deny, park and stop pass --reason through to the decision row', async () => {
+    const { proposed } = await seed();
+    await run(['deny', proposed, '--reason', 'too pricey']);
+    port?.store.upsertInitiative({
+      id: 'scout2',
+      personalityId: 'pm',
+      origin: 'agent',
+      parentId: 'grow',
+      state: 'self_started',
+      configPath: join(dir, 'none.yaml'),
+      configHash: 'h',
+      version: 1,
+    });
+    await run(['stop', 'scout2', '--reason', 'off topic']);
+    const store = new SQLiteInitiativeStore(initiativesDbPath(dir), { explorationCapFor: () => 5 });
+    const reasons = store
+      .decisionsSince('pm', '1970-01-01T00:00:00.000Z')
+      .map((d) => [d.verdict, d.reason]);
+    store.close();
+    expect(reasons).toEqual(
+      expect.arrayContaining([
+        ['reject', 'too pricey'],
+        ['stop', 'off topic'],
+      ]),
+    );
+  });
+
+  it('park passes --reason too', async () => {
+    const { briefed } = await seed();
+    await run(['park', briefed, '--reason', 'later']);
+    const store = new SQLiteInitiativeStore(initiativesDbPath(dir), { explorationCapFor: () => 5 });
+    const rows = store.decisionsSince('pm', '1970-01-01T00:00:00.000Z');
+    store.close();
+    expect(rows.find((d) => d.verdict === 'park')?.reason).toBe('later');
   });
 
   it('metrics shows gate rates and spend', async () => {

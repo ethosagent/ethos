@@ -1061,11 +1061,10 @@
               "additionalProperties": false,
               "properties": {
                 "digestTime": {
-                  "minLength": 1,
+                  "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d$",
                   "type": "string"
                 },
                 "ownerChannel": {
-                  "minLength": 1,
                   "type": "string"
                 }
               },
@@ -1156,11 +1155,10 @@
               "additionalProperties": false,
               "properties": {
                 "digestTime": {
-                  "minLength": 1,
+                  "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d$",
                   "type": "string"
                 },
                 "ownerChannel": {
-                  "minLength": 1,
                   "type": "string"
                 }
               },
@@ -1245,11 +1243,10 @@
               "additionalProperties": false,
               "properties": {
                 "digestTime": {
-                  "minLength": 1,
+                  "pattern": "^([01]?\\d|2[0-3]):[0-5]\\d$",
                   "type": "string"
                 },
                 "ownerChannel": {
-                  "minLength": 1,
                   "type": "string"
                 }
               },

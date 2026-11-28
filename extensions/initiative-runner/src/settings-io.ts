@@ -1,8 +1,10 @@
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { validateInitiatives } from '@ethosagent/constitution';
 import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { Constitution } from '@ethosagent/types';
-import { isMap, isNode, isScalar, parseDocument, stringify } from 'yaml';
+import { isMap, isNode, isScalar, parse, parseDocument, stringify, visit } from 'yaml';
+import { z } from 'zod';
 import { type InitiativeSettings, InitiativeSettingsSchema } from './config-schema';
 import { checkSources } from './sources';
 
@@ -104,9 +106,46 @@ export function renderConstitutionWithInitiatives(
   if (start === undefined || end === undefined) {
     return { ok: false, error: 'could not locate the initiatives block in constitution.yaml' };
   }
+  const anchors = new Set<string>();
+  visit(pair.value, (_k, node) => {
+    if (isNode(node) && node.anchor !== undefined) anchors.add(node.anchor);
+  });
+  if (anchors.size > 0) {
+    return {
+      ok: false,
+      error:
+        'the initiatives block carries a YAML anchor (an alias may point into it); edit it by hand',
+    };
+  }
   // The node's range swallows the blank lines that follow it; give them back.
   const tail = /\n*$/.exec(source.slice(start, end))?.[0] ?? '';
   const rest = source.slice(end);
   const sep = tail !== '' || rest.startsWith('\n') ? tail : '\n';
-  return { ok: true, text: `${source.slice(0, start)}${added}${sep}${rest}` };
+  const text = `${source.slice(0, start)}${added}${sep}${rest}`;
+  return verifyOthersUnchanged(source, text);
+}
+
+/**
+ * Re-parse the spliced text and require every top-level key but `initiatives` to deep-equal its
+ * value before the splice; a mismatch refuses the write (pinned by settings-io.test.ts).
+ */
+function verifyOthersUnchanged(
+  before: string,
+  after: string,
+): { ok: true; text: string } | { ok: false; error: string } {
+  const a: unknown = parse(before);
+  const b: unknown = parse(after);
+  const rest = (v: unknown): Record<string, unknown> => {
+    const r = z.record(z.string(), z.unknown()).safeParse(v);
+    if (!r.success) return {};
+    const { initiatives: _drop, ...others } = r.data;
+    return others;
+  };
+  if (!isDeepStrictEqual(rest(a), rest(b))) {
+    return {
+      ok: false,
+      error: 'writing the initiatives block would change other constitution blocks',
+    };
+  }
+  return { ok: true, text: after };
 }

@@ -39,6 +39,19 @@ export const GuidanceStatusSchema = z.enum(['mapped', 'unreachable', 'refused'])
 
 // -- Personality settings (personalities/<id>/initiatives/settings.yaml) -----
 
+/** `<platform>:<chatId>`; mirrors config-schema.ts `OwnerChannel` and the runtime's `parseOwnerChannel`. */
+const OwnerChannelSchema = z.string().refine(
+  (s) => {
+    const at = s.indexOf(':');
+    return at > 0 && at < s.length - 1;
+  },
+  { message: 'must be <platform>:<chatId>, e.g. telegram:12345' },
+);
+/** `HH:MM` UTC; mirrors config-schema.ts `DigestTime`. */
+const DigestTimeSchema = z
+  .string()
+  .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, { message: 'must be HH:MM (UTC)' });
+
 /** The full strict settings object. Save bodies carry all of it, not a subset. */
 export const InitiativeSettingsWireSchema = z
   .object({
@@ -50,7 +63,7 @@ export const InitiativeSettingsWireSchema = z
       .strict()
       .optional(),
     delivery: z
-      .object({ ownerChannel: z.string().min(1), digestTime: z.string().min(1) })
+      .object({ ownerChannel: OwnerChannelSchema, digestTime: DigestTimeSchema })
       .strict()
       .optional(),
     standingGuidance: z.array(z.string()),
@@ -92,20 +105,24 @@ export const InitiativesSettingsSaveOutputSchema = z.object({
 // -- Constitution `initiatives` block ----------------------------------------
 
 /**
- * `readableRoots` refuses `~/.ssh`, its children, and the absolute `$HOME/.ssh`
- * form (any `.ssh` path segment once `.`/`..` are resolved). This is a schema
- * convenience: checkSources (extensions/initiative-runner/src/sources.ts) and the
- * constitution loader (packages/types/src/constitution.ts consumers) remain the
- * real enforcers.
+ * `readableRoots` refuses `~/.ssh`, its children, the absolute `$HOME/.ssh` form (any `.ssh`
+ * segment once `.`/`..` are resolved, case-folded) and the ancestors of `~/.ssh` (`~`, `/`,
+ * `/Users`, `/home`), matching the server. This is a schema convenience; the real enforcers are
+ * `checkSources` (extensions/initiative-runner/src/sources.ts) and the readableRoots check in
+ * `validateConstitutionInitiatives`, called by `constitutionSave` in
+ * apps/web-api/src/services/initiatives.service.ts.
  */
+const SSH_ANCESTORS = new Set(['~', '/', '/users', '/home']);
 function hasSshSegment(root: string): boolean {
   const out: string[] = [];
   for (const seg of root.trim().replace(/\\/g, '/').split('/')) {
     if (seg === '' || seg === '.') continue;
     if (seg === '..') out.pop();
-    else out.push(seg);
+    else out.push(seg.toLowerCase());
   }
-  return out.includes('.ssh');
+  if (out.includes('.ssh')) return true;
+  const resolved = `${root.trim().startsWith('/') ? '/' : ''}${out.join('/')}`;
+  return out.length === 0 || SSH_ANCESTORS.has(resolved);
 }
 
 const ReadableRootSchema = z
@@ -120,7 +137,7 @@ export const ConstitutionInitiativesSchema = z
     maxUsdPerDayPerPersonality: usd.optional(),
     selfStartPoolUsdPerDay: usd.optional(),
     maxSelfStarted: z.number().int().nonnegative().optional(),
-    readableRoots: z.array(ReadableRootSchema).optional(),
+    readableRoots: z.array(z.string().min(1)).optional(),
   })
   .strict();
 export type ConstitutionInitiatives = z.infer<typeof ConstitutionInitiativesSchema>;
@@ -128,8 +145,26 @@ export type ConstitutionInitiatives = z.infer<typeof ConstitutionInitiativesSche
 export const ConstitutionInitiativesOutputSchema = z.object({
   initiatives: ConstitutionInitiativesSchema,
 });
+/**
+ * Save body: every key but `readableRoots` is required, so a partial body cannot silently drop an
+ * operator ceiling. The two USD ceilings are `null` to mean "no ceiling"; the service removes
+ * nulls before validating (InitiativesService.constitutionSave).
+ */
+export const ConstitutionInitiativesSaveBlockSchema = z
+  .object({
+    enabled: z.boolean(),
+    maxUsdPerDay: usd.nullable(),
+    maxUsdPerDayPerPersonality: usd.nullable(),
+    selfStartPoolUsdPerDay: usd,
+    maxSelfStarted: z.number().int().nonnegative(),
+    readableRoots: z.array(ReadableRootSchema).optional(),
+  })
+  .strict();
+export type ConstitutionInitiativesSaveBlock = z.infer<
+  typeof ConstitutionInitiativesSaveBlockSchema
+>;
 export const ConstitutionInitiativesSaveInputSchema = z
-  .object({ initiatives: ConstitutionInitiativesSchema })
+  .object({ initiatives: ConstitutionInitiativesSaveBlockSchema })
   .strict();
 export const ConstitutionInitiativesSaveOutputSchema = z.object({
   ok: z.literal(true),

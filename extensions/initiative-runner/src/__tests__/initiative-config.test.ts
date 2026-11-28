@@ -66,6 +66,19 @@ describe('initiative file schema', () => {
     expect(InitiativeFileSchema.safeParse(g).success).toBe(false);
   });
 
+  it('one-shot explore_windows (relative, ISO) are refused; cron and "every N" pass', () => {
+    const ok = (w: string) => {
+      const doc = parse(SPEC_YAML) as Record<string, unknown>;
+      doc.timeline = { ...(doc.timeline as object), explore_windows: [w] };
+      return InitiativeFileSchema.safeParse(doc).success;
+    };
+    expect(ok('in 5m')).toBe(false);
+    expect(ok('30m')).toBe(false);
+    expect(ok('2026-12-01T09:00:00Z')).toBe(false);
+    expect(ok('every 15m')).toBe(true);
+    expect(ok('0 9 * * 1-5')).toBe(true);
+  });
+
   it('bad cron in explore_windows fails with the field path', () => {
     const doc = spec();
     doc.timeline = { ...(doc.timeline as object), explore_windows: ['0 9 * * 1-5', 'not a cron'] };
@@ -113,6 +126,19 @@ describe('initiative settings schema', () => {
     expect(r.success).toBe(true);
   });
 
+  it('delivery needs <platform>:<chatId> and HH:MM', () => {
+    const d = (ownerChannel: string, digestTime: string) =>
+      InitiativeSettingsSchema.safeParse({ delivery: { ownerChannel, digestTime } }).success;
+    expect(d('telegram:12345', '08:00')).toBe(true);
+    expect(d('telegram:12345', '8:05')).toBe(true);
+    expect(d('telegram', '08:00')).toBe(false);
+    expect(d('telegram:', '08:00')).toBe(false);
+    expect(d(':1', '08:00')).toBe(false);
+    expect(d('telegram:1', 'b')).toBe(false);
+    expect(d('telegram:1', '24:00')).toBe(false);
+    expect(d('telegram:1', '08:60')).toBe(false);
+  });
+
   it('unknown key fails at every level', () => {
     expect(InitiativeSettingsSchema.safeParse({ allowWrites: true }).success).toBe(false);
     expect(
@@ -120,7 +146,7 @@ describe('initiative settings schema', () => {
     ).toBe(false);
     expect(
       InitiativeSettingsSchema.safeParse({
-        delivery: { ownerChannel: 'a', digestTime: 'b', x: 1 },
+        delivery: { ownerChannel: 'a:1', digestTime: '08:00', x: 1 },
       }).success,
     ).toBe(false);
   });

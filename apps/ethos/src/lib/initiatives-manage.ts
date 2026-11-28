@@ -15,7 +15,7 @@ import {
 export const CLI_DECIDER = 'owner:cli';
 
 export const MANAGE_USAGE =
-  'Usage: ethos initiatives (list | show <id> | export <EXP-id> | pause <id> | resume <id> | metrics | approve <EXP-id> | deny <EXP-id> | adopt <EXP-id> [--option X] | dig-deeper <EXP-id> | park <EXP-id> | keep <id> | stop <id> | make-mine <id>) [--personality <id>] [--days N] [--json]';
+  'Usage: ethos initiatives (list | show <id> | export <EXP-id> | pause <id> | resume <id> | metrics | approve <EXP-id> | deny <EXP-id> [--reason <text>] | adopt <EXP-id> [--option X] | dig-deeper <EXP-id> | park <EXP-id> [--reason <text>] | keep <id> | stop <id> [--reason <text>] | make-mine <id>) [--personality <id>] [--days N] [--json]';
 
 export const MANAGE_COMMANDS: readonly string[] = [
   'list',
@@ -56,7 +56,7 @@ function flag(args: readonly string[], name: string): string | undefined {
 
 /** The first positional (not a flag, not a flag's value). */
 function positional(args: readonly string[]): string | undefined {
-  const valued = new Set(['--personality', '--days', '--option']);
+  const valued = new Set(['--personality', '--days', '--option', '--reason']);
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string;
     if (valued.has(a)) i++;
@@ -205,7 +205,7 @@ export async function runManageCommand(
         op: sub,
         draft: { id: row.id },
         sessionId: 'cli',
-        confirmedBy: 'owner_ui', // the contract has no CLI value; the CLI is an owner surface
+        confirmedBy: 'owner_cli',
       });
       if (!r.ok) throw invalid(r.error, 'Nothing was changed.');
       return {
@@ -243,7 +243,12 @@ export async function runManageCommand(
     case 'approve':
     case 'deny': {
       const verdict = sub === 'approve' ? 'approve' : 'reject';
-      const r = await decide(need(), { target: needId(), gate: 'gate1_explore', verdict }, now);
+      const reason = flag(rest, '--reason');
+      const r = await decide(
+        need(),
+        { target: needId(), gate: 'gate1_explore', verdict, ...(reason ? { reason } : {}) },
+        now,
+      );
       return {
         lines: [
           `${r.exploration?.id}: ${sub === 'approve' ? 'approved, now exploring' : 'denied'}`,
@@ -254,9 +259,16 @@ export async function runManageCommand(
     case 'adopt':
     case 'park': {
       const option = sub === 'adopt' ? (flag(rest, '--option') ?? null) : null;
+      const reason = sub === 'park' ? flag(rest, '--reason') : undefined;
       const r = await decide(
         need(),
-        { target: needId(), gate: 'gate2_adopt', verdict: sub, option },
+        {
+          target: needId(),
+          gate: 'gate2_adopt',
+          verdict: sub,
+          option,
+          ...(reason ? { reason } : {}),
+        },
         now,
       );
       return {
@@ -282,7 +294,12 @@ export async function runManageCommand(
     }
     case 'keep':
     case 'stop': {
-      const r = await decide(need(), { target: needId(), gate: 'self_start', verdict: sub }, now);
+      const reason = sub === 'stop' ? flag(rest, '--reason') : undefined;
+      const r = await decide(
+        need(),
+        { target: needId(), gate: 'self_start', verdict: sub, ...(reason ? { reason } : {}) },
+        now,
+      );
       return {
         lines: [`${r.initiative?.id}: ${sub === 'keep' ? 'kept (active)' : 'stopped'}`],
         data: { id: r.initiative?.id, verdict: sub },

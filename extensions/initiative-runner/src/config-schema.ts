@@ -28,9 +28,31 @@ export const SourceEntrySchema = z.union([
 export type SourceEntry = z.infer<typeof SourceEntrySchema>;
 const usd = z.number().finite().nonnegative();
 
-const ExploreWindow = z.string().refine((s) => parseSchedule(s) !== null, {
-  message: 'not a valid schedule (cron, "every 2h", relative delay or ISO timestamp)',
-});
+/** Recurring only: a one-shot ("in 5m", ISO timestamp) never repeats, so it cannot be a window. */
+const ExploreWindow = z.string().refine(
+  (s) => {
+    const kind = parseSchedule(s)?.kind;
+    return kind === 'cron' || kind === 'interval';
+  },
+  { message: 'not a recurring schedule (use a cron expression or "every 2h")' },
+);
+
+/**
+ * `<platform>:<chatId>`, the shape `parseOwnerChannel` accepts
+ * (packages/wiring/src/initiative-runtime.ts). A bare platform names no chat.
+ */
+const OwnerChannel = z.string().refine(
+  (s) => {
+    const at = s.indexOf(':');
+    return at > 0 && at < s.length - 1;
+  },
+  { message: 'must be <platform>:<chatId>, e.g. telegram:12345' },
+);
+
+/** `HH:MM` UTC, the shape `digestMinutes` accepts (packages/wiring/src/initiative-runtime.ts). */
+const DigestTime = z
+  .string()
+  .regex(/^([01]?\d|2[0-3]):[0-5]\d$/, { message: 'must be HH:MM (UTC)' });
 
 const GuidanceEntry = z
   .object({
@@ -124,10 +146,7 @@ export const InitiativeSettingsSchema = z
       .object({ mode: z.enum(AUTONOMY_MODES), askAboveUsd: usd.optional() })
       .strict()
       .optional(),
-    delivery: z
-      .object({ ownerChannel: z.string().min(1), digestTime: z.string().min(1) })
-      .strict()
-      .optional(),
+    delivery: z.object({ ownerChannel: OwnerChannel, digestTime: DigestTime }).strict().optional(),
     standingGuidance: z.array(z.string()).default([]),
   })
   .strict();
