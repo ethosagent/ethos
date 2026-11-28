@@ -103,6 +103,13 @@ export {
   schemaChangeZ,
 } from './proposal-payload';
 export {
+  formatRipple,
+  RIPPLE_DISCLAIMER,
+  type RippleInput,
+  type RippleResult,
+  rippleWalk,
+} from './ripple';
+export {
   applyChange,
   type ChangeClass,
   classifySchemaChange,
