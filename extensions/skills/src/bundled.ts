@@ -37,6 +37,7 @@ export const BUNDLED_SKILL_IDS = [
   'social-media/reddit-research',
   'personal/get-to-know-you',
   'personal/birth-ritual',
+  'personal/initiative-setup',
 ] as const;
 
 export type BundledSkillId = (typeof BUNDLED_SKILL_IDS)[number];
