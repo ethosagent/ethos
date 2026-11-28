@@ -10,6 +10,7 @@
   "dependencies": {
     "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",
+    "@ethosagent/config": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/design-tokens": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",

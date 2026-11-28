@@ -514,6 +514,9 @@ importers:
       '@ethosagent/agent-bridge':
         specifier: workspace:*
         version: link:../../packages/agent-bridge
+      '@ethosagent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
