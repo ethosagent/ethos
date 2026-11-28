@@ -269,6 +269,13 @@ export { type DeliveryTargetConfig, type RelayResult, relayToTargets } from './w
  */
 const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
 
+/**
+ * What `Gateway.notifyTrackedOutcome` reports. `owed` is an unconfirmed send whose `pending` ledger
+ * row is durable, so the delivery sweep re-sends it and the caller must not retry; `failed` wrote
+ * nothing durable (refused, no ledger, or the ledger write failed).
+ */
+export type NotifyOutcome = 'confirmed' | 'held' | 'owed' | 'failed';
+
 export class Gateway {
   /** Bot routing table keyed by `botKey`. Mutable so `addAdapter` /
    *  `removeAdapter` can reconcile a live config change (Phase A of
@@ -4907,7 +4914,7 @@ export class Gateway {
    * wrong bot (F08). In multi-bot deployments `botKey` is therefore required —
    * `voice.inbound.owner` carries one for exactly this reason.
    */
-  async notifyTracked(
+  async notifyTrackedOutcome(
     target: {
       platform: string;
       chatId: string;
@@ -4928,8 +4935,8 @@ export class Gateway {
      * (quiet hours) and a ledger redelivery carry only `text`. Not a recipient: that stays `target`.
      */
     extra?: { initiativeDigest?: InitiativeDigest },
-  ): Promise<boolean | 'held'> {
-    const refuse = (cause: string): false => {
+  ): Promise<NotifyOutcome> {
+    const refuse = (cause: string): 'failed' => {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_unconfirmed',
         cause,
@@ -4940,7 +4947,7 @@ export class Gateway {
           durable: false,
         },
       });
-      return false;
+      return 'failed';
     };
 
     const botKey = target.botKey ?? this.defaultBotKey;
@@ -4970,7 +4977,7 @@ export class Gateway {
       if (held) return 'held';
     }
 
-    return this.sendTracked(
+    const sent = await this.sendTrackedDetailed(
       {
         adapter,
         botKey,
@@ -4981,6 +4988,21 @@ export class Gateway {
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
       extra?.initiativeDigest,
     );
+    if (sent.confirmed) return 'confirmed';
+    return sent.obligationId === null ? 'failed' : 'owed';
+  }
+
+  /**
+   * {@link notifyTrackedOutcome} as the boolean the other callers read: `'owed'` (unconfirmed, but
+   * the ledger holds a `pending` row the sweep redelivers) is `false`, exactly as before.
+   */
+  async notifyTracked(
+    target: Parameters<Gateway['notifyTrackedOutcome']>[0],
+    text: string,
+    extra?: { initiativeDigest?: InitiativeDigest },
+  ): Promise<boolean | 'held'> {
+    const outcome = await this.notifyTrackedOutcome(target, text, extra);
+    return outcome === 'held' ? 'held' : outcome === 'confirmed';
   }
 
   /**

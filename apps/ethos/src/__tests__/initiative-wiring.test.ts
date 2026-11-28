@@ -250,9 +250,9 @@ describe('digest delivery', () => {
     const calls: unknown[][] = [];
     const notify = createDigestNotify({
       listAdapters: () => [{ id: 'telegram:bot1' }, { id: 'telegram:bot1' }],
-      notifyTracked: async (...args) => {
+      notifyTrackedOutcome: async (...args) => {
         calls.push(args);
-        return true;
+        return 'confirmed';
       },
     });
     const digest = DIGEST('EXP-0001');
@@ -263,15 +263,68 @@ describe('digest delivery', () => {
   });
 
   it('refuses the send when more than one bot serves the owner platform', async () => {
-    const notifyTracked = vi.fn(async () => true as const);
+    const notifyTracked = vi.fn(async () => 'confirmed' as const);
     const notify = createDigestNotify({
       listAdapters: () => [{ id: 'telegram:bot1' }, { id: 'telegram:bot2' }],
-      notifyTracked,
+      notifyTrackedOutcome: notifyTracked,
     });
     await expect(
       notify({ platform: 'telegram', chatId: '42' }, 'md', DIGEST('EXP-0001')),
     ).resolves.toBe(false);
     expect(notifyTracked).not.toHaveBeenCalled();
+  });
+
+  it('a refused card is owed to the ledger: the sweep delivers it once and a later send is not needed', async () => {
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const texts: string[] = [];
+    let refuse = true;
+    const adapter = {
+      id: 'telegram:bot1',
+      displayName: 'Telegram',
+      capabilities: { platform: 'telegram' },
+      canSendTyping: false,
+      canEditMessage: false,
+      canReact: false,
+      canSendFiles: false,
+      maxMessageLength: 4096,
+      start: async () => {},
+      stop: async () => {},
+      onMessage: () => {},
+      health: async () => ({ ok: true }),
+      sendInitiativeDigest: async (): Promise<DeliveryResult> => ({
+        ok: false,
+        error: 'invalid_blocks',
+      }),
+      send: async (_c: string, m: OutboundMessage): Promise<DeliveryResult> => {
+        if (refuse) return { ok: false, error: 'refused' };
+        texts.push(m.text);
+        return { ok: true };
+      },
+    };
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'bot1',
+          loop: {
+            run: async function* () {
+              yield { type: 'done' as const, text: '', turnCount: 1 };
+            },
+            hooks: new DefaultHookRegistry(),
+          } as unknown as AgentLoop,
+          binding: { type: 'personality' as const, name: 'default' },
+        },
+      ],
+      deliveryLedger: ledger,
+      adapters: new Map([['telegram', adapter as unknown as PlatformAdapter]]),
+      clarifySweepIntervalMs: 0,
+    });
+    const notify = createDigestNotify(gateway);
+    await expect(
+      notify({ platform: 'telegram', chatId: '42' }, 'md', DIGEST('EXP-0001')),
+    ).resolves.toBe('owed');
+    refuse = false;
+    await gateway.sweepPendingDeliveries();
+    expect(texts).toEqual(['md']);
   });
 
   // A card-capable adapter as the gateway sees one: it renders the buttons from the digest (the

@@ -114,6 +114,26 @@ describe('digest card delivery through notifyTracked', () => {
     expect(healthy.texts.map((m) => m.text)).toEqual(['digest md']);
   });
 
+  it('notifyTrackedOutcome tells a durable pending row (owed) from nothing durable (failed)', async () => {
+    const owed = gatewayWith(
+      new SQLiteDeliveryLedger(':memory:'),
+      adapterWith({ cards: true, ok: false }),
+    );
+    await expect(
+      owed.notifyTrackedOutcome(TARGET, 'md', { initiativeDigest: digest }),
+    ).resolves.toBe('owed');
+
+    const refused = gatewayWith(new SQLiteDeliveryLedger(':memory:'), adapterWith({ cards: true }));
+    await expect(refused.notifyTrackedOutcome({ ...TARGET, botKey: 'other' }, 'md')).resolves.toBe(
+      'failed',
+    );
+
+    const ok = gatewayWith(new SQLiteDeliveryLedger(':memory:'), adapterWith({ cards: true }));
+    await expect(ok.notifyTrackedOutcome(TARGET, 'md', { initiativeDigest: digest })).resolves.toBe(
+      'confirmed',
+    );
+  });
+
   it('a card path that throws leaves the row pending, like a refused send', async () => {
     const ledger = new SQLiteDeliveryLedger(':memory:');
     const adapter = adapterWith({ cards: true });

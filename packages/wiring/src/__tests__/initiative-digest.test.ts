@@ -219,6 +219,25 @@ describe('initiative digest', () => {
     expect(calls).toBe(2);
   });
 
+  it('an owed digest keeps the marker: the ledger sweep re-sends it, the next tick does not', async () => {
+    const pending: string[] = [];
+    const delivered: string[] = [];
+    let calls = 0;
+    const { runtime, save, warnings } = await setup(async (_t, text) => {
+      calls++;
+      pending.push(text); // the ledger row Gateway.notifyTrackedOutcome reports as 'owed'
+      return 'owed';
+    });
+    await save('product-manager', 'activation');
+    writeDelivery('product-manager', 'telegram:42');
+    expect((await runtime.tick(DUE)).digests).toEqual([]);
+    expect(warnings.join('\n')).toContain('delivery ledger owns the retry');
+    delivered.push(...pending.splice(0)); // the gateway sweep between the ticks
+    await runtime.tick(LATER);
+    expect(calls).toBe(1);
+    expect(delivered).toHaveLength(1);
+  });
+
   it('an owner channel with no chat id sends nothing', async () => {
     let calls = 0;
     const { runtime, save } = await setup(async () => {

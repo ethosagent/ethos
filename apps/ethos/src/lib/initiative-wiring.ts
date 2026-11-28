@@ -1,4 +1,5 @@
 import { ethosDir } from '@ethosagent/config';
+import type { NotifyOutcome } from '@ethosagent/gateway';
 import type { InitiativeActionVerb, InitiativeDigest, Storage } from '@ethosagent/types';
 import {
   createInitiativeCliPort,
@@ -199,16 +200,16 @@ export function wireInitiativeAdapters(
 
 /** What `Gateway` offers the digest send. Structural, like `CronDeliverDeps.gateway`. */
 export interface DigestGateway {
-  notifyTracked(
+  notifyTrackedOutcome(
     target: { platform: string; chatId: string; botKey?: string },
     text: string,
     extra?: { initiativeDigest?: InitiativeDigest },
-  ): Promise<boolean | 'held'>;
+  ): Promise<NotifyOutcome>;
   listAdapters(): ReadonlyArray<{ id: string }>;
 }
 
 /**
- * The digest sender: `Gateway.notifyTracked`, which rides the delivery ledger and holds the notice
+ * The digest sender: `Gateway.notifyTrackedOutcome`, which rides the delivery ledger and holds the notice
  * for quiet hours (extensions/gateway/src/__tests__/notify-tracked.test.ts, U11). The recipient is
  * the `<platform>:<chatId>` from the personality's `delivery.ownerChannel`; nothing a model wrote
  * reaches it. With more than one bot on the platform the bot is ambiguous, so the send is refused
@@ -232,11 +233,12 @@ export function createDigestNotify(gateway: DigestGateway): DigestNotify {
     if (only === undefined || ids.length > 1) return false;
     const colon = only.indexOf(':');
     const botKey = colon > 0 ? only.slice(colon + 1) : undefined;
-    return gateway.notifyTracked(
+    const outcome = await gateway.notifyTrackedOutcome(
       { ...target, ...(botKey ? { botKey } : {}) },
       text,
       digest ? { initiativeDigest: digest } : undefined,
     );
+    return outcome === 'confirmed' ? true : outcome === 'failed' ? false : outcome;
   };
 }
 

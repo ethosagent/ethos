@@ -35,13 +35,17 @@ const DAY_MS = 86_400_000;
 const SWITCHED_OFF_FILE = '.switched-off.json';
 const DIGEST_SENT_FILE = '.digest-sent.json';
 
-/** What the digest send needs from the gateway: `Gateway.notifyTracked`, which holds it for quiet hours. */
+/**
+ * What the digest send needs from the gateway: `Gateway.notifyTrackedOutcome`, which holds it for
+ * quiet hours. `false`: nothing durable was written, so a retry is safe. `'owed'`: the send failed
+ * but the delivery ledger holds a `pending` row the gateway sweep re-sends, so a retry would double it.
+ */
 export type DigestNotify = (
   target: { platform: string; chatId: string },
   text: string,
   /** The digest behind `text`, so a card-capable adapter can render its buttons. Text stays the fallback. */
   digest?: InitiativeDigest,
-) => Promise<boolean | 'held'>;
+) => Promise<boolean | 'held' | 'owed'>;
 
 /** `delivery.ownerChannel` is `<platform>:<chatId>`. A bare platform names no chat, so nothing is sent. */
 function parseOwnerChannel(raw: string): { platform: string; chatId: string } | null {
@@ -218,8 +222,10 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
    * The morning digest, once per personality per UTC day at or after `delivery.digestTime`.
    * Idempotent across ticks through `.digest-sent.json` (Storage, written before the hand-off). A
    * `'held'` result (quiet hours, `Gateway.notifyTracked`) counts as handed off: the gateway owes
-   * it. `false` restores the previous marker so the next tick retries; limitation: the delivery
-   * ledger may also redeliver that first attempt. Pinned by initiative-digest.test.ts.
+   * it, and so does `'owed'` (the ledger holds a durable `pending` row its sweep re-sends; the
+   * marker stays and `onError` reports it). Only `false` (nothing durable was written) or a throw
+   * restores the previous marker so the next tick retries. Pinned by initiative-digest.test.ts and
+   * apps/ethos/src/__tests__/initiative-wiring.test.ts.
    */
   async function maybeDigest(
     personalityId: string,
@@ -264,12 +270,22 @@ export function createInitiativeRuntime(deps: InitiativeRuntimeDeps): Initiative
     };
     await write({ day, at: now.toISOString() });
     if (digestIsEmpty(digest)) return;
-    let result: boolean | 'held' | undefined;
+    let result: boolean | 'held' | 'owed' | undefined;
     let thrown: unknown;
     try {
       result = await notify(target, renderDigestMarkdown(digest), digest);
     } catch (err) {
       thrown = err;
+    }
+    if (result === 'owed') {
+      // The ledger row is durable: its sweep re-sends the text. Keep the marker; retrying here
+      // would send a second digest every tick.
+      onError(
+        new Error(
+          `digest for "${personalityId}" was not confirmed; the delivery ledger owns the retry`,
+        ),
+      );
+      return;
     }
     if (thrown !== undefined || result === false) {
       onError(
