@@ -11,6 +11,7 @@ import { IdentityEditor } from './IdentityEditor';
 import { PluginsAttachPanel } from './PluginsPanels';
 import { PersonalitySkillsPanel } from './SkillsPanels';
 import { ToolsetEditor } from './ToolsetPickers';
+import { WorldsTab } from './WorldsTab';
 
 // ---------------------------------------------------------------------------
 // MCP Tokens — set / remove bearer tokens for attached MCP servers
@@ -31,7 +32,8 @@ export type EditModalTabKey =
   | 'config'
   | 'soul'
   | 'skills'
-  | 'plugins';
+  | 'plugins'
+  | 'worlds';
 
 export function EditModal({
   id,
@@ -62,6 +64,7 @@ export function EditModal({
       toolset: forTab('toolset'),
       config: forTab('config'),
       plugins: forTab('plugins'),
+      worlds: forTab('worlds'),
     };
   }, []);
 
@@ -167,6 +170,11 @@ export function EditModal({
                   onDirtyChange={reportDirty.plugins}
                 />
               ),
+            },
+            {
+              key: 'worlds',
+              label: 'Worlds',
+              children: <WorldsTab id={id} onDirtyChange={reportDirty.worlds} />,
             },
           ]}
         />

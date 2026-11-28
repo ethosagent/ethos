@@ -20,6 +20,7 @@ export function TabSaveBar({
   saveSucceeded,
   onSave,
   onDirtyChange,
+  saveDisabled = false,
 }: {
   /** Draft differs from what is stored. */
   dirty: boolean;
@@ -30,6 +31,8 @@ export function TabSaveBar({
   onSave: () => void;
   /** Lets the modal's close-guard see this tab's dirty state. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** The draft is dirty but not savable (a validation failure the tab shows itself). */
+  saveDisabled?: boolean;
 }) {
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -72,7 +75,7 @@ export function TabSaveBar({
           </>
         ) : null}
       </div>
-      <Button type="primary" disabled={!dirty} loading={saving} onClick={onSave}>
+      <Button type="primary" disabled={!dirty || saveDisabled} loading={saving} onClick={onSave}>
         Save
       </Button>
     </div>
