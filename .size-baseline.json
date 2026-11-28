@@ -217,6 +217,11 @@
       "lines": 611
     },
     {
+      "path": "apps/web-api/src/__tests__/routes/worlds-rpc.test.ts",
+      "kind": "test",
+      "lines": 871
+    },
+    {
       "path": "apps/web-api/src/__tests__/services/approvals.service.test.ts",
       "kind": "test",
       "lines": 916
@@ -340,6 +345,11 @@
       "path": "apps/web-api/src/services/voice.service.ts",
       "kind": "source",
       "lines": 1018
+    },
+    {
+      "path": "apps/web-api/src/services/worlds.service.ts",
+      "kind": "source",
+      "lines": 999
     },
     {
       "path": "apps/web-api/src/voice/__tests__/realtime-control-lane.test.ts",
@@ -515,6 +525,21 @@
       "path": "apps/web/src/pages/settings/panes/voice.tsx",
       "kind": "source",
       "lines": 1726
+    },
+    {
+      "path": "docs/content/building/explanation/world-graph-governance.md",
+      "kind": "doc",
+      "lines": 210
+    },
+    {
+      "path": "docs/content/security/security-boundary.md",
+      "kind": "doc",
+      "lines": 221
+    },
+    {
+      "path": "docs/content/using/reference/cli/evolve-and-learn.md",
+      "kind": "doc",
+      "lines": 203
     },
     {
       "path": "docs/src/components/OrbitHero/index.tsx",
@@ -1095,6 +1120,21 @@
       "path": "extensions/watchers/src/index.ts",
       "kind": "source",
       "lines": 952
+    },
+    {
+      "path": "extensions/world-service/src/__tests__/write-routing.test.ts",
+      "kind": "test",
+      "lines": 613
+    },
+    {
+      "path": "extensions/world-service/src/service.ts",
+      "kind": "source",
+      "lines": 1136
+    },
+    {
+      "path": "extensions/world-sqlite/src/store.ts",
+      "kind": "source",
+      "lines": 1019
     },
     {
       "path": "packages/a2a/src/__tests__/auth.test.ts",
