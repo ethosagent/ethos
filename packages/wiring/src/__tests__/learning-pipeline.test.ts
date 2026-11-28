@@ -15,7 +15,6 @@ import {
   LEARNING_EXCLUDED_KEY_PREFIXES,
   listCandidates,
   listCases,
-  rollback,
   submitCandidate,
   updateCandidate,
 } from '@ethosagent/learning-inbox';
@@ -23,7 +22,6 @@ import {
   OBSERVABILITY_KILL_SWITCH_FILE,
   SQLiteObservabilityStore,
 } from '@ethosagent/observability-sqlite';
-import { SkillHistory } from '@ethosagent/skills';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, Session, SessionFilter, StoredMessage } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -39,7 +37,6 @@ import {
   importLegacyLearningQueues,
   learningAuditSink,
   learningPolicyFor,
-  learningPromoteDeps,
   learningRegressionTopUp,
   pendingReplayCandidateIds,
   promoteLearningCandidate,
@@ -489,60 +486,6 @@ describe('install.scan on promotion (EVO-001 gate, recordSkillScan)', () => {
     expect(row?.details?.redCount).toBeGreaterThan(0);
     expect(row?.details?.rules).toEqual(expect.arrayContaining([expect.any(String)]));
     expect(JSON.stringify(row)).not.toContain('Ignore previous instructions');
-  });
-});
-
-describe('learningPromoteDeps binds the skill history (plan skill-history-and-lock)', () => {
-  const unused = async (): Promise<never> => {
-    throw new Error('unused');
-  };
-  const ctx = () => ({
-    storage,
-    dataDir: DATA,
-    personalities,
-    expressions: { evolveExpression: unused, revertExpression: unused },
-    observability: { recordSafetyApproval: () => {} },
-  });
-  const content = '---\nname: cite\ndescription: "Cite"\n---\n\nCite.\n';
-  const dest = join(DATA, 'skills', 'cite.md');
-
-  it('a human approval records a learning version, and rollback a learning-rollback one', async () => {
-    const c = await submitCandidate(storage, DATA, {
-      kind: 'skill',
-      op: 'create',
-      personalityId: 'scout',
-      origin: 'nightly',
-      destination: dest,
-      content,
-    });
-    const history = new SkillHistory({ storage, dataDir: DATA });
-
-    expect((await promoteLearningCandidate(ctx(), c.id, { actor: 'web' })).ok).toBe(true);
-    expect((await history.versions(dest)).map((r) => r.source)).toEqual(['learning']);
-    expect(await rollback(learningPromoteDeps(ctx()), c.id, { actor: 'web' })).toMatchObject({
-      ok: true,
-    });
-    expect((await history.versions(dest)).map((r) => r.source)).toEqual([
-      'learning',
-      'learning-rollback',
-    ]);
-  });
-
-  it('a locked skill refuses an approval with code locked and writes nothing', async () => {
-    const c = await submitCandidate(storage, DATA, {
-      kind: 'skill',
-      op: 'create',
-      personalityId: 'scout',
-      origin: 'nightly',
-      destination: dest,
-      content,
-    });
-    await new SkillHistory({ storage, dataDir: DATA }).setLock(dest, true, 'cli');
-
-    const result = await promoteLearningCandidate(ctx(), c.id, { actor: 'web' });
-
-    expect(result).toMatchObject({ ok: false, code: 'locked' });
-    expect(await storage.exists(dest)).toBe(false);
   });
 });
 

@@ -85,7 +85,7 @@ import type {
 } from './index';
 import { buildInitiativeRuntime } from './initiative-runtime';
 import { resolveJobAffinity } from './job-affinity';
-import { freezeLatestUserTurnCase, learningSubmitPort, skillLockProbe } from './learning-pipeline';
+import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
 import { detectLocalRuntime } from './local-models';
 import {
@@ -845,7 +845,6 @@ export async function buildAgentLoop(
       dataDir,
       storage: wiringStorage,
       learning: learningSubmitPort(learningCtx),
-      isSkillLocked: skillLockProbe(learningCtx),
       // The triggering turn becomes the candidate's target case. Its session
       // key is what `caseFromSessionTurn` checks against X-D7's excluded
       // prefixes, so an eval or cron turn yields no case.

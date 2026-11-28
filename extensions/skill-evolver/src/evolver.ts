@@ -38,12 +38,6 @@ export interface EvolveOptions {
    */
   evolveExisting?: boolean;
   /**
-   * Whether the skill at `destination` is locked (`SkillHistory.isLocked`).
-   * ADVISORY: a rewrite of a locked skill is skipped before the LLM is asked.
-   * The guarantee is `SkillHistory.writeAgentAuthored` behind `promote()`.
-   */
-  isLocked?: (destination: string) => boolean | Promise<boolean>;
-  /**
    * Model id every drafting call is routed to, sent as `modelOverride` on the
    * injected provider. Unset = the provider's own model. The personality's
    * `skill_evolution.model`, mapped by `skillEvolutionEvolveOptions`.
@@ -142,7 +136,7 @@ export class SkillEvolver {
 
     const rewriteCandidates = evolveExisting ? plan.rewriteCandidates : [];
     for (const candidate of rewriteCandidates) {
-      if (await this.options.isLocked?.(join(liveDir, candidate.fileName))) {
+      if (await learning.isLocked?.(join(liveDir, candidate.fileName))) {
         skipped.push({ kind: 'rewrite', target: candidate.fileName, reason: 'locked' });
         continue;
       }

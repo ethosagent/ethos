@@ -30,13 +30,6 @@ export interface SkillProposeTarget {
    * Absent = rewrites allowed.
    */
   evolveExisting?: boolean;
-  /**
-   * Whether the skill at `destination` is locked (`SkillHistory.isLocked`).
-   * ADVISORY: it saves a replay by refusing a rewrite of a locked skill up front.
-   * The guarantee is `SkillHistory.writeAgentAuthored`, reached through
-   * `promote()`; a target that omits this still cannot change a locked skill.
-   */
-  isLocked?(destination: string): boolean | Promise<boolean>;
 }
 
 export interface SkillProposeToolOptions {
@@ -134,7 +127,7 @@ export function createSkillProposeTool(opts: SkillProposeToolOptions): Tool<Skil
       const dir = liveSkillDir(opts.dataDir, target.personalityId, target.scope);
       const destination = join(dir, targetName ? `${targetName}.md` : `${id}.md`);
 
-      if (targetName && (await target.isLocked?.(destination))) {
+      if (targetName && (await opts.learning.isLocked?.(destination))) {
         return {
           ok: false,
           error: `The skill "${targetName}" is locked, so it cannot be rewritten. Omit targetFile to propose a new skill.`,

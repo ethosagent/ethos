@@ -115,9 +115,20 @@ export interface CaseSessionSource {
 
 /** The inbox, bound to a Storage and a data dir, as `@ethosagent/skill-evolver` consumes it. */
 export function learningSubmitPort(ctx: LearningContext): LearningSubmitPort {
+  const history = new SkillHistory({ storage: ctx.storage, dataDir: ctx.dataDir });
   return {
     submit: (input) => submitCandidate(ctx.storage, ctx.dataDir, input),
     has: async (id) => (await readCandidate(ctx.storage, ctx.dataDir, id)) !== null,
+    // Advisory (see `LearningSubmitPort.isLocked`): a destination that is not a skill
+    // path answers "not locked" rather than throwing; `promote()` is the guarantee.
+    isLocked: async (destination) => {
+      try {
+        return await history.isLocked(destination);
+      } catch (err) {
+        if (err instanceof BoundaryError) return false;
+        throw err;
+      }
+    },
   };
 }
 
@@ -246,28 +257,6 @@ export function learningPromoteDeps(ctx: PromoteContext): PromoteDeps {
     // The one writer of live skill bytes and the one lock check (SkillHistory).
     ...skillHistoryPromotePorts(new SkillHistory({ storage: ctx.storage, dataDir: ctx.dataDir })),
     expressions: ctx.expressions,
-  };
-}
-
-/**
- * The advisory lock probe the proposal surfaces take (`skill_propose`'s
- * `SkillProposeTarget.isLocked`, `SkillEvolver`'s `isLocked`): it saves a replay
- * by refusing a rewrite of a locked skill up front. It is NOT the guarantee —
- * `SkillHistory.writeAgentAuthored` behind `promote()` is — so a destination that
- * is not a skill path answers "not locked" instead of throwing.
- */
-export function skillLockProbe(ctx: {
-  storage: Storage;
-  dataDir: string;
-}): (destination: string) => Promise<boolean> {
-  const history = new SkillHistory({ storage: ctx.storage, dataDir: ctx.dataDir });
-  return async (destination) => {
-    try {
-      return await history.isLocked(destination);
-    } catch (err) {
-      if (err instanceof BoundaryError) return false;
-      throw err;
-    }
   };
 }
 

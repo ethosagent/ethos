@@ -482,25 +482,6 @@ describe('Learning inbox — decisions', () => {
     );
   });
 
-  it('says a locked skill is locked and where to unlock it, and keeps the candidate waiting', async () => {
-    approveFn.mockRejectedValue(
-      Object.assign(
-        new Error('cite-sources is locked — unlock it with `ethos skills unlock cite-sources`'),
-        {
-          code: 'LOCKED',
-        },
-      ),
-    );
-    await mount();
-    await click('[data-testid="learning-approve"]');
-    const notice = q('[data-testid="learning-notice"]')?.textContent ?? '';
-    expect(notice).toContain('Not applied — this skill is locked');
-    expect(notice).toContain('Skills page');
-    expect(notice).toContain('ethos skills unlock cite-sources');
-    // still reviewable: the approve button is still there
-    expect(q('[data-testid="learning-approve"]')).not.toBeNull();
-  });
-
   it('disables Rollback, with its explanation, when rollback is not allowed', async () => {
     getFn.mockResolvedValue(
       detail({

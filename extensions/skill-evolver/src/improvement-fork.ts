@@ -70,12 +70,6 @@ export interface ImprovementForkOptions {
    * session is not refused as shared. Absent → every group lane is shared.
    */
   privateChats?: PrivateChatSet;
-  /**
-   * Advisory lock probe handed to `skill_propose` (`skillLockProbe` in
-   * `packages/wiring/src/learning-pipeline.ts`). Injected: this package does not
-   * import `@ethosagent/skills`. The guarantee is `SkillHistory.writeAgentAuthored`.
-   */
-  isSkillLocked?: (destination: string) => boolean | Promise<boolean>;
 }
 
 // Rubric system prompt for the fork personality.
@@ -179,7 +173,6 @@ export class ImprovementFork {
           personalityId: personality.id,
           scope: personality.skill_evolution?.scope,
           evolveExisting: personality.skill_evolution?.evolve_existing,
-          ...(this.opts.isSkillLocked ? { isLocked: this.opts.isSkillLocked } : {}),
         }),
         targetCaseIds: async () => (await this.opts.targetCaseIds?.(payload, personality.id)) ?? [],
         // The fork's own session is in-memory; the evidence is the parent turn.

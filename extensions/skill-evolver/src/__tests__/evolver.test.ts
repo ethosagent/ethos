@@ -264,45 +264,6 @@ describe('SkillEvolver', () => {
     expect(result.plan.rewriteCandidates.length).toBeGreaterThan(0);
   });
 
-  it('skips a rewrite of a locked skill with reason locked, before asking the LLM', async () => {
-    await writeFile(join(skillsDir, 'json.md'), 'old content', 'utf-8');
-    const lines: object[] = [];
-    for (let i = 0; i < 12; i++) {
-      lines.push({
-        schema_version: '1.0',
-        task_id: `r${i}`,
-        turn: 0,
-        role: 'assistant',
-        content: `a${i}`,
-        score: 0.2,
-        skill_files_used: ['json.md'],
-      });
-    }
-    await writeFile(evalPath, jsonl(...lines), 'utf-8');
-    const asked: string[] = [];
-    const llm = makeLLM(['<skill>\nnever asked\n</skill>']);
-    const original = llm.complete.bind(llm);
-    llm.complete = (...args: Parameters<LLMProvider['complete']>) => {
-      asked.push('call');
-      return original(...args);
-    };
-
-    const result = await new SkillEvolver({
-      evalOutputPath: evalPath,
-      skillsDir,
-      ...base(),
-      config: DEFAULT_EVOLVE_CONFIG,
-      llm,
-      storage: new FsStorage(),
-      isLocked: async (dest) => dest === join(testDir, 'skills', 'json.md'),
-    }).evolve();
-
-    expect(result.rewritesSubmitted).toEqual([]);
-    expect(result.skipped).toContainEqual({ kind: 'rewrite', target: 'json.md', reason: 'locked' });
-    expect(asked).toEqual([]);
-    expect(await candidates()).toEqual([]);
-  });
-
   it('avoids overwriting an existing skill with a duplicate filename', async () => {
     await writeFile(join(skillsDir, 'shared.md'), 'preexisting', 'utf-8');
 

@@ -133,7 +133,6 @@ import {
   freezeLatestUserTurnCase,
   learningPendingSkillsPort,
   learningSubmitPort,
-  skillLockProbe,
 } from './learning-pipeline';
 import { createTeamMemoryProvider } from './memory-backend';
 import { loadMessagingAllowlist } from './messaging-allowlist';
@@ -1905,8 +1904,6 @@ export async function composeAllTools(
               scope: personality.skill_evolution?.scope,
               // Same key the fork passes: `false` refuses a `targetFile` rewrite.
               evolveExisting: personality.skill_evolution?.evolve_existing,
-              // Advisory: SkillHistory.writeAgentAuthored behind promote() is the guarantee.
-              isLocked: skillLockProbe(learningCtx),
             }
           : null;
       },

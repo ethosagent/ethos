@@ -955,7 +955,6 @@ export {
   personalityCore,
   promoteLearningCandidate,
   rejectLearningCandidate,
-  skillLockProbe,
   submitExpressionCandidate,
   toPendingSkillSummary,
 } from './learning-pipeline';

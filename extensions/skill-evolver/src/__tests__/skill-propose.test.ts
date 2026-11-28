@@ -230,14 +230,13 @@ describe('skill_propose honours skill_evolution.evolve_existing', () => {
 describe('skill_propose honours the per-skill lock (advisory, plan C1)', () => {
   function toolFor(storage: InMemoryStorage, locked: string[] | undefined) {
     return createSkillProposeTool({
-      learning: port(storage),
+      learning: {
+        ...port(storage),
+        ...(locked ? { isLocked: async (dest: string) => locked.includes(dest) } : {}),
+      },
       dataDir: DATA,
       origin: 'fork',
-      target: (ctx) => ({
-        personalityId: ctx.personalityId ?? 'me',
-        scope: undefined,
-        ...(locked ? { isLocked: async (dest: string) => locked.includes(dest) } : {}),
-      }),
+      target: (ctx) => ({ personalityId: ctx.personalityId ?? 'me', scope: undefined }),
       now: () => 1700000000000,
     });
   }
