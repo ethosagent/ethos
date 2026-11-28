@@ -365,14 +365,11 @@ treated as a §IX failure.
 ## VII. Frozen Schemas
 
 A frozen schema is a contract whose surface is governed beyond ordinary
-type changes. Every frozen schema has:
+type changes. Every frozen schema has a canonical contract module, a
+mechanical drift gate (a counter, a constant, or an enumeration test), a
+named owner, and a bump procedure.
 
-- A canonical contract module.
-- A mechanical drift gate (a counter, a constant, or an enumeration test).
-- A named owner.
-- A bump procedure.
-
-The personality schema is the worked example. [Personality governance](docs/content/building/explanation/personality-governance.md) explains how its freeze rule and the generated character sheet operationalise this section for `PersonalityConfig` — the personality-alignment phase removed four non-identity fields (`skin`, `busyInputMode`, `verbosity`, `metadata`) under exactly the procedure below. [AgentCard governance](docs/content/building/explanation/agent-card-governance.md) explains why the A2A signed card — a peer verifies it once, out of band, and trusts that anchor from then on — needed the same mechanical treatment (added in the a2a-spec-compat phase, D14). [Decision provider governance](docs/content/building/explanation/decision-provider-governance.md) is the RFC that added the Decision provider contract as a new contract type (decision-provider-jev plan, M0).
+The personality schema is the worked example. [Personality governance](docs/content/building/explanation/personality-governance.md) applies this section to `PersonalityConfig` (the personality-alignment phase removed `skin`, `busyInputMode`, `verbosity`, `metadata` by this procedure). [AgentCard governance](docs/content/building/explanation/agent-card-governance.md) explains why the A2A signed card (verified once out of band) needed the same treatment (a2a-spec-compat phase, D14). [Decision provider governance](docs/content/building/explanation/decision-provider-governance.md) is the RFC that added the Decision provider contract (decision-provider-jev, M0).
 
 ### Roster
 
@@ -395,7 +392,7 @@ The personality schema is the worked example. [Personality governance](docs/cont
 
 ### Bump obligations
 
-Bump obligations, worked examples for `ContextEngine` and `CompletionChunk`, and the categories that may never become frozen-schema fields: [ADR 0008](docs/decisions/0008-frozen-schema-bump-rules.md).
+Bump obligations, `ContextEngine` and `CompletionChunk` worked examples, and categories that may never become frozen-schema fields: [ADR 0008](docs/decisions/0008-frozen-schema-bump-rules.md).
 
 ------------------------------------------------------------------------
 
